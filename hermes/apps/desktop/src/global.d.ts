@@ -12,6 +12,9 @@ declare global {
     hermesDesktop: {
       macSoftCustomerRuntime: boolean
       macSoftFirstRun: boolean
+      macSoftDesktopChat: {
+        getStatus: () => Promise<MacSoftDesktopChatStatusResult>
+      }
       // Resolve a backend connection. Omit `profile` (or pass the primary) for
       // the window's backend; pass a named profile to lazily spawn/reuse that
       // profile's backend from the pool.
@@ -267,6 +270,13 @@ export interface DesktopVersionInfo {
 
 export type MacSoftServiceName = 'ai_service' | 'server'
 export type MacSoftServiceAction = 'restart' | 'start' | 'stop'
+
+export type MacSoftDesktopChatStatus = 'idle' | 'connecting' | 'ready' | 'unavailable' | 'error'
+
+export interface MacSoftDesktopChatStatusResult {
+  status: MacSoftDesktopChatStatus
+  message?: string
+}
 
 export interface MacSoftServiceStatus {
   last_error: null | string

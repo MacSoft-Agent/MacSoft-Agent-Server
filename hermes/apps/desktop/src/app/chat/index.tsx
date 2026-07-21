@@ -31,6 +31,7 @@ import { cn } from '@/lib/utils'
 import type { ComposerAttachment } from '@/store/composer'
 import { $pinnedSessionIds } from '@/store/layout'
 import { $gatewaySwapTarget } from '@/store/profile'
+import { notify } from '@/store/notifications'
 import {
   $activeSessionId,
   $awaitingResponse,
@@ -65,12 +66,18 @@ import { droppedFileInlineRefs, type SessionDragPayload, sessionInlineRef } from
 import type { ChatBarState } from './composer/types'
 import { type DroppedFile, partitionDroppedFiles } from './hooks/use-composer-actions'
 import { useFileDropZone } from './hooks/use-file-drop-zone'
+import {
+  resolveMacSoftPromptCapabilities,
+  type MacSoftDesktopChatStatus
+} from './hooks/use-macsoft-desktop-chat-status'
 import { ScrollToBottomButton } from './scroll-to-bottom-button'
 import { SessionActionsMenu } from './sidebar/session-actions-menu'
 import { threadLoadingState } from './thread-loading'
 
 interface ChatViewProps extends Omit<React.ComponentProps<'div'>, 'onSubmit'> {
   gateway: HermesGateway | null
+  macSoftCustomerRuntime?: boolean
+  macSoftDesktopChatStatus?: MacSoftDesktopChatStatus
   modelMenuContent?: React.ReactNode
   onToggleSelectedPin: () => void
   onDeleteSelectedSession: () => void
@@ -263,6 +270,8 @@ function ChatRuntimeBoundary({
 export function ChatView({
   className,
   gateway,
+  macSoftCustomerRuntime = false,
+  macSoftDesktopChatStatus = 'idle',
   modelMenuContent,
   onToggleSelectedPin,
   onDeleteSelectedSession,
@@ -301,6 +310,26 @@ export function ChatView({
   const gatewayState = useStore($gatewayState)
   const gatewaySwapTarget = useStore($gatewaySwapTarget)
   const gatewayOpen = gatewayState === 'open'
+  const { canEditPrompt, canSubmitPrompt } = resolveMacSoftPromptCapabilities(
+    macSoftCustomerRuntime,
+    macSoftDesktopChatStatus,
+    gatewayOpen
+  )
+  const submitPrompt = useCallback<ChatViewProps['onSubmit']>(
+    (text, options) => {
+      if (macSoftCustomerRuntime && !canSubmitPrompt) {
+        notify({
+          kind: 'info',
+          title: 'Server admin chat',
+          message: 'Server admin chat is not available yet.'
+        })
+        return false
+      }
+
+      return onSubmit(text, options)
+    },
+    [canSubmitPrompt, macSoftCustomerRuntime, onSubmit]
+  )
   const introPersonality = useStore($introPersonality)
   const introSeed = useStore($introSeed)
   // PERF: ChatView must not subscribe to $messages — the atom is replaced on
@@ -507,7 +536,8 @@ export function ChatView({
             <ChatBar
               busy={busy}
               cwd={currentCwd}
-              disabled={!gatewayOpen}
+              canSubmitPrompt={canSubmitPrompt}
+              disabled={!canEditPrompt}
               focusKey={activeSessionId}
               gateway={gateway}
               maxRecordingSeconds={maxVoiceRecordingSeconds}
@@ -516,14 +546,30 @@ export function ChatView({
               onAttachDroppedItems={onAttachDroppedItems}
               onAttachImageBlob={onAttachImageBlob}
               onCancel={onCancel}
+              onBlockedSubmit={
+                macSoftCustomerRuntime
+                  ? () =>
+                      notify({
+                        kind: 'info',
+                        title: 'Server admin chat',
+                        message: 'Server admin chat is not available yet.'
+                      })
+                  : undefined
+              }
               onPasteClipboardImage={onPasteClipboardImage}
               onPickFiles={onPickFiles}
               onPickFolders={onPickFolders}
               onPickImages={onPickImages}
               onRemoveAttachment={onRemoveAttachment}
               onSteer={onSteer}
-              onSubmit={onSubmit}
+              onSubmit={submitPrompt}
               onTranscribeAudio={onTranscribeAudio}
+              statusMessage={
+                macSoftCustomerRuntime &&
+                (macSoftDesktopChatStatus === 'unavailable' || macSoftDesktopChatStatus === 'error')
+                  ? 'MacSoft Server is unavailable.'
+                  : undefined
+              }
               queueSessionKey={selectedSessionId}
               sessionId={activeSessionId}
               state={chatBarState}

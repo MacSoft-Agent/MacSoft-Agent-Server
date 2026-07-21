@@ -268,6 +268,7 @@ def init_db(config: AppConfig) -> None:
                 FOREIGN KEY(user_id) REFERENCES users(user_id)
             );
 
+
             CREATE TABLE IF NOT EXISTS uploaded_files (
                 file_id TEXT PRIMARY KEY,
                 owner_user_id TEXT NOT NULL,
@@ -280,6 +281,25 @@ def init_db(config: AppConfig) -> None:
                 created_at TEXT NOT NULL,
                 FOREIGN KEY(owner_user_id) REFERENCES users(user_id),
                 FOREIGN KEY(owner_device_id) REFERENCES devices(device_id)
+
+            CREATE TABLE IF NOT EXISTS admin_sessions (
+                session_id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                deleted_at TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS admin_messages (
+                message_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                status TEXT NOT NULL,
+                model TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(session_id) REFERENCES admin_sessions(session_id)
+(feat: add trusted server desktop admin chat backend)
             );
             """
         )
@@ -296,8 +316,16 @@ def init_db(config: AppConfig) -> None:
             CREATE INDEX IF NOT EXISTS idx_messages_session_user
             ON messages(session_id, user_id, created_at ASC);
 
+<<<<<<< HEAD
             CREATE INDEX IF NOT EXISTS idx_uploaded_files_owner
             ON uploaded_files(owner_user_id, owner_device_id, created_at DESC);
+=======
+            CREATE INDEX IF NOT EXISTS idx_admin_sessions_active
+            ON admin_sessions(deleted_at, updated_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_admin_messages_session
+            ON admin_messages(session_id, created_at ASC);
+>>>>>>> 5842f01 (feat: add trusted server desktop admin chat backend)
             """
         )
 

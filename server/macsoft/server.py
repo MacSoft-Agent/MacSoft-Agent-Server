@@ -6,9 +6,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from macsoft.config import load_config
 from macsoft.chat.active_runs import ActiveChatRunRegistry
+from macsoft.admin.auth import AdminAccessRegistry
 from macsoft.db import init_db
 from macsoft.gateway.errors import register_exception_handlers
 from macsoft.gateway.routes_chat import router as chat_router
+from macsoft.gateway.routes_admin import router as admin_router
 from macsoft.gateway.routes_client import router as client_router
 from macsoft.gateway.routes_files import router as files_router
 from macsoft.gateway.routes_health import router as health_router
@@ -38,6 +40,7 @@ def create_app() -> FastAPI:
     app.state.config = config
     app.state.product_version = product_version()
     app.state.active_chat_runs = ActiveChatRunRegistry()
+    app.state.admin_access_registry = AdminAccessRegistry()
 
     register_exception_handlers(app)
 
@@ -64,6 +67,7 @@ def create_app() -> FastAPI:
     app.include_router(skills_router)
     app.include_router(files_router)
     app.include_router(chat_router)
+    app.include_router(admin_router)
 
     return app
 

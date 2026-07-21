@@ -90,6 +90,7 @@ import { ChatSidebar } from './chat/sidebar'
 import { CommandPalette } from './command-palette'
 import { useGatewayBoot } from './gateway/hooks/use-gateway-boot'
 import { useGatewayRequest } from './gateway/hooks/use-gateway-request'
+import { useMacSoftDesktopChatStatus } from './chat/hooks/use-macsoft-desktop-chat-status'
 import { useKeybinds } from './hooks/use-keybinds'
 import { SIDEBAR_COLLAPSE_MEDIA_QUERY } from './layout-constants'
 import { shouldOpenFirstRunSettings } from './macsoft-customer-navigation'
@@ -183,6 +184,7 @@ export function DesktopController() {
   const location = useLocation()
   const navigate = useNavigate()
   const macSoftCustomerRuntime = window.hermesDesktop?.macSoftCustomerRuntime === true
+  const macSoftDesktopChat = useMacSoftDesktopChatStatus(macSoftCustomerRuntime)
   const macSoftFirstRunNavigationRef = useRef(window.hermesDesktop?.macSoftFirstRun === true)
 
   const busyRef = useRef(false)
@@ -1156,6 +1158,8 @@ export function DesktopController() {
   const chatView = (
     <ChatView
       gateway={gatewayRef.current}
+      macSoftCustomerRuntime={macSoftCustomerRuntime}
+      macSoftDesktopChatStatus={macSoftDesktopChat.status}
       maxVoiceRecordingSeconds={voiceMaxRecordingSeconds}
       modelMenuContent={modelMenuContent}
       onAddContextRef={composer.addContextRefAttachment}

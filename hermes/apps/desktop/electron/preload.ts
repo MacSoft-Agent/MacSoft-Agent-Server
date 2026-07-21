@@ -3,6 +3,9 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 contextBridge.exposeInMainWorld('hermesDesktop', {
   macSoftCustomerRuntime: ipcRenderer.sendSync('hermes:macsoft-customer-runtime') === true,
   macSoftFirstRun: ipcRenderer.sendSync('hermes:macsoft-first-run-navigation') === true,
+  macSoftDesktopChat: {
+    getStatus: () => ipcRenderer.invoke('hermes:macsoft-desktop-chat:status')
+  },
   getConnection: profile => ipcRenderer.invoke('hermes:connection', profile),
   revalidateConnection: () => ipcRenderer.invoke('hermes:connection:revalidate'),
   touchBackend: profile => ipcRenderer.invoke('hermes:backend:touch', profile),

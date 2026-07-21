@@ -27,6 +27,7 @@ interface UseComposerSubmitArgs {
   inputDisabled: boolean
   loadIntoComposer: (text: string, attachments: ComposerAttachment[]) => void
   onCancel: ChatBarProps['onCancel']
+  onBlockedSubmit?: ChatBarProps['onBlockedSubmit']
   onSteer: ChatBarProps['onSteer']
   onSubmit: ChatBarProps['onSubmit']
   queueCurrentDraft: () => boolean
@@ -62,6 +63,7 @@ export function useComposerSubmit({
   inputDisabled,
   loadIntoComposer,
   onCancel,
+  onBlockedSubmit,
   onSteer,
   onSubmit,
   queueCurrentDraft,
@@ -105,6 +107,7 @@ export function useComposerSubmit({
 
   const submitDraft = () => {
     if (disabled) {
+      onBlockedSubmit?.()
       return
     }
 

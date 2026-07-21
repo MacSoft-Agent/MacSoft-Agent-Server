@@ -34,6 +34,8 @@ export interface ChatBarState {
 export interface ChatBarProps {
   busy: boolean
   disabled: boolean
+  canSubmitPrompt?: boolean
+  statusMessage?: string
   focusKey?: string | null
   maxRecordingSeconds?: number
   state: ChatBarState
@@ -56,6 +58,7 @@ export interface ChatBarProps {
     value: string,
     options?: { attachments?: ComposerAttachment[]; fromQueue?: boolean }
   ) => Promise<boolean> | boolean
+  onBlockedSubmit?: () => void
   onTranscribeAudio?: (audio: Blob) => Promise<string>
 }
 

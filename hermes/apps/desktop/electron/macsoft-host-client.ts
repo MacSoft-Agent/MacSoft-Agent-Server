@@ -125,6 +125,10 @@ export class MacSoftHostClient {
     }
   }
 
+  trustedHostToken(): string {
+    return this.configuration().token
+  }
+
   async serviceAction(name: MacSoftServiceName, action: MacSoftServiceAction): Promise<MacSoftServiceStatus> {
     const body = await this.request(`/v1/services/${name}/${action}`, { method: 'POST' })
     return body.service as MacSoftServiceStatus

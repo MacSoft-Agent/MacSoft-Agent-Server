@@ -92,6 +92,8 @@ import {
   TEXT_PREVIEW_SOURCE_MAX_BYTES
 } from './hardening'
 import { createLinkTitleWindow, guardLinkTitleSession, readLinkTitleWindowTitle } from './link-title-window'
+import { MacSoftDesktopChatClient } from './macsoft-desktop-chat-client'
+import { MacSoftDesktopAdminChatClient } from './macsoft-desktop-admin-chat-client'
 import { MacSoftHostClient } from './macsoft-host-client'
 import { loadMacSoftProductMetadata, resolveMacSoftProductPaths, resolvePackagedRuntimeHome } from './macsoft-product'
 import {
@@ -7303,6 +7305,8 @@ ipcMain.handle('hermes:connection-config:apply', async (_event, payload) => {
 
 let serverAutoCountConfigService: ServerAutoCountConfigService | null = null
 let macSoftHostClient: MacSoftHostClient | null = null
+let macSoftDesktopChatClient: MacSoftDesktopChatClient | null = null
+let macSoftDesktopAdminChatClient: MacSoftDesktopAdminChatClient | null = null
 let macSoftFirstRunNavigationPending = false
 let macSoftProductInitialization: Promise<MacSoftProductInitializationResult> | null = null
 
@@ -7373,7 +7377,16 @@ function getMacSoftHostClient() {
   macSoftHostClient ||= new MacSoftHostClient(getMacSoftProductPaths())
   return macSoftHostClient
 }
+function getMacSoftDesktopChatClient() {
+  macSoftDesktopChatClient ||= new MacSoftDesktopChatClient()
+  return macSoftDesktopChatClient
+}
+export function getMacSoftDesktopAdminChatClient() {
+  macSoftDesktopAdminChatClient ||= new MacSoftDesktopAdminChatClient(getMacSoftHostClient())
+  return macSoftDesktopAdminChatClient
+}
 ipcMain.handle('hermes:macsoft-host:status', () => getMacSoftHostClient().status())
+ipcMain.handle('hermes:macsoft-desktop-chat:status', () => getMacSoftDesktopChatClient().getStatus())
 ipcMain.handle('hermes:macsoft-host:service-action', (_event, name, action) =>
   getMacSoftHostClient().serviceAction(name, action)
 )

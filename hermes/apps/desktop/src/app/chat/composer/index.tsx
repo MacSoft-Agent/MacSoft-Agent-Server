@@ -61,6 +61,7 @@ import { VoiceActivity, VoicePlaybackActivity } from './voice-activity'
 
 export function ChatBar({
   busy,
+  canSubmitPrompt,
   cwd,
   disabled,
   focusKey,
@@ -70,6 +71,7 @@ export function ChatBar({
   sessionId,
   state,
   onCancel,
+  onBlockedSubmit,
   onAddUrl,
   onAttachDroppedItems,
   onAttachImageBlob,
@@ -80,7 +82,8 @@ export function ChatBar({
   onRemoveAttachment,
   onSteer,
   onSubmit,
-  onTranscribeAudio
+  onTranscribeAudio,
+  statusMessage
 }: ChatBarProps) {
   const attachments = useStore($composerAttachments)
   const scrolledUp = useStore($threadScrolledUp)
@@ -130,6 +133,7 @@ export function ChatBar({
   const gatewayState = useStore($gatewayState)
   const reconnecting = gatewayState === 'closed' || gatewayState === 'error'
   const inputDisabled = disabled && !reconnecting
+  const submissionDisabled = canSubmitPrompt === undefined ? disabled : !canSubmitPrompt
 
   // The draft engine — detached source of truth (DOM + draftRef + edge
   // selectors); typing never re-renders the chrome. ChatBar owns `queueEditRef`
@@ -208,7 +212,7 @@ export function ChatBar({
     busy,
     canSteer,
     clearDraft,
-    disabled,
+    disabled: submissionDisabled,
     draftRef,
     drainNextQueued,
     editorRef,
@@ -217,6 +221,7 @@ export function ChatBar({
     inputDisabled,
     loadIntoComposer,
     onCancel,
+    onBlockedSubmit,
     onSteer,
     onSubmit,
     queueCurrentDraft,
@@ -684,7 +689,7 @@ export function ChatBar({
       busy={busy}
       busyAction={busyAction}
       canSteer={canSteer}
-      canSubmit={canSubmit}
+      canSubmit={canSubmit && !submissionDisabled}
       compactModelPill={poppedOut}
       conversation={{
         active: voiceConversationActive,
@@ -783,6 +788,11 @@ export function ChatBar({
 
   return (
     <>
+      {statusMessage && (
+        <div className="absolute bottom-[calc(100%+0.25rem)] left-1/2 -translate-x-1/2 text-xs text-muted-foreground" role="status">
+          {statusMessage}
+        </div>
+      )}
       {dragging && poppedOut && (
         <div
           aria-hidden

@@ -56,6 +56,19 @@ const EMPTY_FORM: FormState = {
   serverPort: '8787'
 }
 
+export function macSoftSettingsErrorMessage(error: unknown, fallback: string): string {
+  if (!(error instanceof Error) || !error.message.trim()) {
+    return fallback
+  }
+
+  return (
+    error.message
+      .replace(/^Error invoking remote method '[^']+':\s*/i, '')
+      .replace(/^Error:\s*/i, '')
+      .trim() || fallback
+  )
+}
+
 function formFromSettings(settings: ServerAutoCountSettings): FormState {
   return {
     aiServicePort: String(settings.aiService.port),
@@ -230,7 +243,7 @@ export function ServerAutoCountSettingsPage() {
     try {
       applyLoadedSettings(await api.load())
     } catch (error) {
-      setLoadError(error instanceof Error ? error.message : 'Could not load Server & AutoCount settings.')
+      setLoadError(macSoftSettingsErrorMessage(error, 'Could not load Server & AutoCount settings.'))
     } finally {
       setLoading(false)
     }
@@ -245,7 +258,7 @@ export function ServerAutoCountSettingsPage() {
       setHostStatus(await hostApi.status())
       setHostError(null)
     } catch (error) {
-      setHostError(error instanceof Error ? error.message : 'MacSoft Agent Host is unavailable.')
+      setHostError(macSoftSettingsErrorMessage(error, 'MacSoft Agent Host is unavailable.'))
     }
   }
 
@@ -256,7 +269,7 @@ export function ServerAutoCountSettingsPage() {
       await hostApi.serviceAction(name, action)
       await refreshHostStatus()
     } catch (error) {
-      setHostError(error instanceof Error ? error.message : 'The service action failed.')
+      setHostError(macSoftSettingsErrorMessage(error, 'The service action failed.'))
     } finally {
       setServiceAction(null)
     }
@@ -268,7 +281,7 @@ export function ServerAutoCountSettingsPage() {
       const autoStart = await hostApi.setAutoStart(enabled)
       setHostStatus(current => (current ? { ...current, auto_start: autoStart } : current))
     } catch (error) {
-      setHostError(error instanceof Error ? error.message : 'Auto-start could not be updated.')
+      setHostError(macSoftSettingsErrorMessage(error, 'Auto-start could not be updated.'))
     }
   }
 
@@ -316,7 +329,7 @@ export function ServerAutoCountSettingsPage() {
     } catch (error) {
       notify({
         kind: 'error',
-        message: error instanceof Error ? error.message : 'Network interfaces could not be refreshed.',
+        message: macSoftSettingsErrorMessage(error, 'Network interfaces could not be refreshed.'),
         title: 'Refresh failed'
       })
     }
@@ -388,7 +401,7 @@ export function ServerAutoCountSettingsPage() {
       setAutoCountStatus({
         action: 'Review the fields and try again.',
         ok: false,
-        summary: error instanceof Error ? error.message : 'The connection test could not be completed.',
+        summary: macSoftSettingsErrorMessage(error, 'The connection test could not be completed.'),
         title: 'AutoCount test failed'
       })
     } finally {
@@ -417,7 +430,7 @@ export function ServerAutoCountSettingsPage() {
     } catch (error) {
       notify({
         kind: 'error',
-        message: error instanceof Error ? error.message : 'The settings could not be saved.',
+        message: macSoftSettingsErrorMessage(error, 'The settings could not be saved.'),
         title: 'Save failed'
       })
     } finally {

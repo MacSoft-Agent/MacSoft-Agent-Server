@@ -10,6 +10,7 @@ from macsoft.db import init_db
 from macsoft.gateway.errors import register_exception_handlers
 from macsoft.gateway.routes_chat import router as chat_router
 from macsoft.gateway.routes_client import router as client_router
+from macsoft.gateway.routes_files import router as files_router
 from macsoft.gateway.routes_health import router as health_router
 from macsoft.gateway.routes_sessions import router as sessions_router
 from macsoft.gateway.routes_skills import router as skills_router
@@ -61,6 +62,7 @@ def create_app() -> FastAPI:
     app.include_router(client_router)
     app.include_router(sessions_router)
     app.include_router(skills_router)
+    app.include_router(files_router)
     app.include_router(chat_router)
 
     return app

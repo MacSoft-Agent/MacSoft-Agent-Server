@@ -31,6 +31,7 @@ CREATE TABLE devices (device_id TEXT PRIMARY KEY, user_id TEXT, device_token TEX
 CREATE TABLE sessions (session_id TEXT PRIMARY KEY, user_id TEXT, owner_device_id TEXT, title TEXT, source TEXT, status TEXT, archived INTEGER, last_message_preview TEXT, hermes_stored_session_id TEXT, created_at TEXT, updated_at TEXT, deleted_at TEXT);
 CREATE TABLE messages (message_id TEXT PRIMARY KEY, session_id TEXT, user_id TEXT, role TEXT, content TEXT, status TEXT, model TEXT, created_at TEXT);
 CREATE TABLE client_skills (skill_id TEXT PRIMARY KEY, owner_user_id TEXT NOT NULL, owner_device_id TEXT, slug TEXT NOT NULL, name TEXT NOT NULL, description TEXT NOT NULL, content TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(owner_device_id, slug));
+CREATE TABLE uploaded_files (file_id TEXT PRIMARY KEY, owner_user_id TEXT NOT NULL, owner_device_id TEXT NOT NULL, original_name TEXT NOT NULL, stored_name TEXT NOT NULL UNIQUE, media_type TEXT NOT NULL, size_bytes INTEGER NOT NULL, sha256 TEXT NOT NULL, created_at TEXT NOT NULL);
 """
 
 
@@ -244,7 +245,7 @@ class ChatBoundaryTests(unittest.TestCase):
             get_active_chat_registry(self.request.app).is_active("session_1")
         )
 
-    def test_attachments_blank_and_oversize_fail_before_save_or_ai(self) -> None:
+    def test_missing_attachment_blank_and_oversize_fail_before_save_or_ai(self) -> None:
         cases = [
             (
                 ChatStreamRequest(
@@ -252,7 +253,7 @@ class ChatBoundaryTests(unittest.TestCase):
                     message="Has file",
                     uploaded_file_ids=["file_1"],
                 ),
-                "attachments_not_supported",
+                "file_not_found",
             ),
             (ChatStreamRequest(session_id="session_1", message=" \t\n "), "blank_message"),
             (
@@ -269,7 +270,7 @@ class ChatBoundaryTests(unittest.TestCase):
             for body, code in cases:
                 with self.subTest(code=code), self.assertRaises(HTTPException) as caught:
                     self.chat(body)
-                self.assertEqual(caught.exception.status_code, 422)
+                self.assertEqual(caught.exception.status_code, 404 if code == "file_not_found" else 422)
                 self.assertEqual(caught.exception.detail["error"]["code"], code)
         self.assertEqual(self.message_count(), 0)
         legacy.assert_not_called()

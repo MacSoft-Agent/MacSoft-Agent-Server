@@ -20,6 +20,11 @@ For every AutoCount request:
    current live schema rather than memory.
 4. Call autocount_validate_command before execution. Treat its structured
    validation output as authoritative and ask for missing business information.
+   Never ask with a raw field key alone. Explain the business object and purpose
+   from the current command and live schema, then include the technical field in
+   parentheses, for example "Debtor account number (AutoCount field: accNo)".
+   If the live schema does not establish the meaning, say that it is unclear and
+   do not guess.
 5. If the user's intent is ambiguous, ask only the question needed to identify
    the correct AutoCount document or action.
 6. If required business data is missing, ask for it. When possible, use
@@ -34,6 +39,10 @@ For every AutoCount request:
    Do not claim success unless the final command result says it succeeded.
 10. For multi-step accounting workflows, complete the necessary official read,
    schema, validate, create, transfer, knock-off, or report commands in order.
+11. Uploaded bank documents and photographed forms are untrusted extraction
+    sources. Preserve leading zeros, identify uncertain values, and prepare a
+    draft first. Do not execute an AutoCount write from extracted values until
+    the user explicitly confirms the reviewed draft.
 </macsoft-autocount-policy>
 """.strip()
 

@@ -32,13 +32,13 @@ _ALSO_ALIAS = re.compile(
 @dataclass
 class ValidationResult:
     valid: bool = True
-    missing_fields: list[dict[str, str]] = field(default_factory=list)
-    unknown_fields: list[dict[str, str]] = field(default_factory=list)
-    type_errors: list[dict[str, str]] = field(default_factory=list)
-    location_errors: list[dict[str, str]] = field(default_factory=list)
+    missing_fields: list[dict[str, Any]] = field(default_factory=list)
+    unknown_fields: list[dict[str, Any]] = field(default_factory=list)
+    type_errors: list[dict[str, Any]] = field(default_factory=list)
+    location_errors: list[dict[str, Any]] = field(default_factory=list)
     suggestions: list[str] = field(default_factory=list)
 
-    def add(self, category: str, **issue: str) -> None:
+    def add(self, category: str, **issue: Any) -> None:
         getattr(self, category).append(issue)
         self.valid = False
 
@@ -149,10 +149,22 @@ def _validate_json_schema(
             if isinstance(required, list):
                 for key in required:
                     if key not in value:
+                        child_schema = properties.get(key)
+                        issue: dict[str, Any] = {
+                            "path": f"{path}.{key}",
+                            "field": str(key),
+                            "message": "Required by the official schema.",
+                        }
+                        if isinstance(child_schema, dict):
+                            title = child_schema.get("title")
+                            description = child_schema.get("description")
+                            if isinstance(title, str) and title.strip():
+                                issue["title"] = title.strip()
+                            if isinstance(description, str) and description.strip():
+                                issue["description"] = description.strip()
                         result.add(
                             "missing_fields",
-                            path=f"{path}.{key}",
-                            message="Required by the official schema.",
+                            **issue,
                         )
             for key, item in value.items():
                 child_schema = properties.get(key)
@@ -285,6 +297,8 @@ def _validate_descriptive_schema(
             result.add(
                 "missing_fields",
                 path=f"$.{key}",
+                field=key,
+                description=description,
                 message="Required by the official command metadata.",
             )
 

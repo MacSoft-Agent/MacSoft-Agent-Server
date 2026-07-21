@@ -3,9 +3,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ServerAutoCountSettings } from '@/global'
 
-import { ServerAutoCountSettingsPage } from './server-autocount-settings'
+import { macSoftSettingsErrorMessage, ServerAutoCountSettingsPage } from './server-autocount-settings'
 
 vi.mock('@/store/notifications', () => ({ notify: vi.fn() }))
+
+describe('macSoftSettingsErrorMessage', () => {
+  it('removes internal IPC and Hermes channel names from user-visible errors', () => {
+    const error = new Error(
+      "Error invoking remote method 'hermes:server-autocount:save': Error: Enter the AutoCount API Key."
+    )
+    expect(macSoftSettingsErrorMessage(error, 'Save failed.')).toBe('Enter the AutoCount API Key.')
+  })
+})
 
 const SETTINGS: ServerAutoCountSettings = {
   aiService: {

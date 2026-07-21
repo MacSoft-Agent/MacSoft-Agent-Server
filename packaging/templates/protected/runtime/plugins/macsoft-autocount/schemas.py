@@ -58,7 +58,8 @@ AUTOCOUNT_GET_COMMAND_SCHEMA = {
     "description": (
         "Fetch the current official full payload schema for one AutoCount command. "
         "Call this before executing any command, even if the command seems familiar. "
-        "Use the returned fields and aliases to identify missing or ambiguous data."
+        "Use the returned field descriptions, sections, and aliases to identify missing "
+        "or ambiguous data and to explain each requested value in business language."
     ),
     "parameters": {
         "type": "object",
@@ -78,7 +79,8 @@ AUTOCOUNT_VALIDATE_COMMAND = {
     "description": (
         "Validate a candidate payload against the exact current official "
         "AutoCount command schema without submitting it. Use the structured "
-        "missing, unknown, type, and location errors to request corrections."
+        "missing, unknown, type, and location errors plus their official schema "
+        "descriptions to request corrections in business language, never by raw key alone."
     ),
     "parameters": {
         "type": "object",

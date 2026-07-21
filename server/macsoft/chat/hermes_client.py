@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import Iterator
+from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -21,11 +22,16 @@ class HermesApiError(RuntimeError):
         self.status_code = status_code
 
 
-def _normalized_messages(messages: list[dict[str, str]]) -> list[dict[str, str]]:
-    normalized: list[dict[str, str]] = []
+def _normalized_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
     for message in messages:
         role = str(message.get("role", "")).strip()
-        content = str(message.get("content", ""))
+        raw_content = message.get("content", "")
+        if role == "user" and isinstance(raw_content, list):
+            if raw_content:
+                normalized.append({"role": role, "content": raw_content})
+            continue
+        content = str(raw_content)
         if role in {"system", "user", "assistant"} and content.strip():
             normalized.append({"role": role, "content": content})
     if not normalized:
@@ -40,7 +46,7 @@ def _api_request(
     *,
     base_url: str,
     api_key: str,
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     stream: bool,
 ) -> Request:
     payload = {
@@ -89,7 +95,7 @@ def request_hermes_reply(
     *,
     base_url: str,
     api_key: str,
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     timeout_seconds: int,
 ) -> str:
     request = _api_request(
@@ -156,7 +162,7 @@ def stream_hermes_reply_events(
     *,
     base_url: str,
     api_key: str,
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     timeout_seconds: int,
 ) -> Iterator[dict[str, str]]:
     """Yield controlled text and Tool lifecycle events from one Agent run."""

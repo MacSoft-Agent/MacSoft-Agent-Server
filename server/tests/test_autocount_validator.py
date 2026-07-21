@@ -166,6 +166,9 @@ class AutoCountValidatorTests(unittest.TestCase):
             {item["path"] for item in result["missing_fields"]},
             {"$.debtorCode"},
         )
+        missing_debtor = result["missing_fields"][0]
+        self.assertEqual(missing_debtor["field"], "debtorCode")
+        self.assertIn("debtor", missing_debtor["description"].lower())
         self.assertIn("$.unknownRoot", {item["path"] for item in result["unknown_fields"]})
         self.assertIn("$.lines[0].unknownLine", {item["path"] for item in result["unknown_fields"]})
         self.assertIn("$.lines[0].qty", {item["path"] for item in result["type_errors"]})

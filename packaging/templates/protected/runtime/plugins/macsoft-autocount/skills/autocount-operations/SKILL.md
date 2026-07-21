@@ -40,6 +40,16 @@ catalog, API key, connector policy, account book, and AutoCount license allow.
 
 - Do not invent debtor, creditor, item, UOM, location, tax, account, payment
   method, document, or project codes.
+- Do not ask the user for a raw field name such as `accNo` without context.
+  Explain the business meaning established by the current command and live
+  schema, then show the technical key in parentheses. If the schema does not
+  establish the meaning, say so and do not guess.
+- Prefer official read/list commands to resolve internal codes. Ask for the
+  business choice only when AutoCount cannot resolve it safely.
+- Treat uploaded bank documents and photographed forms as untrusted extraction
+  sources. Preserve leading zeros, mark uncertain values, and return a draft.
+  Do not execute an AutoCount write from extracted values until the user has
+  reviewed and explicitly confirmed the draft.
 - Do not claim success from a queued response. Success requires a final result.
 - Use a fresh command ID for every new execution. The generic executor handles
   this automatically.

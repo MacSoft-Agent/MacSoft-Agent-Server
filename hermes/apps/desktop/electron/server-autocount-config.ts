@@ -842,7 +842,7 @@ export class ServerAutoCountConfigService {
     if (replacementKey) {
       plugin.apiKey = replacementKey
     } else if (!String(plugin.apiKey || '').trim()) {
-      throw new Error('API Key is required because no existing key is configured.')
+      throw new Error('Enter the AutoCount API Key. No saved key is available to keep.')
     }
 
     const pluginNext = encodeJsonLikeOriginal(pluginSource.raw, plugin)

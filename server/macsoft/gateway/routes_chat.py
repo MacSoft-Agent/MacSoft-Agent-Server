@@ -31,6 +31,8 @@ from macsoft.chat.result_formatter import (
     user_requested_json,
 )
 from macsoft.db import connect_db
+from macsoft.files.content import AttachmentContentError, build_hermes_user_content
+from macsoft.files.storage import UploadValidationError, require_owned_files
 from macsoft.identity.devices import require_device
 from macsoft.security import new_id
 from macsoft.sessions.message_store import (
@@ -155,12 +157,24 @@ def chat_stream(
                 ),
             )
 
-        if body.uploaded_file_ids:
+        try:
+            uploaded_files = require_owned_files(
+                conn,
+                file_ids=body.uploaded_file_ids,
+                owner_user_id=user_id,
+                owner_device_id=device_id,
+            )
+        except UploadValidationError as error:
             raise HTTPException(
                 status_code=422,
+                detail=error_response(error.code, str(error)),
+            )
+        except ValueError:
+            raise HTTPException(
+                status_code=404,
                 detail=error_response(
-                    "attachments_not_supported",
-                    "Attachments are not supported by this Server endpoint.",
+                    "file_not_found",
+                    "One or more uploaded files were not found for this device.",
                 ),
             )
         if not body.message.strip():
@@ -180,6 +194,26 @@ def chat_stream(
                 detail=error_response(
                     "message_too_large",
                     "Message exceeds the supported request size.",
+                ),
+            )
+
+        try:
+            current_user_content = build_hermes_user_content(
+                config,
+                message=body.message,
+                files=uploaded_files,
+            )
+        except AttachmentContentError as error:
+            raise HTTPException(
+                status_code=422,
+                detail=error_response(error.code, str(error)),
+            )
+        except FileNotFoundError:
+            raise HTTPException(
+                status_code=404,
+                detail=error_response(
+                    "file_not_found",
+                    "One or more uploaded files are no longer available.",
                 ),
             )
 
@@ -246,6 +280,11 @@ def chat_stream(
                 }
                 for message in context_window.messages
             ]
+            if uploaded_files:
+                for message in reversed(hermes_messages):
+                    if message["role"] == "user":
+                        message["content"] = current_user_content
+                        break
 
             selected_client_skills = resolve_selected_client_skills(
                 conn,

@@ -153,7 +153,7 @@ def _migrate_device_ownership(conn: sqlite3.Connection) -> dict[str, int]:
     return counts
 
 
-def _resolve_db_path(config: AppConfig) -> Path:
+def resolve_db_path(config: AppConfig) -> Path:
     configured_path = getattr(config, "config_path", None)
     config_root = (
         Path(configured_path).resolve().parent
@@ -169,8 +169,13 @@ def _resolve_db_path(config: AppConfig) -> Path:
     return db_path
 
 
+def _resolve_db_path(config: AppConfig) -> Path:
+    """Backward-compatible alias for existing internal callers."""
+    return resolve_db_path(config)
+
+
 def connect_db(config: AppConfig) -> sqlite3.Connection:
-    db_path = _resolve_db_path(config)
+    db_path = resolve_db_path(config)
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
@@ -262,6 +267,20 @@ def init_db(config: AppConfig) -> None:
                 FOREIGN KEY(session_id) REFERENCES sessions(session_id),
                 FOREIGN KEY(user_id) REFERENCES users(user_id)
             );
+
+            CREATE TABLE IF NOT EXISTS uploaded_files (
+                file_id TEXT PRIMARY KEY,
+                owner_user_id TEXT NOT NULL,
+                owner_device_id TEXT NOT NULL,
+                original_name TEXT NOT NULL,
+                stored_name TEXT NOT NULL UNIQUE,
+                media_type TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                sha256 TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(owner_user_id) REFERENCES users(user_id),
+                FOREIGN KEY(owner_device_id) REFERENCES devices(device_id)
+            );
             """
         )
 
@@ -276,6 +295,9 @@ def init_db(config: AppConfig) -> None:
 
             CREATE INDEX IF NOT EXISTS idx_messages_session_user
             ON messages(session_id, user_id, created_at ASC);
+
+            CREATE INDEX IF NOT EXISTS idx_uploaded_files_owner
+            ON uploaded_files(owner_user_id, owner_device_id, created_at DESC);
             """
         )
 

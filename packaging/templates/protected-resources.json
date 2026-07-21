@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "resources": [
+    {
+      "source": "protected/runtime/plugins/macsoft-autocount/__init__.py",
+      "destination": "runtime/plugins/macsoft-autocount/__init__.py"
+    },
+    {
+      "source": "protected/runtime/plugins/macsoft-autocount/plugin.yaml",
+      "destination": "runtime/plugins/macsoft-autocount/plugin.yaml"
+    },
+    {
+      "source": "protected/runtime/plugins/macsoft-autocount/schemas.py",
+      "destination": "runtime/plugins/macsoft-autocount/schemas.py"
+    },
+    {
+      "source": "protected/runtime/plugins/macsoft-autocount/tools.py",
+      "destination": "runtime/plugins/macsoft-autocount/tools.py"
+    },
+    {
+      "source": "protected/runtime/plugins/macsoft-autocount/validator.py",
+      "destination": "runtime/plugins/macsoft-autocount/validator.py"
+    },
+    {
+      "source": "protected/runtime/plugins/macsoft-autocount/skills/autocount-operations/SKILL.md",
+      "destination": "runtime/plugins/macsoft-autocount/skills/autocount-operations/SKILL.md"
+    }
+  ]
+}

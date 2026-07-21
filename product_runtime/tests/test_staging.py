@@ -1,0 +1,67 @@
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+
+from macsoft_runtime.staging import _ignore_site_packages, audit_staging
+
+
+class StagingAuditTests(unittest.TestCase):
+    def test_clean_templates_do_not_contain_development_state(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as temp:
+            staging = Path(temp)
+            import shutil
+
+            shutil.copytree(root / "packaging" / "templates", staging / "templates")
+            self.assertEqual(audit_staging(staging, root), [])
+
+    def test_development_database_and_git_metadata_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            staging = Path(temp)
+            (staging / ".git").mkdir()
+            (staging / "server").mkdir()
+            (staging / "server" / "macsoft-server.db").write_bytes(b"state")
+            issues = audit_staging(staging, Path("C:/MacSoft-Agent"))
+            self.assertTrue(any("Git metadata" in issue for issue in issues))
+            self.assertTrue(any("Forbidden state" in issue for issue in issues))
+
+    def test_editable_python_install_metadata_is_excluded_and_rejected(self) -> None:
+        names = [
+            "__editable__.hermes_agent-0.18.2.pth",
+            "__editable___hermes_agent_0_18_2_finder.py",
+            "direct_url.json",
+            "local-package.egg-link",
+            "pywin32.pth",
+        ]
+        ignored = _ignore_site_packages("site-packages", names)
+        self.assertEqual(
+            ignored,
+            {
+                "__editable__.hermes_agent-0.18.2.pth",
+                "__editable___hermes_agent_0_18_2_finder.py",
+                "direct_url.json",
+                "local-package.egg-link",
+            },
+        )
+
+        with tempfile.TemporaryDirectory() as temp:
+            staging = Path(temp)
+            site_packages = staging / "python" / "Lib" / "site-packages"
+            site_packages.mkdir(parents=True)
+            (site_packages / "__editable__.hermes_agent-0.18.2.pth").write_text(
+                "import editable_finder\n",
+                encoding="utf-8",
+            )
+            (site_packages / "direct_url.json").write_text(
+                '{"url":"file:///C:/MacSoft-Agent/hermes"}',
+                encoding="utf-8",
+            )
+            issues = audit_staging(staging, Path("C:/MacSoft-Agent"))
+            self.assertTrue(any("Editable Python install metadata" in issue for issue in issues))
+            self.assertTrue(any("Development Python path" in issue for issue in issues))
+
+
+if __name__ == "__main__":
+    unittest.main()

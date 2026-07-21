@@ -1,0 +1,546 @@
+﻿from __future__ import annotations
+
+import json
+from collections.abc import Iterator
+
+from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
+from starlette.background import BackgroundTask
+
+from macsoft.chat.active_runs import get_active_chat_registry
+from macsoft.chat.activity import (
+    ActivityKind,
+    ActivityMapper,
+    ActivityStatus,
+    supports_activity_v1,
+)
+from macsoft.chat.capability_policy import (
+    build_protected_system_instruction,
+    enforce_capability_boundary,
+)
+from macsoft.chat.hermes_client import (
+    HermesApiError,
+    request_hermes_reply,
+    stream_hermes_reply_events,
+)
+from macsoft.chat.result_formatter import (
+    format_assistant_reply,
+    format_error_markdown,
+    map_user_readable_error,
+    user_requested_json,
+)
+from macsoft.db import connect_db
+from macsoft.identity.devices import require_device
+from macsoft.security import new_id
+from macsoft.sessions.message_store import (
+    list_ai_context_messages_for_session,
+    save_message,
+)
+from macsoft.sessions.session_store import require_session_for_owner
+from macsoft.skills.client_skills import (
+    build_client_skill_system_instruction,
+    resolve_selected_client_skills,
+)
+
+router = APIRouter()
+
+SERVER_HERMES_MODEL_ID = "server-hermes-current"
+MAX_CHAT_MESSAGE_CHARS = 16_000
+MAX_CHAT_MESSAGE_BYTES = 32_000
+
+
+class ChatStreamRequest(BaseModel):
+    session_id: str
+    message: str
+    preferred_model_id: str | None = None
+    enabled_private_skills: list[dict] = Field(default_factory=list)
+    uploaded_file_ids: list[str] = Field(default_factory=list)
+    client_info: dict = Field(default_factory=dict)
+
+
+def error_response(code: str, message: str) -> dict:
+    return {
+        "ok": False,
+        "error": {
+            "code": code,
+            "message": message,
+            "details": {},
+        },
+    }
+
+
+def sse_event(event_name: str, data: dict) -> str:
+    return (
+        f"event: {event_name}\n"
+        f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+    )
+
+
+def activity_sse(
+    mapper: ActivityMapper,
+    *,
+    activity_id: str,
+    kind: ActivityKind,
+    status: ActivityStatus,
+    title: str,
+    detail: str | None = None,
+) -> str | None:
+    try:
+        data = mapper.activity(
+            activity_id=activity_id,
+            kind=kind,
+            status=status,
+            title=title,
+            detail=detail,
+        )
+        return sse_event("activity", data) if data is not None else None
+    except Exception as error:
+        print(
+            "[MACSOFT_ACTIVITY] mapping failed; continuing chat stream. "
+            f"error_type={error.__class__.__name__}"
+        )
+        return None
+
+
+@router.post("/api/chat/stream")
+def chat_stream(
+    request: Request,
+    body: ChatStreamRequest,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    x_device_id: str | None = Header(default=None, alias="X-Device-Id"),
+    x_macsoft_client_capabilities: str | None = Header(
+        default=None,
+        alias="X-MacSoft-Client-Capabilities",
+    ),
+) -> StreamingResponse:
+    config = request.app.state.config
+    conn = connect_db(config)
+    registry = get_active_chat_registry(request.app)
+    reservation_owned_by_response = False
+    session_reserved = False
+
+    try:
+        try:
+            device = require_device(
+                conn,
+                authorization=authorization,
+                device_id=x_device_id,
+            )
+        except ValueError:
+            raise HTTPException(
+                status_code=401,
+                detail=error_response(
+                    "invalid_device_token",
+                    "Device token is invalid or revoked.",
+                ),
+            )
+
+        user_id = str(device["user_id"])
+        device_id = str(device["device_id"])
+
+        try:
+            require_session_for_owner(
+                conn,
+                session_id=body.session_id,
+                user_id=user_id,
+                owner_device_id=device_id,
+            )
+        except ValueError:
+            raise HTTPException(
+                status_code=404,
+                detail=error_response(
+                    "session_not_found",
+                    "Session does not exist or does not belong to this user.",
+                ),
+            )
+
+        if body.uploaded_file_ids:
+            raise HTTPException(
+                status_code=422,
+                detail=error_response(
+                    "attachments_not_supported",
+                    "Attachments are not supported by this Server endpoint.",
+                ),
+            )
+        if not body.message.strip():
+            raise HTTPException(
+                status_code=422,
+                detail=error_response(
+                    "blank_message",
+                    "Message must contain non-whitespace content.",
+                ),
+            )
+        if (
+            len(body.message) > MAX_CHAT_MESSAGE_CHARS
+            or len(body.message.encode("utf-8")) > MAX_CHAT_MESSAGE_BYTES
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail=error_response(
+                    "message_too_large",
+                    "Message exceeds the supported request size.",
+                ),
+            )
+
+        if not registry.reserve(body.session_id):
+            raise HTTPException(
+                status_code=409,
+                detail=error_response(
+                    "session_busy",
+                    "Session already has an active reply in progress.",
+                ),
+            )
+        session_reserved = True
+
+        try:
+            # Close the narrow delete/reserve race: after reservation, confirm
+            # the session still exists before the first message write.
+            try:
+                require_session_for_owner(
+                    conn,
+                    session_id=body.session_id,
+                    user_id=user_id,
+                    owner_device_id=device_id,
+                )
+            except ValueError:
+                raise HTTPException(
+                    status_code=404,
+                    detail=error_response(
+                        "session_not_found",
+                        "Session does not exist or does not belong to this user.",
+                    ),
+                )
+
+            current_model = SERVER_HERMES_MODEL_ID
+
+            if body.preferred_model_id:
+                print(
+                    "[MACSOFT_CHAT] preferred_model_id ignored; "
+                    "server Hermes current model owns model selection. "
+                    f"preferred_model_id={body.preferred_model_id}"
+                )
+
+            user_message = save_message(
+                conn,
+                session_id=body.session_id,
+                user_id=user_id,
+                owner_device_id=device_id,
+                role="user",
+                content=body.message,
+                model=None,
+            )
+
+            context_window = list_ai_context_messages_for_session(
+                conn,
+                session_id=body.session_id,
+                user_id=user_id,
+                owner_device_id=device_id,
+                current_message_id=str(user_message["message_id"]),
+            )
+
+            hermes_messages = [
+                {
+                    "role": str(message["role"]),
+                    "content": str(message["content"]),
+                }
+                for message in context_window.messages
+            ]
+
+            selected_client_skills = resolve_selected_client_skills(
+                conn,
+                owner_user_id=user_id,
+                owner_device_id=device_id,
+                requested=body.enabled_private_skills,
+            )
+            client_skill_instruction = build_client_skill_system_instruction(
+                selected_client_skills,
+            )
+            hermes_messages.insert(
+                0,
+                {
+                    "role": "system",
+                    "content": build_protected_system_instruction(
+                        client_skill_instruction,
+                    ),
+                },
+            )
+
+            assistant_message_id = new_id("msg_assistant")
+            activity_enabled = supports_activity_v1(x_macsoft_client_capabilities)
+
+            def request_final_reply() -> str:
+                raw_assistant_text = request_hermes_reply(
+                    base_url=config.hermes.api_base_url,
+                    api_key=config.hermes.api_key,
+                    messages=hermes_messages,
+                    timeout_seconds=config.hermes.request_timeout_seconds,
+                )
+                return enforce_capability_boundary(
+                    user_message=body.message,
+                    assistant_text=format_assistant_reply(
+                        raw_assistant_text,
+                        preserve_json=user_requested_json(body.message),
+                    ),
+                )
+
+            def format_final_reply(raw_assistant_text: str) -> str:
+                return enforce_capability_boundary(
+                    user_message=body.message,
+                    assistant_text=format_assistant_reply(
+                        raw_assistant_text,
+                        preserve_json=user_requested_json(body.message),
+                    ),
+                )
+
+            legacy_assistant_text: str | None = None
+            if not activity_enabled:
+                try:
+                    legacy_assistant_text = request_final_reply()
+                except HermesApiError as error:
+                    readable_error = map_user_readable_error(
+                        str(error),
+                        service=error.service,
+                        kind=error.kind,
+                        status_code=error.status_code,
+                    )
+                    print(
+                        "[MACSOFT_AI_SERVICE] request failed before legacy stream. "
+                        f"error_type={error.__class__.__name__} "
+                        f"error_kind={error.kind} status_code={error.status_code}"
+                    )
+                    raise HTTPException(
+                        status_code=502,
+                        detail=error_response(
+                            "ai_service_authentication_failed"
+                            if error.status_code == 401
+                            else "hermes_unavailable",
+                            readable_error.detail,
+                        ),
+                    )
+
+            def event_stream() -> Iterator[str]:
+                try:
+                    yield sse_event(
+                        "message_start",
+                        {
+                            "message_id": assistant_message_id,
+                            "session_id": body.session_id,
+                            "model": current_model,
+                        },
+                    )
+
+                    activity_mapper = ActivityMapper(
+                        message_id=assistant_message_id,
+                        enabled=activity_enabled,
+                    )
+
+                    request_ok = True
+                    if activity_enabled:
+                        activity_event = activity_sse(
+                            activity_mapper,
+                            activity_id="request_received",
+                            kind=ActivityKind.ANALYSIS,
+                            status=ActivityStatus.COMPLETED,
+                            title="Request received",
+                        )
+                        if activity_event is not None:
+                            yield activity_event
+
+                        if selected_client_skills:
+                            activity_event = activity_sse(
+                                activity_mapper,
+                                activity_id="client_skill_selected",
+                                kind=ActivityKind.ANALYSIS,
+                                status=ActivityStatus.COMPLETED,
+                                title="Client preferences selected",
+                                detail=f"Applied {len(selected_client_skills)} enabled Client Skill(s) to this request.",
+                            )
+                            if activity_event is not None:
+                                yield activity_event
+
+                        activity_event = activity_sse(
+                            activity_mapper,
+                            activity_id="agent_processing",
+                            kind=ActivityKind.EXTERNAL_REQUEST,
+                            status=ActivityStatus.STARTED,
+                            title="MacSoft Agent is processing the request",
+                        )
+                        if activity_event is not None:
+                            yield activity_event
+
+                        try:
+                            raw_parts: list[str] = []
+                            for internal_event in stream_hermes_reply_events(
+                                base_url=config.hermes.api_base_url,
+                                api_key=config.hermes.api_key,
+                                messages=hermes_messages,
+                                timeout_seconds=config.hermes.request_timeout_seconds,
+                            ):
+                                if internal_event.get("type") == "text_delta":
+                                    raw_parts.append(str(internal_event.get("text") or ""))
+                                    continue
+                                try:
+                                    mapped_activity = activity_mapper.observed_tool_event(
+                                        internal_event,
+                                    )
+                                except Exception as error:
+                                    print(
+                                        "[MACSOFT_ACTIVITY] Tool event mapping failed; "
+                                        "continuing chat stream. "
+                                        f"error_type={error.__class__.__name__}"
+                                    )
+                                    mapped_activity = None
+                                if mapped_activity is not None:
+                                    yield sse_event("activity", mapped_activity)
+                            assistant_text = format_final_reply("".join(raw_parts).strip())
+                        except HermesApiError as error:
+                            request_ok = False
+                            readable_error = map_user_readable_error(
+                                str(error),
+                                service=error.service,
+                                kind=error.kind,
+                                status_code=error.status_code,
+                            )
+                            assistant_text = format_error_markdown(readable_error)
+                            print(
+                                "[MACSOFT_AI_SERVICE] request failed; returning a sanitized "
+                                f"assistant result. error_type={error.__class__.__name__} "
+                                f"error_kind={error.kind} status_code={error.status_code}"
+                            )
+                    else:
+                        if legacy_assistant_text is None:
+                            raise RuntimeError("Legacy assistant reply was not prepared.")
+                        assistant_text = legacy_assistant_text
+
+                    stream_conn = connect_db(config)
+
+                    try:
+                        try:
+                            assistant_message = save_message(
+                                stream_conn,
+                                session_id=body.session_id,
+                                user_id=user_id,
+                                owner_device_id=device_id,
+                                role="assistant",
+                                content=assistant_text,
+                                model=current_model,
+                                message_id=assistant_message_id,
+                            )
+                        except Exception as error:
+                            activity_mapper.close()
+                            print(
+                                "[MACSOFT_CHAT] Assistant persistence failed. "
+                                f"error_type={error.__class__.__name__}"
+                            )
+                            persistence_error = error_response(
+                                "assistant_persistence_failed",
+                                "The generated reply could not be saved.",
+                            )
+                            yield sse_event("error", persistence_error)
+                            yield sse_event(
+                                "message_done",
+                                {
+                                    "ok": False,
+                                    "message_id": assistant_message_id,
+                                    "session_id": body.session_id,
+                                    "user_message_id": user_message["message_id"],
+                                    "model": current_model,
+                                    "error": persistence_error["error"],
+                                },
+                            )
+                            return
+                    finally:
+                        stream_conn.close()
+
+                    if activity_enabled:
+                        if request_ok:
+                            activity_event = activity_sse(
+                                activity_mapper,
+                                activity_id="agent_processing",
+                                kind=ActivityKind.EXTERNAL_REQUEST,
+                                status=ActivityStatus.COMPLETED,
+                                title="MacSoft Agent finished processing",
+                            )
+                            if activity_event is not None:
+                                yield activity_event
+
+                            activity_event = activity_sse(
+                                activity_mapper,
+                                activity_id="prepare_response",
+                                kind=ActivityKind.FINALIZE,
+                                status=ActivityStatus.STARTED,
+                                title="Preparing the response",
+                            )
+                            if activity_event is not None:
+                                yield activity_event
+
+                            activity_event = activity_sse(
+                                activity_mapper,
+                                activity_id="prepare_response",
+                                kind=ActivityKind.FINALIZE,
+                                status=ActivityStatus.COMPLETED,
+                                title="Response prepared",
+                            )
+                            if activity_event is not None:
+                                yield activity_event
+                        else:
+                            activity_event = activity_sse(
+                                activity_mapper,
+                                activity_id="agent_processing",
+                                kind=ActivityKind.WARNING,
+                                status=ActivityStatus.FAILED,
+                                title="Request failed",
+                                detail=readable_error.detail,
+                            )
+                            if activity_event is not None:
+                                yield activity_event
+
+                    yield sse_event(
+                        "token_delta",
+                        {
+                            "text": assistant_text,
+                        },
+                    )
+
+                    if request_ok:
+                        activity_event = activity_sse(
+                            activity_mapper,
+                            activity_id="request",
+                            kind=ActivityKind.FINALIZE,
+                            status=ActivityStatus.COMPLETED,
+                            title="Request completed",
+                        )
+                        if activity_event is not None:
+                            yield activity_event
+
+                    activity_mapper.close()
+                    yield sse_event(
+                        "message_done",
+                        {
+                            "ok": request_ok,
+                            "message_id": assistant_message["message_id"],
+                            "session_id": body.session_id,
+                            "user_message_id": user_message["message_id"],
+                            "model": current_model,
+                        },
+                    )
+                finally:
+                    registry.release(body.session_id)
+
+            response = StreamingResponse(
+                event_stream(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no",
+                },
+                background=BackgroundTask(registry.release, body.session_id),
+            )
+            reservation_owned_by_response = True
+            return response
+        finally:
+            if session_reserved and not reservation_owned_by_response:
+                registry.release(body.session_id)
+    finally:
+        conn.close()

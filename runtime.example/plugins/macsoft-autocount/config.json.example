@@ -1,0 +1,9 @@
+{
+  "baseUrl": "https://replace-with-autocount-cloud-url",
+  "apiKey": "replace-with-autocount-api-key",
+  "connectorId": "replace-with-connector-id",
+  "companyId": "replace-with-company-id",
+  "requestTimeoutSeconds": 30,
+  "commandTimeoutSeconds": 120,
+  "pollIntervalSeconds": 2
+}

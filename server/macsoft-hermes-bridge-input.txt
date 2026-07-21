@@ -1,0 +1,526 @@
+﻿MacSoft Hermes Bridge Input
+
+================================================================================
+FILE: C:\MacSoft-Agent\server\requirements.txt
+================================================================================
+
+fastapi>=0.115.0,<1.0
+uvicorn[standard]>=0.30.0,<1.0
+pyyaml>=6.0.0,<7.0
+
+================================================================================
+FILE: C:\MacSoft-Agent\server\macsoft-server.yaml
+================================================================================
+
+server:
+  host: "127.0.0.1"
+  port: 8787
+
+database:
+  path: "./data/macsoft-server.db"
+
+hermes:
+  home: "../hermes"
+
+models:
+  default_model: "server-default"
+  fallback_model: "server-fallback"
+
+runtime:
+  mode: "minimal"
+
+autocount:
+  enabled: false
+  catalog_path: "./docs/autocount-api-catalog.json"
+
+================================================================================
+FILE: C:\MacSoft-Agent\server\macsoft\config.py
+================================================================================
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+
+@dataclass(frozen=True)
+class ServerSettings:
+    host: str
+    port: int
+
+
+@dataclass(frozen=True)
+class DatabaseSettings:
+    path: str
+
+
+@dataclass(frozen=True)
+class HermesSettings:
+    home: str
+
+
+@dataclass(frozen=True)
+class ModelSettings:
+    default_model: str
+    fallback_model: str
+
+
+@dataclass(frozen=True)
+class RuntimeSettings:
+    mode: str
+
+
+@dataclass(frozen=True)
+class AutoCountSettings:
+    enabled: bool
+    catalog_path: str
+
+
+@dataclass(frozen=True)
+class AppConfig:
+    server: ServerSettings
+    database: DatabaseSettings
+    hermes: HermesSettings
+    models: ModelSettings
+    runtime: RuntimeSettings
+    autocount: AutoCountSettings
+
+
+def _read_yaml(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        raise FileNotFoundError(f"Config file not found: {path}")
+
+    with path.open("r", encoding="utf-8") as file:
+        data = yaml.safe_load(file) or {}
+
+    if not isinstance(data, dict):
+        raise ValueError("Config file must contain a YAML object.")
+
+    return data
+
+
+def load_config(config_path: str | None = None) -> AppConfig:
+    root_dir = Path(__file__).resolve().parents[1]
+    path = Path(config_path) if config_path else root_dir / "macsoft-server.yaml"
+    data = _read_yaml(path)
+
+    server_data = data.get("server", {})
+    database_data = data.get("database", {})
+    hermes_data = data.get("hermes", {})
+    models_data = data.get("models", {})
+    runtime_data = data.get("runtime", {})
+    autocount_data = data.get("autocount", {})
+
+    return AppConfig(
+        server=ServerSettings(
+            host=str(server_data.get("host", "127.0.0.1")),
+            port=int(server_data.get("port", 8787)),
+        ),
+        database=DatabaseSettings(
+            path=str(database_data.get("path", "./data/macsoft-server.db")),
+        ),
+        hermes=HermesSettings(
+            home=str(hermes_data.get("home", "../hermes")),
+        ),
+        models=ModelSettings(
+            default_model=str(models_data.get("default_model", "server-default")),
+            fallback_model=str(models_data.get("fallback_model", "server-fallback")),
+        ),
+        runtime=RuntimeSettings(
+            mode=str(runtime_data.get("mode", "minimal")),
+        ),
+        autocount=AutoCountSettings(
+            enabled=bool(autocount_data.get("enabled", False)),
+            catalog_path=str(autocount_data.get("catalog_path", "./docs/autocount-api-catalog.json")),
+        ),
+    )
+
+================================================================================
+FILE: C:\MacSoft-Agent\server\macsoft\chat\chat_service.py
+================================================================================
+
+from __future__ import annotations
+
+
+def build_mock_assistant_reply(user_message: str) -> str:
+    clean_message = (user_message or "").strip()
+
+    if not clean_message:
+        return "Hello from MacSoft Server. Your message was empty."
+
+    return (
+        "Hello from MacSoft Server. "
+        "Stage 3 chat stream is working. "
+        f"You said: {clean_message}"
+    )
+
+================================================================================
+FILE: C:\MacSoft-Agent\server\macsoft\gateway\routes_chat.py
+================================================================================
+
+from __future__ import annotations
+
+import json
+from collections.abc import Iterator
+
+from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
+
+from macsoft.chat.chat_service import build_mock_assistant_reply
+from macsoft.db import connect_db
+from macsoft.identity.devices import require_device
+from macsoft.security import new_id
+from macsoft.sessions.message_store import save_message
+from macsoft.sessions.session_store import require_session_for_user
+
+router = APIRouter()
+
+SERVER_HERMES_MODEL_ID = "server-hermes-current"
+
+
+class ChatStreamRequest(BaseModel):
+    session_id: str
+    message: str
+    preferred_model_id: str | None = None
+    enabled_private_skills: list[dict] = Field(default_factory=list)
+    uploaded_file_ids: list[str] = Field(default_factory=list)
+    client_info: dict = Field(default_factory=dict)
+
+
+def error_response(code: str, message: str) -> dict:
+    return {
+        "ok": False,
+        "error": {
+            "code": code,
+            "message": message,
+            "details": {},
+        },
+    }
+
+
+def sse_event(event_name: str, data: dict) -> str:
+    return f"event: {event_name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+@router.post("/api/chat/stream")
+def chat_stream(
+    request: Request,
+    body: ChatStreamRequest,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    x_device_id: str | None = Header(default=None, alias="X-Device-Id"),
+) -> StreamingResponse:
+    config = request.app.state.config
+    conn = connect_db(config)
+
+    try:
+        try:
+            device = require_device(
+                conn,
+                authorization=authorization,
+                device_id=x_device_id,
+            )
+        except ValueError:
+            raise HTTPException(
+                status_code=401,
+                detail=error_response(
+                    "invalid_device_token",
+                    "Device token is invalid or revoked.",
+                ),
+            )
+
+        try:
+            require_session_for_user(
+                conn,
+                session_id=body.session_id,
+                user_id=str(device["user_id"]),
+            )
+        except ValueError:
+            raise HTTPException(
+                status_code=404,
+                detail=error_response(
+                    "session_not_found",
+                    "Session does not exist or does not belong to this user.",
+                ),
+            )
+
+        current_model = SERVER_HERMES_MODEL_ID
+
+        if body.preferred_model_id:
+            print(
+                "[MACSOFT_CHAT] preferred_model_id ignored; "
+                "server Hermes current model owns model selection. "
+                f"preferred_model_id={body.preferred_model_id}"
+            )
+
+        user_message = save_message(
+            conn,
+            session_id=body.session_id,
+            user_id=str(device["user_id"]),
+            role="user",
+            content=body.message,
+            model=None,
+        )
+
+        assistant_message_id = new_id("msg_assistant")
+        assistant_text = build_mock_assistant_reply(body.message)
+
+        def event_stream() -> Iterator[str]:
+            yield sse_event(
+                "message_start",
+                {
+                    "message_id": assistant_message_id,
+                    "session_id": body.session_id,
+                    "model": current_model,
+                },
+            )
+
+            yield sse_event(
+                "token_delta",
+                {
+                    "text": assistant_text,
+                },
+            )
+
+            stream_conn = connect_db(config)
+
+            try:
+                assistant_message = save_message(
+                    stream_conn,
+                    session_id=body.session_id,
+                    user_id=str(device["user_id"]),
+                    role="assistant",
+                    content=assistant_text,
+                    model=current_model,
+                )
+
+                yield sse_event(
+                    "message_done",
+                    {
+                        "ok": True,
+                        "message_id": assistant_message["message_id"],
+                        "session_id": body.session_id,
+                        "user_message_id": user_message["message_id"],
+                        "model": current_model,
+                    },
+                )
+            finally:
+                stream_conn.close()
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+    finally:
+        conn.close()
+
+================================================================================
+FILE: C:\MacSoft-Agent\server\macsoft\sessions\message_store.py
+================================================================================
+
+from __future__ import annotations
+
+import sqlite3
+from typing import Any
+
+from macsoft.security import new_id, utc_now_iso
+from macsoft.sessions.session_store import touch_session
+
+
+def _row_to_message(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": row["message_id"],
+        "message_id": row["message_id"],
+        "session_id": row["session_id"],
+        "user_id": row["user_id"],
+        "role": row["role"],
+        "content": row["content"],
+        "text": row["content"],
+        "status": row["status"],
+        "model": row["model"],
+        "created_at": row["created_at"],
+    }
+
+
+def save_message(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    user_id: str,
+    role: str,
+    content: str,
+    status: str = "saved",
+    model: str | None = None,
+) -> dict[str, Any]:
+    now = utc_now_iso()
+    prefix = "msg_user" if role == "user" else "msg_assistant"
+    message_id = new_id(prefix)
+
+    conn.execute(
+        """
+        INSERT INTO messages (
+            message_id,
+            session_id,
+            user_id,
+            role,
+            content,
+            status,
+            model,
+            created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            message_id,
+            session_id,
+            user_id,
+            role,
+            content,
+            status,
+            model,
+            now,
+        ),
+    )
+    conn.commit()
+
+    touch_session(
+        conn,
+        session_id=session_id,
+        preview=content,
+    )
+
+    row = conn.execute(
+        """
+        SELECT
+            message_id,
+            session_id,
+            user_id,
+            role,
+            content,
+            status,
+            model,
+            created_at
+        FROM messages
+        WHERE message_id = ?
+        """,
+        (message_id,),
+    ).fetchone()
+
+    if row is None:
+        raise RuntimeError("Failed to save message.")
+
+    return _row_to_message(row)
+
+
+def list_messages_for_session(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    user_id: str,
+) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT
+            message_id,
+            session_id,
+            user_id,
+            role,
+            content,
+            status,
+            model,
+            created_at
+        FROM messages
+        WHERE session_id = ?
+          AND user_id = ?
+        ORDER BY created_at ASC
+        """,
+        (session_id, user_id),
+    ).fetchall()
+
+    return [_row_to_message(row) for row in rows]
+
+================================================================================
+FILE: C:\MacSoft-Agent\server\macsoft\server.py
+================================================================================
+
+from __future__ import annotations
+
+import uvicorn
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from macsoft.config import load_config
+from macsoft.db import init_db
+from macsoft.gateway.routes_chat import router as chat_router
+from macsoft.gateway.routes_client import router as client_router
+from macsoft.gateway.routes_health import router as health_router
+from macsoft.gateway.routes_sessions import router as sessions_router
+
+
+def create_app() -> FastAPI:
+    config = load_config()
+
+    init_db(config)
+
+    app = FastAPI(
+        title="Mac Soft AI Server",
+        version="dev",
+    )
+
+    app.state.config = config
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=[
+            "Content-Type",
+            "Authorization",
+            "X-Device-Id",
+            "X-Client-Version",
+            "Accept",
+        ],
+    )
+
+    app.include_router(health_router)
+    app.include_router(client_router)
+    app.include_router(sessions_router)
+    app.include_router(chat_router)
+
+    return app
+
+
+app = create_app()
+
+
+def main() -> None:
+    config = load_config()
+
+    print("[MACSOFT_SERVER] starting")
+    print(f"[MACSOFT_SERVER] host={config.server.host}")
+    print(f"[MACSOFT_SERVER] port={config.server.port}")
+    print(f"[MACSOFT_SERVER] hermes_home={config.hermes.home}")
+    print(f"[MACSOFT_SERVER] runtime_mode={config.runtime.mode}")
+    print("[MACSOFT_SERVER] db=ready")
+    print("[MACSOFT_SERVER] client_pairing=ready")
+    print("[MACSOFT_SERVER] sessions=ready")
+    print("[MACSOFT_SERVER] chat_stream=mock-ready")
+
+    uvicorn.run(
+        "macsoft.server:app",
+        host=config.server.host,
+        port=config.server.port,
+        reload=False,
+    )
+
+
+if __name__ == "__main__":
+    main()

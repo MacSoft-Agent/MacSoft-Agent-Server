@@ -1,0 +1,23 @@
+model:
+  provider: replace-with-provider
+  default: replace-with-model
+
+platforms:
+  api_server:
+    enabled: true
+    extra:
+      host: 127.0.0.1
+      port: 8642
+      key: replace-with-local-api-key
+
+platform_toolsets:
+  api_server:
+    - macsoft_autocount
+
+plugins:
+  enabled:
+    - macsoft-autocount
+  disabled: []
+  entries:
+    macsoft-autocount:
+      allow_tool_override: false

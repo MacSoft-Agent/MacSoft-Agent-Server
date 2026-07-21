@@ -1,0 +1,23 @@
+﻿server:
+  host: "0.0.0.0"
+  port: 8787
+
+database:
+  path: "./data/macsoft-server.db"
+
+hermes:
+  home: "../hermes"
+  api_base_url: "http://127.0.0.1:8642"
+  api_key: "macsoft-local-dev"
+  request_timeout_seconds: 180
+
+models:
+  default_model: "server-default"
+  fallback_model: "server-fallback"
+
+runtime:
+  mode: "minimal"
+
+autocount:
+  enabled: false
+  catalog_path: "./docs/autocount-api-catalog.json"

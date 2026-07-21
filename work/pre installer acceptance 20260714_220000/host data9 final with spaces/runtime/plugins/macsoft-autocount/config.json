@@ -1,0 +1,9 @@
+{
+  "baseUrl": "https://example.invalid",
+  "apiKey": "acceptance-key-not-real-20260714",
+  "connectorId": "acceptance-connector",
+  "companyId": "acceptance-company",
+  "requestTimeoutSeconds": 30,
+  "commandTimeoutSeconds": 120,
+  "pollIntervalSeconds": 2
+}

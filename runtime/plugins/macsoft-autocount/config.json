@@ -1,0 +1,9 @@
+﻿{
+  "baseUrl": "https://api.autocount.cloud",
+  "apiKey": "ak_07185b55d40567153bfb101f528e01129c13778187887814",
+  "connectorId": "zhen-main",
+  "companyId": "testing",
+  "requestTimeoutSeconds": 30,
+  "commandTimeoutSeconds": 180,
+  "pollIntervalSeconds": 2
+}

@@ -1,0 +1,65 @@
+# ============================================================
+# Generated packaging and release artifacts
+# ============================================================
+staging/
+release/
+backup/
+
+# ============================================================
+# Hermes / Electron generated dependencies and builds
+# ============================================================
+hermes/node_modules/
+hermes/apps/desktop/release/
+hermes/apps/desktop/coverage/
+
+# ============================================================
+# Python generated files
+# ============================================================
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.venv/
+**/venv/
+
+# ============================================================
+# JavaScript generated files
+# ============================================================
+**/node_modules/
+**/.vite/
+**/coverage/
+
+# ============================================================
+# Runtime data and databases
+# ============================================================
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.log
+
+# ============================================================
+# Secrets and local environment
+# ============================================================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.p12
+
+# ============================================================
+# Editors and Windows
+# ============================================================
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+docs/hermes-bridge-probe.txt
+
+docs/hermes-bridge-probe.txt

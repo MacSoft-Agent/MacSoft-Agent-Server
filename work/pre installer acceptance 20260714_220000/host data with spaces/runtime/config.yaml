@@ -1,0 +1,26 @@
+model:
+  provider: openai-codex
+  default: gpt-5.4
+
+platforms:
+  api_server:
+    enabled: true
+    extra:
+      host: 127.0.0.1
+      port: 8642
+      key: "8-k-qdvDBf-a-sm5-6S9vezMT6k27EQSB9Q_1Dg--Gs"
+
+platform_toolsets:
+  api_server:
+    - macsoft_autocount
+
+plugins:
+  enabled:
+    - macsoft-autocount
+  disabled: []
+  entries:
+    macsoft-autocount:
+      allow_tool_override: false
+
+security:
+  redact_secrets: true

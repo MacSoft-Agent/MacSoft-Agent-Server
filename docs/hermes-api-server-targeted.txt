@@ -1,0 +1,1946 @@
+﻿=== Hermes API Server Targeted Probe ===
+Time: 2026-07-10T09:40:07.4903944+08:00
+
+
+=== Config / API server setup L840-L950 ===
+  840:     # tools (terminal notify_on_complete / watch_patterns, delegate_task
+  841:     # background=True) must NOT promise delivery on this path â€” see
+  842:     # ``async_delivery_supported()``.
+  843:     supports_async_delivery: bool = False
+  844: 
+  845:     def __init__(self, config: PlatformConfig):
+  846:         super().__init__(config, Platform.API_SERVER)
+  847:         extra = config.extra or {}
+  848:         self._host: str = extra.get("host", os.getenv("API_SERVER_HOST", DEFAULT_HOST))
+  849:         raw_port = extra.get("port")
+  850:         if raw_port is None:
+  851:             raw_port = os.getenv("API_SERVER_PORT", str(DEFAULT_PORT))
+  852:         self._port: int = _coerce_port(raw_port, DEFAULT_PORT)
+  853:         self._api_key: str = extra.get("key", os.getenv("API_SERVER_KEY", ""))
+  854:         self._cors_origins: tuple[str, ...] = self._parse_cors_origins(
+  855:             extra.get("cors_origins", os.getenv("API_SERVER_CORS_ORIGINS", "")),
+  856:         )
+  857:         self._model_name: str = self._resolve_model_name(
+  858:             extra.get("model_name", os.getenv("API_SERVER_MODEL_NAME", "")),
+  859:         )
+  860:         # model_routes: maps incoming ``model`` field values to specific
+  861:         # provider/model configs so one API server instance can serve
+  862:         # multiple clients on different backends.
+  863:         #
+  864:         # Config format (platforms.api_server.extra in the gateway config):
+  865:         #   model_routes:
+  866:         #     minimax-m2:          # alias the client sends as the "model" field
+  867:         #       model: "minimax/minimax-m1"
+  868:         #       provider: "openrouter"   # optional â€” resolved via the provider
+  869:         #                                # credential chain when set
+  870:         #       api_key: "sk-â€¦"          # optional â€” per-route UPSTREAM provider
+  871:         #                                # key override (NOT caller auth; never logged)
+  872:         #       base_url: "https://â€¦"    # optional â€” per-route base URL override
+  873:         self._model_routes: Dict[str, Dict[str, Any]] = self._parse_model_routes(
+  874:             extra.get("model_routes"),
+  875:         )
+  876:         self._app: Optional["web.Application"] = None
+  877:         self._runner: Optional["web.AppRunner"] = None
+  878:         self._site: Optional["web.TCPSite"] = None
+  879:         self._response_store = ResponseStore()
+  880:         # Active run streams: run_id -> asyncio.Queue of SSE event dicts
+  881:         self._run_streams: Dict[str, "asyncio.Queue[Optional[Dict]]"] = {}
+  882:         # Creation timestamps for orphaned-run TTL sweep
+  883:         self._run_streams_created: Dict[str, float] = {}
+  884:         # Active run agent/task references for stop support
+  885:         self._active_run_agents: Dict[str, Any] = {}
+  886:         self._active_run_tasks: Dict[str, "asyncio.Task"] = {}
+  887:         # Pollable run status for dashboards and external control-plane UIs.
+  888:         self._run_statuses: Dict[str, Dict[str, Any]] = {}
+  889:         # Active approval session key for each run_id.  The approval core
+  890:         # resolves requests by session key, while API clients address the
+  891:         # in-flight run by run_id.
+  892:         self._run_approval_sessions: Dict[str, str] = {}
+  893:         self._session_db: Optional[Any] = None  # Lazy-init SessionDB for session continuity
+  894:         # Concurrency cap shared across all agent-serving endpoints
+  895:         # (/v1/chat/completions, /v1/responses, /v1/runs). Read from
+  896:         # config.yaml gateway.api_server.max_concurrent_runs; 0 disables
+  897:         # the cap. Bounds CPU / memory / upstream-LLM-quota exhaustion
+  898:         # from a request flood (#7483).
+  899:         self._max_concurrent_runs: int = self._resolve_max_concurrent_runs()
+  900:         # Number of in-flight runs on the non-streaming chat/responses paths
+  901:         # (the /v1/runs path tracks its own in-flight set via _run_streams).
+  902:         self._inflight_agent_runs: int = 0
+  903: 
+  904:     @staticmethod
+  905:     def _parse_cors_origins(value: Any) -> tuple[str, ...]:
+  906:         """Normalize configured CORS origins into a stable tuple."""
+  907:         if not value:
+  908:             return ()
+  909: 
+  910:         if isinstance(value, str):
+  911:             items = value.split(",")
+  912:         elif isinstance(value, (list, tuple, set)):
+  913:             items = value
+  914:         else:
+  915:             items = [str(value)]
+  916: 
+  917:         return tuple(str(item).strip() for item in items if str(item).strip())
+  918: 
+  919:     @staticmethod
+  920:     def _resolve_max_concurrent_runs() -> int:
+  921:         """Read the concurrent-run cap from config.yaml (0 disables).
+  922: 
+  923:         gateway.api_server.max_concurrent_runs. Falls back to the historical
+  924:         default of 10 when unset or malformed. Negative values are clamped
+  925:         to 0 (disabled).
+  926:         """
+  927:         default = 10
+  928:         try:
+  929:             from hermes_cli.config import cfg_get, load_config
+  930: 
+  931:             raw = cfg_get(
+  932:                 load_config(),
+  933:                 "gateway",
+  934:                 "api_server",
+  935:                 "max_concurrent_runs",
+  936:                 default=default,
+  937:             )
+  938:             value = int(raw)
+  939:         except Exception:
+  940:             return default
+  941:         return max(0, value)
+  942: 
+  943:     @staticmethod
+  944:     def _resolve_model_name(explicit: str) -> str:
+  945:         """Derive the advertised model name for /v1/models.
+  946: 
+  947:         Priority:
+  948:         1. Explicit override (config extra or API_SERVER_MODEL_NAME env var)
+  949:         2. Active profile name (so each profile advertises a distinct model)
+  950:         3. Fallback: "hermes-agent"
+
+=== Session key / create agent / model resolution L1200-L1380 ===
+ 1200:                 logger.warning(
+ 1201:                     "api_server model_routes: route %r has no 'model'; dropping", alias_str
+ 1202:                 )
+ 1203:                 continue
+ 1204:             routes[alias_str] = route
+ 1205:         return routes
+ 1206: 
+ 1207:     def _resolve_route(self, model_alias: Any) -> Optional[Dict[str, Any]]:
+ 1208:         """Return the model_routes entry for *model_alias*, or None."""
+ 1209:         if not self._model_routes or not isinstance(model_alias, str):
+ 1210:             return None
+ 1211:         return self._model_routes.get(model_alias)
+ 1212: 
+ 1213:     def _session_model_override_for(self, session_key: Optional[str]) -> Optional[Dict[str, Any]]:
+ 1214:         """Return the gateway's session ``/model`` override for *session_key*, if any.
+ 1215: 
+ 1216:         The gateway tracks per-session ``/model`` switches in
+ 1217:         ``GatewayRunner._session_model_overrides``.  API-server requests that
+ 1218:         share such a session key must keep honouring the explicit session
+ 1219:         override even when the request's ``model`` field matches a configured
+ 1220:         route â€” a user-issued ``/model`` always wins over static config.
+ 1221:         """
+ 1222:         if not session_key:
+ 1223:             return None
+ 1224:         try:
+ 1225:             from gateway.run import _gateway_runner_ref
+ 1226:             runner = _gateway_runner_ref()
+ 1227:             if runner is None:
+ 1228:                 return None
+ 1229:             override = runner._session_model_overrides.get(session_key)
+ 1230:             return dict(override) if isinstance(override, dict) else None
+ 1231:         except Exception:
+ 1232:             return None
+ 1233: 
+ 1234:     def _create_agent(
+ 1235:         self,
+ 1236:         ephemeral_system_prompt: Optional[str] = None,
+ 1237:         session_id: Optional[str] = None,
+ 1238:         stream_delta_callback=None,
+ 1239:         tool_progress_callback=None,
+ 1240:         tool_start_callback=None,
+ 1241:         tool_complete_callback=None,
+ 1242:         gateway_session_key: Optional[str] = None,
+ 1243:         route: Optional[Dict[str, Any]] = None,
+ 1244:     ) -> Any:
+ 1245:         """
+ 1246:         Create an AIAgent instance using the gateway's runtime config.
+ 1247: 
+ 1248:         Uses _resolve_runtime_agent_kwargs() to pick up model, api_key,
+ 1249:         base_url, etc. from config.yaml / env vars.  Toolsets are resolved
+ 1250:         from config.yaml platform_toolsets.api_server (same as all other
+ 1251:         gateway platforms), falling back to the hermes-api-server default.
+ 1252: 
+ 1253:         ``gateway_session_key`` is a stable per-channel identifier supplied
+ 1254:         by the client (via ``X-Hermes-Session-Key``).  Unlike ``session_id``
+ 1255:         which scopes the short-term transcript and rotates on /new, this
+ 1256:         key is meant to persist across transcripts so long-term memory
+ 1257:         providers (e.g. Honcho) can scope their per-chat state correctly
+ 1258:         â€” matching the semantics of the native gateway's ``session_key``.
+ 1259: 
+ 1260:         ``route`` is an optional ``model_routes`` entry (per-client model
+ 1261:         routing).  When set â€” and no session ``/model`` override exists for
+ 1262:         this session â€” its model/provider/api_key/base_url override the
+ 1263:         global defaults for this agent instance only.
+ 1264:         """
+ 1265:         from run_agent import AIAgent
+ 1266:         from gateway.run import (
+ 1267:             _current_max_iterations,
+ 1268:             _resolve_runtime_agent_kwargs,
+ 1269:             _resolve_gateway_model,
+ 1270:             _load_gateway_config,
+ 1271:             GatewayRunner,
+ 1272:         )
+ 1273:         from hermes_cli.tools_config import _get_platform_tools
+ 1274: 
+ 1275:         runtime_kwargs = _resolve_runtime_agent_kwargs()
+ 1276:         reasoning_config = GatewayRunner._load_reasoning_config()
+ 1277:         model = _resolve_gateway_model()
+ 1278: 
+ 1279:         # When the primary provider's auth fails (expired token / 429 quota
+ 1280:         # cap), _resolve_runtime_agent_kwargs() falls through to the fallback
+ 1281:         # provider chain, whose runtime dict carries its own ``model`` key.
+ 1282:         # Pop it and let it override the config model, mirroring the native
+ 1283:         # gateway path (_resolve_session_agent_runtime in run.py). Otherwise
+ 1284:         # the explicit ``model=model`` below collides with the ``**runtime_kwargs``
+ 1285:         # spread â†’ "got multiple values for keyword argument 'model'", 500ing
+ 1286:         # every /v1/chat/completions request while a fallback is active.
+ 1287:         runtime_model = runtime_kwargs.pop("model", None)
+ 1288:         if runtime_model:
+ 1289:             model = runtime_model
+ 1290: 
+ 1291:         # Per-client model routing (model_routes config).  The route was
+ 1292:         # resolved from the request's ``model`` field by the HTTP handler.
+ 1293:         # Precedence (highest first): session ``/model`` override â†’ model_routes
+ 1294:         # route â†’ global config â€” an explicit user-issued ``/model`` on the
+ 1295:         # session always beats static per-client route config.
+ 1296:         session_override = self._session_model_override_for(
+ 1297:             gateway_session_key or session_id
+ 1298:         )
+ 1299:         if route and not session_override:
+ 1300:             if route.get("provider"):
+ 1301:                 # Resolve real credentials for the routed provider (mirrors
+ 1302:                 # the channel_overrides path in gateway/run.py) so a route
+ 1303:                 # without an explicit api_key/base_url still gets the right
+ 1304:                 # provider auth instead of the default provider's key.
+ 1305:                 try:
+ 1306:                     from gateway.run import _resolve_runtime_agent_kwargs_for_provider
+ 1307:                     provider_kwargs = _resolve_runtime_agent_kwargs_for_provider(
+ 1308:                         route["provider"]
+ 1309:                     )
+ 1310:                     provider_kwargs.pop("model", None)
+ 1311:                     runtime_kwargs.update(provider_kwargs)
+ 1312:                 except Exception:
+ 1313:                     # Fall back to just switching the provider name; explicit
+ 1314:                     # per-route api_key/base_url below can still complete auth.
+ 1315:                     runtime_kwargs["provider"] = route["provider"]
+ 1316:             if route.get("model"):
+ 1317:                 model = route["model"]
+ 1318:             # Per-route secrets are upstream provider credentials. Never log
+ 1319:             # them (compare _check_auth: caller auth stays the global bearer
+ 1320:             # key checked with hmac.compare_digest).
+ 1321:             if route.get("api_key"):
+ 1322:                 runtime_kwargs["api_key"] = route["api_key"]
+ 1323:             if route.get("base_url"):
+ 1324:                 runtime_kwargs["base_url"] = route["base_url"]
+ 1325:             logger.debug(
+ 1326:                 "api_server model route applied: model=%s provider=%s",
+ 1327:                 model,
+ 1328:                 runtime_kwargs.get("provider"),
+ 1329:             )
+ 1330:         elif route and session_override:
+ 1331:             logger.debug(
+ 1332:                 "api_server model route skipped: session /model override wins for %s",
+ 1333:                 gateway_session_key or session_id,
+ 1334:             )
+ 1335: 
+ 1336:         user_config = _load_gateway_config()
+ 1337:         enabled_toolsets = sorted(_get_platform_tools(user_config, "api_server"))
+ 1338: 
+ 1339:         max_iterations = _current_max_iterations()
+ 1340: 
+ 1341:         # Load fallback provider chain so the API server platform has the
+ 1342:         # same fallback behaviour as Telegram/Discord/Slack (fixes #4954).
+ 1343:         fallback_model = GatewayRunner._load_fallback_model()
+ 1344: 
+ 1345:         agent = AIAgent(
+ 1346:             model=model,
+ 1347:             **runtime_kwargs,
+ 1348:             max_iterations=max_iterations,
+ 1349:             quiet_mode=True,
+ 1350:             verbose_logging=False,
+ 1351:             ephemeral_system_prompt=ephemeral_system_prompt or None,
+ 1352:             enabled_toolsets=enabled_toolsets,
+ 1353:             session_id=session_id,
+ 1354:             platform="api_server",
+ 1355:             stream_delta_callback=stream_delta_callback,
+ 1356:             tool_progress_callback=tool_progress_callback,
+ 1357:             tool_start_callback=tool_start_callback,
+ 1358:             tool_complete_callback=tool_complete_callback,
+ 1359:             session_db=self._ensure_session_db(),
+ 1360:             fallback_model=fallback_model,
+ 1361:             reasoning_config=reasoning_config,
+ 1362:             gateway_session_key=gateway_session_key,
+ 1363:         )
+ 1364:         return agent
+ 1365: 
+ 1366:     # ------------------------------------------------------------------
+ 1367:     # HTTP Handlers
+ 1368:     # ------------------------------------------------------------------
+ 1369: 
+ 1370:     async def _handle_health(self, request: "web.Request") -> "web.Response":
+ 1371:         """GET /health â€” simple health check."""
+ 1372:         return web.json_response(
+ 1373:             {"status": "ok", "platform": "hermes-agent", "version": _hermes_version()}
+ 1374:         )
+ 1375: 
+ 1376:     async def _handle_health_detailed(self, request: "web.Request") -> "web.Response":
+ 1377:         """GET /health/detailed â€” rich status for cross-container dashboard probing.
+ 1378: 
+ 1379:         Returns gateway state, connected platforms, PID, and uptime so the
+ 1380:         dashboard can display full status without needing a shared PID file or
+
+=== Main request handlers part 1 L1800-L2350 ===
+ 1800:         auth_err = self._check_auth(request)
+ 1801:         if auth_err:
+ 1802:             return auth_err
+ 1803:         session_id = request.match_info["session_id"]
+ 1804:         session, err = self._get_existing_session_or_404(session_id)
+ 1805:         if err:
+ 1806:             return err
+ 1807:         db = self._ensure_session_db()
+ 1808:         deleted = db.delete_session(session_id)
+ 1809:         return web.json_response({"object": "hermes.session.deleted", "id": session_id, "deleted": bool(deleted)})
+ 1810: 
+ 1811:     async def _handle_session_messages(self, request: "web.Request") -> "web.Response":
+ 1812:         """GET /api/sessions/{session_id}/messages."""
+ 1813:         auth_err = self._check_auth(request)
+ 1814:         if auth_err:
+ 1815:             return auth_err
+ 1816:         session_id = request.match_info["session_id"]
+ 1817:         _, err = self._get_existing_session_or_404(session_id)
+ 1818:         if err:
+ 1819:             return err
+ 1820:         db = self._ensure_session_db()
+ 1821:         resolved_id = db.resolve_resume_session_id(session_id)
+ 1822:         messages = db.get_messages(resolved_id)
+ 1823:         return web.json_response({
+ 1824:             "object": "list",
+ 1825:             "session_id": resolved_id,
+ 1826:             "data": [self._message_response(m) for m in messages],
+ 1827:         })
+ 1828: 
+ 1829:     async def _handle_fork_session(self, request: "web.Request") -> "web.Response":
+ 1830:         """POST /api/sessions/{session_id}/fork â€” branch via current SessionDB primitives."""
+ 1831:         auth_err = self._check_auth(request)
+ 1832:         if auth_err:
+ 1833:             return auth_err
+ 1834:         source_id = request.match_info["session_id"]
+ 1835:         source, err = self._get_existing_session_or_404(source_id)
+ 1836:         if err:
+ 1837:             return err
+ 1838:         body, err = await self._read_json_body(request)
+ 1839:         if err:
+ 1840:             return err
+ 1841:         db = self._ensure_session_db()
+ 1842:         fork_id = str(body.get("id") or body.get("session_id") or f"api_{int(time.time())}_{uuid.uuid4().hex[:8]}").strip()
+ 1843:         if not fork_id or re.search(r'[\r\n\x00]', fork_id):
+ 1844:             return web.json_response(_openai_error("Invalid session ID", code="invalid_session_id"), status=400)
+ 1845:         if db.get_session(fork_id):
+ 1846:             return web.json_response(_openai_error(f"Session already exists: {fork_id}", code="session_exists"), status=409)
+ 1847: 
+ 1848:         # Match the CLI /branch semantics: mark the original as branched, then
+ 1849:         # create a child session that carries the transcript forward. This uses
+ 1850:         # SessionDB's native parent_session_id/end_reason visibility model rather
+ 1851:         # than inventing a parallel fork store.
+ 1852:         db.end_session(source_id, "branched")
+ 1853:         db.create_session(
+ 1854:             fork_id,
+ 1855:             "api_server",
+ 1856:             model=source.get("model"),
+ 1857:             system_prompt=source.get("system_prompt"),
+ 1858:             parent_session_id=source_id,
+ 1859:         )
+ 1860:         messages = db.get_messages(source_id)
+ 1861:         db.replace_messages(fork_id, messages)
+ 1862:         title = body.get("title")
+ 1863:         if title is None:
+ 1864:             base = source.get("title") or "fork"
+ 1865:             try:
+ 1866:                 title = db.get_next_title_in_lineage(base)
+ 1867:             except Exception:
+ 1868:                 title = f"{base} fork"
+ 1869:         try:
+ 1870:             db.set_session_title(fork_id, str(title))
+ 1871:         except ValueError as exc:
+ 1872:             return web.json_response(_openai_error(str(exc), code="invalid_title"), status=400)
+ 1873:         fork = db.get_session(fork_id) or {"id": fork_id, "parent_session_id": source_id}
+ 1874:         return web.json_response({"object": "hermes.session", "session": self._session_response(fork)}, status=201)
+ 1875: 
+ 1876:     async def _handle_session_chat(self, request: "web.Request") -> "web.Response":
+ 1877:         """POST /api/sessions/{session_id}/chat â€” one synchronous agent turn."""
+ 1878:         auth_err = self._check_auth(request)
+ 1879:         if auth_err:
+ 1880:             return auth_err
+ 1881:         gateway_session_key, key_err = self._parse_session_key_header(request)
+ 1882:         if key_err is not None:
+ 1883:             return key_err
+ 1884:         session_id = request.match_info["session_id"]
+ 1885:         _, err = self._get_existing_session_or_404(session_id)
+ 1886:         if err:
+ 1887:             return err
+ 1888:         body, err = await self._read_json_body(request)
+ 1889:         if err:
+ 1890:             return err
+ 1891:         user_message, err = _session_chat_user_message(body)
+ 1892:         if err is not None:
+ 1893:             return err
+ 1894:         system_prompt = body.get("system_message") or body.get("instructions")
+ 1895:         if system_prompt is not None and not isinstance(system_prompt, str):
+ 1896:             return web.json_response(_openai_error("system_message must be a string", code="invalid_system_message"), status=400)
+ 1897:         history = self._conversation_history_for_session(session_id)
+ 1898:         result, usage = await self._run_agent(
+ 1899:             user_message=user_message,
+ 1900:             conversation_history=history,
+ 1901:             ephemeral_system_prompt=system_prompt,
+ 1902:             session_id=session_id,
+ 1903:             gateway_session_key=gateway_session_key,
+ 1904:         )
+ 1905:         effective_session_id = result.get("session_id") if isinstance(result, dict) else session_id
+ 1906:         final_response = _resolve_media_to_data_urls(result.get("final_response", "") if isinstance(result, dict) else "")
+ 1907:         headers = {"X-Hermes-Session-Id": effective_session_id or session_id}
+ 1908:         if gateway_session_key:
+ 1909:             headers["X-Hermes-Session-Key"] = gateway_session_key
+ 1910:         return web.json_response(
+ 1911:             {
+ 1912:                 "object": "hermes.session.chat.completion",
+ 1913:                 "session_id": effective_session_id or session_id,
+ 1914:                 "message": {"role": "assistant", "content": final_response},
+ 1915:                 "usage": usage,
+ 1916:             },
+ 1917:             headers=headers,
+ 1918:         )
+ 1919: 
+ 1920:     async def _handle_session_chat_stream(self, request: "web.Request") -> "web.StreamResponse":
+ 1921:         """POST /api/sessions/{session_id}/chat/stream â€” SSE wrapper over _run_agent."""
+ 1922:         auth_err = self._check_auth(request)
+ 1923:         if auth_err:
+ 1924:             return auth_err
+ 1925:         gateway_session_key, key_err = self._parse_session_key_header(request)
+ 1926:         if key_err is not None:
+ 1927:             return key_err
+ 1928:         session_id = request.match_info["session_id"]
+ 1929:         _, err = self._get_existing_session_or_404(session_id)
+ 1930:         if err:
+ 1931:             return err
+ 1932:         body, err = await self._read_json_body(request)
+ 1933:         if err:
+ 1934:             return err
+ 1935:         user_message, err = _session_chat_user_message(body)
+ 1936:         if err is not None:
+ 1937:             return err
+ 1938:         system_prompt = body.get("system_message") or body.get("instructions")
+ 1939:         if system_prompt is not None and not isinstance(system_prompt, str):
+ 1940:             return web.json_response(_openai_error("system_message must be a string", code="invalid_system_message"), status=400)
+ 1941: 
+ 1942:         loop = asyncio.get_running_loop()
+ 1943:         queue: "asyncio.Queue[Optional[tuple[str, Dict[str, Any]]]]" = asyncio.Queue()
+ 1944:         message_id = f"msg_{uuid.uuid4().hex}"
+ 1945:         run_id = f"run_{uuid.uuid4().hex}"
+ 1946:         seq = 0
+ 1947: 
+ 1948:         def _event_payload(name: str, payload: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
+ 1949:             nonlocal seq
+ 1950:             seq += 1
+ 1951:             payload.setdefault("session_id", session_id)
+ 1952:             payload.setdefault("run_id", run_id)
+ 1953:             payload.setdefault("seq", seq)
+ 1954:             payload.setdefault("ts", time.time())
+ 1955:             return name, payload
+ 1956: 
+ 1957:         def _enqueue(name: str, payload: Dict[str, Any]) -> None:
+ 1958:             event = _event_payload(name, payload)
+ 1959:             try:
+ 1960:                 running_loop = asyncio.get_running_loop()
+ 1961:             except RuntimeError:
+ 1962:                 running_loop = None
+ 1963:             try:
+ 1964:                 if running_loop is loop:
+ 1965:                     queue.put_nowait(event)
+ 1966:                 else:
+ 1967:                     loop.call_soon_threadsafe(queue.put_nowait, event)
+ 1968:             except RuntimeError:
+ 1969:                 pass
+ 1970: 
+ 1971:         def _delta(delta: str) -> None:
+ 1972:             if delta:
+ 1973:                 _enqueue("assistant.delta", {"message_id": message_id, "delta": delta})
+ 1974: 
+ 1975:         def _tool_progress(event_type: str, tool_name: str = None, preview: str = None, args=None, **kwargs) -> None:
+ 1976:             if event_type == "reasoning.available":
+ 1977:                 _enqueue("tool.progress", {"message_id": message_id, "tool_name": tool_name or "_thinking", "delta": preview or ""})
+ 1978:             elif event_type in {"tool.started", "tool.completed", "tool.failed"}:
+ 1979:                 event_name = event_type.replace("tool.", "tool.")
+ 1980:                 _enqueue(event_name, {"message_id": message_id, "tool_name": tool_name, "preview": preview, "args": args})
+ 1981: 
+ 1982:         async def _run_and_signal() -> None:
+ 1983:             try:
+ 1984:                 await queue.put(_event_payload("run.started", {"user_message": {"role": "user", "content": user_message}}))
+ 1985:                 await queue.put(_event_payload("message.started", {"message": {"id": message_id, "role": "assistant"}}))
+ 1986:                 history = self._conversation_history_for_session(session_id)
+ 1987:                 result, usage = await self._run_agent(
+ 1988:                     user_message=user_message,
+ 1989:                     conversation_history=history,
+ 1990:                     ephemeral_system_prompt=system_prompt,
+ 1991:                     session_id=session_id,
+ 1992:                     stream_delta_callback=_delta,
+ 1993:                     tool_progress_callback=_tool_progress,
+ 1994:                     gateway_session_key=gateway_session_key,
+ 1995:                 )
+ 1996:                 final_response = _resolve_media_to_data_urls(result.get("final_response", "") if isinstance(result, dict) else "")
+ 1997:                 effective_session_id = result.get("session_id", session_id) if isinstance(result, dict) else session_id
+ 1998:                 turn_messages = self._turn_transcript_messages(history, user_message, result) if isinstance(result, dict) else []
+ 1999:                 await queue.put(_event_payload("assistant.completed", {
+ 2000:                     "session_id": effective_session_id,
+ 2001:                     "message_id": message_id,
+ 2002:                     "content": final_response,
+ 2003:                     "completed": True,
+ 2004:                     "partial": False,
+ 2005:                     "interrupted": False,
+ 2006:                 }))
+ 2007:                 await queue.put(_event_payload("run.completed", {
+ 2008:                     "session_id": effective_session_id,
+ 2009:                     "message_id": message_id,
+ 2010:                     "completed": True,
+ 2011:                     "messages": turn_messages,
+ 2012:                     "usage": usage,
+ 2013:                 }))
+ 2014:             except Exception as exc:
+ 2015:                 logger.exception("[api_server] session chat stream failed")
+ 2016:                 await queue.put(_event_payload("error", {"message": _redact_api_error_text(exc)}))
+ 2017:             finally:
+ 2018:                 await queue.put(_event_payload("done", {}))
+ 2019:                 await queue.put(None)
+ 2020: 
+ 2021:         task = asyncio.create_task(_run_and_signal())
+ 2022:         try:
+ 2023:             self._background_tasks.add(task)
+ 2024:         except TypeError:
+ 2025:             pass
+ 2026:         if hasattr(task, "add_done_callback"):
+ 2027:             task.add_done_callback(self._background_tasks.discard)
+ 2028: 
+ 2029:         headers = {
+ 2030:             "Content-Type": "text/event-stream",
+ 2031:             "Cache-Control": "no-cache",
+ 2032:             "X-Accel-Buffering": "no",
+ 2033:             "X-Hermes-Session-Id": session_id,
+ 2034:         }
+ 2035:         if gateway_session_key:
+ 2036:             headers["X-Hermes-Session-Key"] = gateway_session_key
+ 2037:         response = web.StreamResponse(status=200, headers=headers)
+ 2038:         await response.prepare(request)
+ 2039:         last_write = time.monotonic()
+ 2040:         try:
+ 2041:             while True:
+ 2042:                 try:
+ 2043:                     item = await asyncio.wait_for(queue.get(), timeout=CHAT_COMPLETIONS_SSE_KEEPALIVE_SECONDS)
+ 2044:                 except asyncio.TimeoutError:
+ 2045:                     await response.write(b": keepalive\n\n")
+ 2046:                     last_write = time.monotonic()
+ 2047:                     continue
+ 2048:                 if item is None:
+ 2049:                     break
+ 2050:                 name, payload = item
+ 2051:                 data = json.dumps(payload, ensure_ascii=False)
+ 2052:                 await response.write(f"event: {name}\ndata: {data}\n\n".encode("utf-8"))
+ 2053:                 last_write = time.monotonic()
+ 2054:         except (asyncio.CancelledError, ConnectionResetError):
+ 2055:             task.cancel()
+ 2056:             raise
+ 2057:         except Exception as exc:
+ 2058:             logger.debug("[api_server] session SSE stream error: %s", exc)
+ 2059:         return response
+ 2060: 
+ 2061:     async def _handle_chat_completions(self, request: "web.Request") -> "web.Response":
+ 2062:         """POST /v1/chat/completions â€” OpenAI Chat Completions format."""
+ 2063:         auth_err = self._check_auth(request)
+ 2064:         if auth_err:
+ 2065:             return auth_err
+ 2066: 
+ 2067:         # Bound total in-flight agent runs (configurable; #7483).
+ 2068:         limited = self._concurrency_limited_response()
+ 2069:         if limited is not None:
+ 2070:             return limited
+ 2071: 
+ 2072:         # Parse request body
+ 2073:         try:
+ 2074:             body = await request.json()
+ 2075:         except (json.JSONDecodeError, Exception):
+ 2076:             return web.json_response(_openai_error("Invalid JSON in request body"), status=400)
+ 2077: 
+ 2078:         messages = body.get("messages")
+ 2079:         if not messages or not isinstance(messages, list):
+ 2080:             return web.json_response(
+ 2081:                 {"error": {"message": "Missing or invalid 'messages' field", "type": "invalid_request_error"}},
+ 2082:                 status=400,
+ 2083:             )
+ 2084: 
+ 2085:         stream = _coerce_request_bool(body.get("stream"), default=False)
+ 2086: 
+ 2087:         # Extract system message (becomes ephemeral system prompt layered ON TOP of core)
+ 2088:         system_prompt = None
+ 2089:         conversation_messages: List[Dict[str, str]] = []
+ 2090: 
+ 2091:         for idx, msg in enumerate(messages):
+ 2092:             role = msg.get("role", "")
+ 2093:             raw_content = msg.get("content", "")
+ 2094:             if role == "system":
+ 2095:                 # System messages don't support images (Anthropic rejects, OpenAI
+ 2096:                 # text-model systems don't render them).  Flatten to text.
+ 2097:                 content = _normalize_chat_content(raw_content)
+ 2098:                 if system_prompt is None:
+ 2099:                     system_prompt = content
+ 2100:                 else:
+ 2101:                     system_prompt = system_prompt + "\n" + content
+ 2102:             elif role in {"user", "assistant"}:
+ 2103:                 try:
+ 2104:                     content = _normalize_multimodal_content(raw_content)
+ 2105:                 except ValueError as exc:
+ 2106:                     return _multimodal_validation_error(exc, param=f"messages[{idx}].content")
+ 2107:                 conversation_messages.append({"role": role, "content": content})
+ 2108: 
+ 2109:         # Extract the last user message as the primary input
+ 2110:         user_message: Any = ""
+ 2111:         history = []
+ 2112:         if conversation_messages:
+ 2113:             user_message = conversation_messages[-1].get("content", "")
+ 2114:             history = conversation_messages[:-1]
+ 2115: 
+ 2116:         if not _content_has_visible_payload(user_message):
+ 2117:             return web.json_response(
+ 2118:                 {"error": {"message": "No user message found in messages", "type": "invalid_request_error"}},
+ 2119:                 status=400,
+ 2120:             )
+ 2121: 
+ 2122:         # Allow caller to scope long-term memory (e.g. Honcho) with a
+ 2123:         # stable per-channel identifier via X-Hermes-Session-Key.  This
+ 2124:         # is independent of X-Hermes-Session-Id: the key persists across
+ 2125:         # transcripts while the id rotates when the caller starts a new
+ 2126:         # transcript (i.e. /new semantics).  See _parse_session_key_header.
+ 2127:         gateway_session_key, key_err = self._parse_session_key_header(request)
+ 2128:         if key_err is not None:
+ 2129:             return key_err
+ 2130: 
+ 2131:         # Allow caller to continue an existing session by passing X-Hermes-Session-Id.
+ 2132:         # When provided, history is loaded from state.db instead of from the request body.
+ 2133:         #
+ 2134:         # Security: session continuation exposes conversation history, so it is
+ 2135:         # only allowed when the API key is configured and the request is
+ 2136:         # authenticated.  Without this gate, any unauthenticated client could
+ 2137:         # read arbitrary session history by guessing/enumerating session IDs.
+ 2138:         provided_session_id = request.headers.get("X-Hermes-Session-Id", "").strip()
+ 2139:         if provided_session_id:
+ 2140:             if not self._api_key:
+ 2141:                 logger.warning(
+ 2142:                     "Session continuation via X-Hermes-Session-Id rejected: "
+ 2143:                     "no API key configured.  Set API_SERVER_KEY to enable "
+ 2144:                     "session continuity."
+ 2145:                 )
+ 2146:                 return web.json_response(
+ 2147:                     _openai_error(
+ 2148:                         "Session continuation requires API key authentication. "
+ 2149:                         "Configure API_SERVER_KEY to enable this feature."
+ 2150:                     ),
+ 2151:                     status=403,
+ 2152:                 )
+ 2153:             # Sanitize: reject control characters that could enable header
+ 2154:             # injection, and path-traversal-shaped IDs that would escape the
+ 2155:             # sessions directory when interpolated into on-disk artifact
+ 2156:             # filenames (session snapshots, request dumps). Mirrors the native
+ 2157:             # gateway's entry-boundary guard (gateway.session._is_path_unsafe).
+ 2158:             from gateway.session import _is_path_unsafe
+ 2159:             if re.search(r'[\r\n\x00]', provided_session_id) or _is_path_unsafe(provided_session_id):
+ 2160:                 return web.json_response(
+ 2161:                     {"error": {"message": "Invalid session ID", "type": "invalid_request_error"}},
+ 2162:                     status=400,
+ 2163:                 )
+ 2164:             if len(provided_session_id) > self._MAX_SESSION_HEADER_LEN:
+ 2165:                 return web.json_response(
+ 2166:                     {"error": {"message": "Session ID too long", "type": "invalid_request_error"}},
+ 2167:                     status=400,
+ 2168:                 )
+ 2169:             session_id = provided_session_id
+ 2170:             try:
+ 2171:                 db = self._ensure_session_db()
+ 2172:                 if db is not None:
+ 2173:                     history = db.get_messages_as_conversation(session_id)
+ 2174:             except Exception as e:
+ 2175:                 logger.warning("Failed to load session history for %s: %s", session_id, e)
+ 2176:                 history = []
+ 2177:         else:
+ 2178:             # Derive a stable session ID from the conversation fingerprint so
+ 2179:             # that consecutive messages from the same Open WebUI (or similar)
+ 2180:             # conversation map to the same Hermes session.  The first user
+ 2181:             # message + system prompt are constant across all turns.
+ 2182:             first_user = ""
+ 2183:             for cm in conversation_messages:
+ 2184:                 if cm.get("role") == "user":
+ 2185:                     first_user = cm.get("content", "")
+ 2186:                     break
+ 2187:             session_id = _derive_chat_session_id(system_prompt, first_user)
+ 2188:             # history already set from request body above
+ 2189: 
+ 2190:         completion_id = f"chatcmpl-{uuid.uuid4().hex[:29]}"
+ 2191:         model_name = body.get("model", self._model_name)
+ 2192:         created = int(time.time())
+ 2193: 
+ 2194:         # Per-client model routing: if the requested model matches a
+ 2195:         # configured model_routes alias, this request's agent is created
+ 2196:         # with that route's model/provider instead of the global default.
+ 2197:         route = self._resolve_route(model_name)
+ 2198: 
+ 2199:         if stream:
+ 2200:             import queue as _q
+ 2201:             _stream_q: _q.Queue = _q.Queue()
+ 2202: 
+ 2203:             def _on_delta(delta):
+ 2204:                 # Filter out None â€” the agent fires stream_delta_callback(None)
+ 2205:                 # to signal the CLI display to close its response box before
+ 2206:                 # tool execution, but the SSE writer uses None as end-of-stream
+ 2207:                 # sentinel.  Forwarding it would prematurely close the HTTP
+ 2208:                 # response, causing Open WebUI (and similar frontends) to miss
+ 2209:                 # the final answer after tool calls.  The SSE loop detects
+ 2210:                 # completion via agent_task.done() instead.
+ 2211:                 if delta is not None:
+ 2212:                     _stream_q.put(delta)
+ 2213: 
+ 2214:             # Track which tool_call_ids we've emitted a "running" lifecycle
+ 2215:             # event for, so a "completed" event without a matching "running"
+ 2216:             # (e.g. internal/filtered tools) is silently dropped instead of
+ 2217:             # producing an orphaned event clients can't correlate.
+ 2218:             _started_tool_call_ids: set[str] = set()
+ 2219: 
+ 2220:             def _on_tool_start(tool_call_id, function_name, function_args):
+ 2221:                 """Emit ``hermes.tool.progress`` with ``status: running``.
+ 2222: 
+ 2223:                 Replaces the old ``tool_progress_callback("tool.started",
+ 2224:                 ...)`` emit so SSE consumers receive a single event per
+ 2225:                 tool start, carrying both the legacy ``tool``/``emoji``/
+ 2226:                 ``label`` payload (for #6972 frontends) and the new
+ 2227:                 ``toolCallId``/``status`` correlation fields (#16588).
+ 2228: 
+ 2229:                 Skips tools whose names start with ``_`` so internal
+ 2230:                 events (``_thinking``, â€¦) stay off the wire â€” matching
+ 2231:                 the prior ``_on_tool_progress`` filter exactly.
+ 2232:                 """
+ 2233:                 if not tool_call_id or function_name.startswith("_"):
+ 2234:                     return
+ 2235:                 _started_tool_call_ids.add(tool_call_id)
+ 2236:                 from agent.display import build_tool_preview, get_tool_emoji
+ 2237:                 label = build_tool_preview(function_name, function_args) or function_name
+ 2238:                 _stream_q.put(("__tool_progress__", {
+ 2239:                     "tool": function_name,
+ 2240:                     "emoji": get_tool_emoji(function_name),
+ 2241:                     "label": label,
+ 2242:                     "toolCallId": tool_call_id,
+ 2243:                     "status": "running",
+ 2244:                 }))
+ 2245: 
+ 2246:             def _on_tool_complete(tool_call_id, function_name, function_args, function_result):
+ 2247:                 """Emit the matching ``status: completed`` event.
+ 2248: 
+ 2249:                 Dropped if the start was filtered (internal tool, missing
+ 2250:                 id, or never seen) so clients never get an orphaned
+ 2251:                 ``completed`` they can't correlate to a prior ``running``.
+ 2252:                 """
+ 2253:                 if not tool_call_id or tool_call_id not in _started_tool_call_ids:
+ 2254:                     return
+ 2255:                 _started_tool_call_ids.discard(tool_call_id)
+ 2256:                 _stream_q.put(("__tool_progress__", {
+ 2257:                     "tool": function_name,
+ 2258:                     "toolCallId": tool_call_id,
+ 2259:                     "status": "completed",
+ 2260:                 }))
+ 2261: 
+ 2262:             # Start agent in background.  agent_ref is a mutable container
+ 2263:             # so the SSE writer can interrupt the agent on client disconnect.
+ 2264:             #
+ 2265:             # ``tool_progress_callback`` is intentionally not wired here:
+ 2266:             # it would duplicate every emit because ``run_agent`` fires it
+ 2267:             # side-by-side with ``tool_start_callback``/``tool_complete_callback``.
+ 2268:             # The structured callbacks are strictly richer (they carry the
+ 2269:             # tool_call id), so they own the chat-completions SSE channel.
+ 2270:             agent_ref = [None]
+ 2271:             agent_task = asyncio.ensure_future(self._run_agent(
+ 2272:                 user_message=user_message,
+ 2273:                 conversation_history=history,
+ 2274:                 ephemeral_system_prompt=system_prompt,
+ 2275:                 session_id=session_id,
+ 2276:                 stream_delta_callback=_on_delta,
+ 2277:                 tool_start_callback=_on_tool_start,
+ 2278:                 tool_complete_callback=_on_tool_complete,
+ 2279:                 agent_ref=agent_ref,
+ 2280:                 gateway_session_key=gateway_session_key,
+ 2281:                 route=route,
+ 2282:             ))
+ 2283:             # Ensure SSE drain loops can terminate without relying on polling
+ 2284:             # agent_task.done(), which can race with queue timeout checks.
+ 2285:             agent_task.add_done_callback(lambda _fut: _stream_q.put(None))
+ 2286: 
+ 2287:             return await self._write_sse_chat_completion(
+ 2288:                 request, completion_id, model_name, created, _stream_q,
+ 2289:                 agent_task, agent_ref, session_id=session_id,
+ 2290:                 gateway_session_key=gateway_session_key,
+ 2291:             )
+ 2292: 
+ 2293:         # Non-streaming: run the agent (with optional Idempotency-Key)
+ 2294:         async def _compute_completion():
+ 2295:             return await self._run_agent(
+ 2296:                 user_message=user_message,
+ 2297:                 conversation_history=history,
+ 2298:                 ephemeral_system_prompt=system_prompt,
+ 2299:                 session_id=session_id,
+ 2300:                 gateway_session_key=gateway_session_key,
+ 2301:                 route=route,
+ 2302:             )
+ 2303: 
+ 2304:         idempotency_key = request.headers.get("Idempotency-Key")
+ 2305:         if idempotency_key:
+ 2306:             fp = _make_request_fingerprint(body, keys=["model", "messages", "tools", "tool_choice", "stream"])
+ 2307:             try:
+ 2308:                 result, usage = await _idem_cache.get_or_set(idempotency_key, fp, _compute_completion)
+ 2309:             except Exception as e:
+ 2310:                 logger.error("Error running agent for chat completions: %s", e, exc_info=True)
+ 2311:                 return web.json_response(
+ 2312:                     _openai_error(f"Internal server error: {e}", err_type="server_error"),
+ 2313:                     status=500,
+ 2314:                 )
+ 2315:         else:
+ 2316:             try:
+ 2317:                 result, usage = await _compute_completion()
+ 2318:             except Exception as e:
+ 2319:                 logger.error("Error running agent for chat completions: %s", e, exc_info=True)
+ 2320:                 return web.json_response(
+ 2321:                     _openai_error(f"Internal server error: {e}", err_type="server_error"),
+ 2322:                     status=500,
+ 2323:                 )
+ 2324: 
+ 2325:         final_response = _resolve_media_to_data_urls(result.get("final_response") or "")
+ 2326:         is_partial = bool(result.get("partial"))
+ 2327:         is_failed = bool(result.get("failed"))
+ 2328:         completed = bool(result.get("completed", True))
+ 2329:         raw_err_msg = result.get("error")
+ 2330:         err_msg = _redact_api_error_text(raw_err_msg) if raw_err_msg else raw_err_msg
+ 2331: 
+ 2332:         # Decide finish_reason. OpenAI uses "length" for truncation, "stop"
+ 2333:         # for normal completion, and downstream SDKs accept "error" / custom
+ 2334:         # codes. See issue #22496.
+ 2335:         if is_partial and err_msg and "truncat" in err_msg.lower():
+ 2336:             finish_reason = "length"
+ 2337:         elif is_failed or (not completed and err_msg):
+ 2338:             finish_reason = "error"
+ 2339:         else:
+ 2340:             finish_reason = "stop"
+ 2341: 
+ 2342:         response_headers = {
+ 2343:             "X-Hermes-Session-Id": result.get("session_id", session_id),
+ 2344:         }
+ 2345:         if gateway_session_key:
+ 2346:             response_headers["X-Hermes-Session-Key"] = gateway_session_key
+ 2347: 
+ 2348:         # Hard-fail path: no usable assistant text AND a real failure â†’ 5xx
+ 2349:         # with OpenAI-style error envelope so SDK clients raise instead of
+ 2350:         # silently rendering the internal failure string as message.content.
+
+=== SSE / stream handlers candidate L2380-L2675 ===
+ 2380:                     },
+ 2381:                     "finish_reason": finish_reason,
+ 2382:                 }
+ 2383:             ],
+ 2384:             "usage": {
+ 2385:                 "prompt_tokens": usage.get("input_tokens", 0),
+ 2386:                 "completion_tokens": usage.get("output_tokens", 0),
+ 2387:                 "total_tokens": usage.get("total_tokens", 0),
+ 2388:             },
+ 2389:         }
+ 2390:         if is_partial or is_failed or not completed:
+ 2391:             response_data["hermes"] = {
+ 2392:                 "completed": completed,
+ 2393:                 "partial": is_partial,
+ 2394:                 "failed": is_failed,
+ 2395:                 "error": err_msg,
+ 2396:                 "error_code": "output_truncated" if finish_reason == "length" else "agent_error",
+ 2397:             }
+ 2398:             response_headers["X-Hermes-Completed"] = "false"
+ 2399:             response_headers["X-Hermes-Partial"] = "true" if is_partial else "false"
+ 2400:             if err_msg:
+ 2401:                 response_headers["X-Hermes-Error"] = _redact_api_error_text(err_msg, limit=200)
+ 2402: 
+ 2403:         return web.json_response(response_data, headers=response_headers)
+ 2404: 
+ 2405:     async def _write_sse_chat_completion(
+ 2406:         self, request: "web.Request", completion_id: str, model: str,
+ 2407:         created: int, stream_q, agent_task, agent_ref=None, session_id: str = None,
+ 2408:         gateway_session_key: str = None,
+ 2409:     ) -> "web.StreamResponse":
+ 2410:         """Write real streaming SSE from agent's stream_delta_callback queue.
+ 2411: 
+ 2412:         If the client disconnects mid-stream (network drop, browser tab close),
+ 2413:         the agent is interrupted via ``agent.interrupt()`` so it stops making
+ 2414:         LLM API calls, and the asyncio task wrapper is cancelled.
+ 2415:         """
+ 2416:         import queue as _q
+ 2417: 
+ 2418:         sse_headers = {
+ 2419:             "Content-Type": "text/event-stream",
+ 2420:             "Cache-Control": "no-cache",
+ 2421:             "X-Accel-Buffering": "no",
+ 2422:         }
+ 2423:         # CORS middleware can't inject headers into StreamResponse after
+ 2424:         # prepare() flushes them, so resolve CORS headers up front.
+ 2425:         origin = request.headers.get("Origin", "")
+ 2426:         cors = self._cors_headers_for_origin(origin) if origin else None
+ 2427:         if cors:
+ 2428:             sse_headers.update(cors)
+ 2429:         if session_id:
+ 2430:             sse_headers["X-Hermes-Session-Id"] = session_id
+ 2431:         if gateway_session_key:
+ 2432:             sse_headers["X-Hermes-Session-Key"] = gateway_session_key
+ 2433:         response = web.StreamResponse(status=200, headers=sse_headers)
+ 2434:         await response.prepare(request)
+ 2435: 
+ 2436:         try:
+ 2437:             last_activity = time.monotonic()
+ 2438: 
+ 2439:             # Role chunk
+ 2440:             role_chunk = {
+ 2441:                 "id": completion_id, "object": "chat.completion.chunk",
+ 2442:                 "created": created, "model": model,
+ 2443:                 "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
+ 2444:             }
+ 2445:             await response.write(f"data: {json.dumps(role_chunk)}\n\n".encode())
+ 2446:             last_activity = time.monotonic()
+ 2447: 
+ 2448:             # Helper â€” route a queue item to the correct SSE event.
+ 2449:             async def _emit(item):
+ 2450:                 """Write a single queue item to the SSE stream.
+ 2451: 
+ 2452:                 Plain strings are sent as normal ``delta.content`` chunks.
+ 2453:                 Tagged tuples ``("__tool_progress__", payload)`` are sent
+ 2454:                 as a custom ``event: hermes.tool.progress`` SSE event so
+ 2455:                 frontends can display them without storing the markers in
+ 2456:                 conversation history.  See #6972 for the original event,
+ 2457:                 #16588 for the ``toolCallId``/``status`` lifecycle fields.
+ 2458:                 """
+ 2459:                 if isinstance(item, tuple) and len(item) == 2 and item[0] == "__tool_progress__":
+ 2460:                     event_data = json.dumps(item[1])
+ 2461:                     await response.write(
+ 2462:                         f"event: hermes.tool.progress\ndata: {event_data}\n\n".encode()
+ 2463:                     )
+ 2464:                 else:
+ 2465:                     content_chunk = {
+ 2466:                         "id": completion_id, "object": "chat.completion.chunk",
+ 2467:                         "created": created, "model": model,
+ 2468:                         "choices": [{"index": 0, "delta": {"content": item}, "finish_reason": None}],
+ 2469:                     }
+ 2470:                     await response.write(f"data: {json.dumps(content_chunk)}\n\n".encode())
+ 2471:                 return time.monotonic()
+ 2472: 
+ 2473:             # Stream content chunks as they arrive from the agent
+ 2474:             loop = asyncio.get_running_loop()
+ 2475:             while True:
+ 2476:                 try:
+ 2477:                     delta = await loop.run_in_executor(None, lambda: stream_q.get(timeout=0.5))
+ 2478:                 except _q.Empty:
+ 2479:                     if agent_task.done():
+ 2480:                         # Drain any remaining items
+ 2481:                         while True:
+ 2482:                             try:
+ 2483:                                 delta = stream_q.get_nowait()
+ 2484:                                 if delta is None:
+ 2485:                                     break
+ 2486:                                 last_activity = await _emit(delta)
+ 2487:                             except _q.Empty:
+ 2488:                                 break
+ 2489:                         break
+ 2490:                     if time.monotonic() - last_activity >= CHAT_COMPLETIONS_SSE_KEEPALIVE_SECONDS:
+ 2491:                         await response.write(b": keepalive\n\n")
+ 2492:                         last_activity = time.monotonic()
+ 2493:                     continue
+ 2494: 
+ 2495:                 if delta is None:  # End of stream sentinel
+ 2496:                     break
+ 2497: 
+ 2498:                 last_activity = await _emit(delta)
+ 2499: 
+ 2500:             # Get usage from completed agent. The agent can fail two ways
+ 2501:             # after the content queue terminates cleanly: (1) ``agent_task``
+ 2502:             # raises, or (2) it returns a ``result`` dict flagged
+ 2503:             # failed/partial/incomplete. Both previously fell through to a
+ 2504:             # ``finish_reason: "stop"`` chunk, so OpenAI-compatible clients
+ 2505:             # saw a fake success. Surface either as a non-"stop" finish so
+ 2506:             # the failure is detectable â€” mirroring the non-streaming path's
+ 2507:             # decision logic (see the finish_reason block above).
+ 2508:             usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+ 2509:             result = None
+ 2510:             agent_error = None
+ 2511:             try:
+ 2512:                 result, agent_usage = await agent_task
+ 2513:                 usage = agent_usage or usage
+ 2514:             except Exception as exc:
+ 2515:                 agent_error = exc
+ 2516:                 logger.error(
+ 2517:                     "Agent task %s failed during SSE streaming: %s", completion_id, exc
+ 2518:                 )
+ 2519: 
+ 2520:             # Inspect the result dict for a flagged (non-exception) failure.
+ 2521:             is_partial = bool(result.get("partial")) if isinstance(result, dict) else False
+ 2522:             is_failed = bool(result.get("failed")) if isinstance(result, dict) else False
+ 2523:             completed = bool(result.get("completed", True)) if isinstance(result, dict) else True
+ 2524:             err_msg = result.get("error") if isinstance(result, dict) else None
+ 2525:             if agent_error is not None:
+ 2526:                 is_failed = True
+ 2527:                 err_msg = err_msg or str(agent_error)
+ 2528: 
+ 2529:             # Decide finish_reason, matching the non-streaming logic: "length"
+ 2530:             # for truncation, "error" for failure, "stop" for normal completion.
+ 2531:             if is_partial and err_msg and "truncat" in err_msg.lower():
+ 2532:                 finish_reason = "length"
+ 2533:             elif agent_error is not None or is_failed or (not completed and err_msg):
+ 2534:                 finish_reason = "error"
+ 2535:             else:
+ 2536:                 finish_reason = "stop"
+ 2537: 
+ 2538:             # Finish chunk
+ 2539:             finish_chunk = {
+ 2540:                 "id": completion_id, "object": "chat.completion.chunk",
+ 2541:                 "created": created, "model": model,
+ 2542:                 "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}],
+ 2543:                 "usage": {
+ 2544:                     "prompt_tokens": usage.get("input_tokens", 0),
+ 2545:                     "completion_tokens": usage.get("output_tokens", 0),
+ 2546:                     "total_tokens": usage.get("total_tokens", 0),
+ 2547:                 },
+ 2548:             }
+ 2549:             if finish_reason != "stop":
+ 2550:                 finish_chunk["choices"][0]["delta"] = {}
+ 2551:                 if err_msg:
+ 2552:                     finish_chunk["error"] = {
+ 2553:                         "message": err_msg,
+ 2554:                         "type": type(agent_error).__name__ if agent_error else "agent_error",
+ 2555:                     }
+ 2556:                 finish_chunk["hermes"] = {
+ 2557:                     "completed": completed,
+ 2558:                     "partial": is_partial,
+ 2559:                     "failed": is_failed,
+ 2560:                     "error": err_msg,
+ 2561:                     "error_code": "output_truncated" if finish_reason == "length" else "agent_error",
+ 2562:                 }
+ 2563:             await response.write(f"data: {json.dumps(finish_chunk)}\n\n".encode())
+ 2564:             await response.write(b"data: [DONE]\n\n")
+ 2565:         except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, OSError):
+ 2566:             # Client disconnected mid-stream.  Interrupt the agent so it
+ 2567:             # stops making LLM API calls at the next loop iteration, then
+ 2568:             # cancel the asyncio task wrapper.
+ 2569:             agent = agent_ref[0] if agent_ref else None
+ 2570:             if agent is not None:
+ 2571:                 try:
+ 2572:                     agent.interrupt("SSE client disconnected")
+ 2573:                 except Exception:
+ 2574:                     pass
+ 2575:             if not agent_task.done():
+ 2576:                 agent_task.cancel()
+ 2577:                 try:
+ 2578:                     await agent_task
+ 2579:                 except (asyncio.CancelledError, Exception):
+ 2580:                     pass
+ 2581:             logger.info("SSE client disconnected; interrupted agent task %s", completion_id)
+ 2582:         except Exception as _exc:
+ 2583:             # Agent crashed mid-stream.  Try to emit an error chunk
+ 2584:             # so the client gets a proper response instead of a
+ 2585:             # TransferEncodingError from incomplete chunked encoding.
+ 2586:             import traceback as _tb
+ 2587:             logger.error("Agent crashed mid-stream for %s: %s", completion_id, _tb.format_exc()[:300])
+ 2588:             try:
+ 2589:                 error_chunk = {
+ 2590:                     "id": completion_id, "object": "chat.completion.chunk",
+ 2591:                     "created": created, "model": model,
+ 2592:                     "choices": [{"index": 0, "delta": {}, "finish_reason": "error"}],
+ 2593:                 }
+ 2594:                 await response.write(f"data: {json.dumps(error_chunk)}\n\n".encode())
+ 2595:                 await response.write(b"data: [DONE]\n\n")
+ 2596:             except Exception:
+ 2597:                 pass
+ 2598: 
+ 2599:         return response
+ 2600: 
+ 2601:     async def _write_sse_responses(
+ 2602:         self,
+ 2603:         request: "web.Request",
+ 2604:         response_id: str,
+ 2605:         model: str,
+ 2606:         created_at: int,
+ 2607:         stream_q,
+ 2608:         agent_task,
+ 2609:         agent_ref,
+ 2610:         conversation_history: List[Dict[str, str]],
+ 2611:         user_message: str,
+ 2612:         instructions: Optional[str],
+ 2613:         conversation: Optional[str],
+ 2614:         store: bool,
+ 2615:         session_id: str,
+ 2616:         gateway_session_key: Optional[str] = None,
+ 2617:     ) -> "web.StreamResponse":
+ 2618:         """Write an SSE stream for POST /v1/responses (OpenAI Responses API).
+ 2619: 
+ 2620:         Emits spec-compliant event types as the agent runs:
+ 2621: 
+ 2622:         - ``response.created`` â€” initial envelope (status=in_progress)
+ 2623:         - ``response.output_text.delta`` / ``response.output_text.done`` â€”
+ 2624:           streamed assistant text
+ 2625:         - ``response.output_item.added`` / ``response.output_item.done``
+ 2626:           with ``item.type == "function_call"`` â€” when the agent invokes a
+ 2627:           tool (both events fire; the ``done`` event carries the finalized
+ 2628:           ``arguments`` string)
+ 2629:         - ``response.output_item.added`` with
+ 2630:           ``item.type == "function_call_output"`` â€” tool result with
+ 2631:           ``{call_id, output, status}``
+ 2632:         - ``response.completed`` â€” terminal event carrying the full
+ 2633:           response object with all output items + usage (same payload
+ 2634:           shape as the non-streaming path for parity)
+ 2635:         - ``response.failed`` â€” terminal event on agent error
+ 2636: 
+ 2637:         If the client disconnects mid-stream, ``agent.interrupt()`` is
+ 2638:         called so the agent stops issuing upstream LLM calls, then the
+ 2639:         asyncio task is cancelled.  When ``store=True`` an initial
+ 2640:         ``in_progress`` snapshot is persisted immediately after
+ 2641:         ``response.created`` and disconnects update it to an
+ 2642:         ``incomplete`` snapshot so GET /v1/responses/{id} and
+ 2643:         ``previous_response_id`` chaining still have something to
+ 2644:         recover from.
+ 2645:         """
+ 2646:         import queue as _q
+ 2647: 
+ 2648:         sse_headers = {
+ 2649:             "Content-Type": "text/event-stream",
+ 2650:             "Cache-Control": "no-cache",
+ 2651:             "X-Accel-Buffering": "no",
+ 2652:         }
+ 2653:         origin = request.headers.get("Origin", "")
+ 2654:         cors = self._cors_headers_for_origin(origin) if origin else None
+ 2655:         if cors:
+ 2656:             sse_headers.update(cors)
+ 2657:         if session_id:
+ 2658:             sse_headers["X-Hermes-Session-Id"] = session_id
+ 2659:         if gateway_session_key:
+ 2660:             sse_headers["X-Hermes-Session-Key"] = gateway_session_key
+ 2661:         response = web.StreamResponse(status=200, headers=sse_headers)
+ 2662:         await response.prepare(request)
+ 2663: 
+ 2664:         # State accumulated during the stream
+ 2665:         final_text_parts: List[str] = []
+ 2666:         # Track open function_call items by name so we can emit a matching
+ 2667:         # ``done`` event when the tool completes.  Order preserved.
+ 2668:         pending_tool_calls: List[Dict[str, Any]] = []
+ 2669:         # Output items we've emitted so far (used to build the terminal
+ 2670:         # response.completed payload).  Kept in the order they appeared.
+ 2671:         emitted_items: List[Dict[str, Any]] = []
+ 2672:         # Monotonic counter for output_index (spec requires it).
+ 2673:         output_index = 0
+ 2674:         # Monotonic counter for call_id generation if the agent doesn't
+ 2675:         # provide one (it doesn't, from tool_progress_callback).
+
+=== Request parsing / route handlers candidate L3200-L3505 ===
+ 3200:         if auth_err:
+ 3201:             return auth_err
+ 3202: 
+ 3203:         # Bound total in-flight agent runs (configurable; #7483).
+ 3204:         limited = self._concurrency_limited_response()
+ 3205:         if limited is not None:
+ 3206:             return limited
+ 3207: 
+ 3208:         # Long-term memory scope header (see chat_completions for details).
+ 3209:         gateway_session_key, key_err = self._parse_session_key_header(request)
+ 3210:         if key_err is not None:
+ 3211:             return key_err
+ 3212: 
+ 3213:         # Parse request body
+ 3214:         try:
+ 3215:             body = await request.json()
+ 3216:         except (json.JSONDecodeError, Exception):
+ 3217:             return web.json_response(
+ 3218:                 {"error": {"message": "Invalid JSON in request body", "type": "invalid_request_error"}},
+ 3219:                 status=400,
+ 3220:             )
+ 3221: 
+ 3222:         raw_input = body.get("input")
+ 3223:         if raw_input is None:
+ 3224:             return web.json_response(_openai_error("Missing 'input' field"), status=400)
+ 3225: 
+ 3226:         instructions = body.get("instructions")
+ 3227:         previous_response_id = body.get("previous_response_id")
+ 3228:         conversation = body.get("conversation")
+ 3229:         store = _coerce_request_bool(body.get("store"), default=True)
+ 3230: 
+ 3231:         # conversation and previous_response_id are mutually exclusive
+ 3232:         if conversation and previous_response_id:
+ 3233:             return web.json_response(_openai_error("Cannot use both 'conversation' and 'previous_response_id'"), status=400)
+ 3234: 
+ 3235:         # Resolve conversation name to latest response_id
+ 3236:         if conversation:
+ 3237:             previous_response_id = self._response_store.get_conversation(conversation)
+ 3238:             # No error if conversation doesn't exist yet â€” it's a new conversation
+ 3239: 
+ 3240:         # Normalize input to message list
+ 3241:         input_messages: List[Dict[str, Any]] = []
+ 3242:         if isinstance(raw_input, str):
+ 3243:             input_messages = [{"role": "user", "content": raw_input}]
+ 3244:         elif isinstance(raw_input, list):
+ 3245:             for idx, item in enumerate(raw_input):
+ 3246:                 if isinstance(item, str):
+ 3247:                     input_messages.append({"role": "user", "content": item})
+ 3248:                 elif isinstance(item, dict):
+ 3249:                     role = item.get("role", "user")
+ 3250:                     try:
+ 3251:                         content = _normalize_multimodal_content(item.get("content", ""))
+ 3252:                     except ValueError as exc:
+ 3253:                         return _multimodal_validation_error(exc, param=f"input[{idx}].content")
+ 3254:                     input_messages.append({"role": role, "content": content})
+ 3255:         else:
+ 3256:             return web.json_response(_openai_error("'input' must be a string or array"), status=400)
+ 3257: 
+ 3258:         # Accept explicit conversation_history from the request body.
+ 3259:         # This lets stateless clients supply their own history instead of
+ 3260:         # relying on server-side response chaining via previous_response_id.
+ 3261:         # Precedence: explicit conversation_history > previous_response_id.
+ 3262:         conversation_history: List[Dict[str, Any]] = []
+ 3263:         raw_history = body.get("conversation_history")
+ 3264:         if raw_history:
+ 3265:             if not isinstance(raw_history, list):
+ 3266:                 return web.json_response(
+ 3267:                     _openai_error("'conversation_history' must be an array of message objects"),
+ 3268:                     status=400,
+ 3269:                 )
+ 3270:             for i, entry in enumerate(raw_history):
+ 3271:                 if not isinstance(entry, dict) or "role" not in entry or "content" not in entry:
+ 3272:                     return web.json_response(
+ 3273:                         _openai_error(f"conversation_history[{i}] must have 'role' and 'content' fields"),
+ 3274:                         status=400,
+ 3275:                     )
+ 3276:                 try:
+ 3277:                     entry_content = _normalize_multimodal_content(entry["content"])
+ 3278:                 except ValueError as exc:
+ 3279:                     return _multimodal_validation_error(exc, param=f"conversation_history[{i}].content")
+ 3280:                 conversation_history.append({"role": str(entry["role"]), "content": entry_content})
+ 3281:             if previous_response_id:
+ 3282:                 logger.debug("Both conversation_history and previous_response_id provided; using conversation_history")
+ 3283: 
+ 3284:         stored_session_id = None
+ 3285:         if not conversation_history and previous_response_id:
+ 3286:             stored = self._response_store.get(previous_response_id)
+ 3287:             if stored is None:
+ 3288:                 return web.json_response(_openai_error(f"Previous response not found: {previous_response_id}"), status=404)
+ 3289:             conversation_history = list(stored.get("conversation_history", []))
+ 3290:             stored_session_id = stored.get("session_id")
+ 3291:             # If no instructions provided, carry forward from previous
+ 3292:             if instructions is None:
+ 3293:                 instructions = stored.get("instructions")
+ 3294: 
+ 3295:         # Append new input messages to history (all but the last become history)
+ 3296:         for msg in input_messages[:-1]:
+ 3297:             conversation_history.append(msg)
+ 3298: 
+ 3299:         # Last input message is the user_message
+ 3300:         user_message: Any = input_messages[-1].get("content", "") if input_messages else ""
+ 3301:         if not _content_has_visible_payload(user_message):
+ 3302:             return web.json_response(_openai_error("No user message found in input"), status=400)
+ 3303: 
+ 3304:         # Truncation support
+ 3305:         if body.get("truncation") == "auto" and len(conversation_history) > 100:
+ 3306:             conversation_history = conversation_history[-100:]
+ 3307: 
+ 3308:         # Reuse session from previous_response_id chain so the dashboard
+ 3309:         # groups the entire conversation under one session entry.
+ 3310:         session_id = stored_session_id or str(uuid.uuid4())
+ 3311: 
+ 3312:         # Per-client model routing for /v1/responses (see model_routes).
+ 3313:         route = self._resolve_route(body.get("model"))
+ 3314: 
+ 3315:         stream = _coerce_request_bool(body.get("stream"), default=False)
+ 3316:         if stream:
+ 3317:             # Streaming branch â€” emit OpenAI Responses SSE events as the
+ 3318:             # agent runs so frontends can render text deltas and tool
+ 3319:             # calls in real time.  See _write_sse_responses for details.
+ 3320:             import queue as _q
+ 3321:             _stream_q: _q.Queue = _q.Queue()
+ 3322: 
+ 3323:             def _on_delta(delta):
+ 3324:                 # None from the agent is a CLI box-close signal, not EOS.
+ 3325:                 # Forwarding would kill the SSE stream prematurely; the
+ 3326:                 # SSE writer detects completion via agent_task.done().
+ 3327:                 if delta is not None:
+ 3328:                     _stream_q.put(delta)
+ 3329: 
+ 3330:             def _on_tool_progress(event_type, name, preview, args, **kwargs):
+ 3331:                 """Queue non-start tool progress events if needed in future.
+ 3332: 
+ 3333:                 The structured Responses stream uses ``tool_start_callback``
+ 3334:                 and ``tool_complete_callback`` for exact call-id correlation,
+ 3335:                 so progress events are currently ignored here.
+ 3336:                 """
+ 3337:                 return
+ 3338: 
+ 3339:             def _on_tool_start(tool_call_id, function_name, function_args):
+ 3340:                 """Queue a started tool for live function_call streaming."""
+ 3341:                 _stream_q.put(("__tool_started__", {
+ 3342:                     "tool_call_id": tool_call_id,
+ 3343:                     "name": function_name,
+ 3344:                     "arguments": function_args or {},
+ 3345:                 }))
+ 3346: 
+ 3347:             def _on_tool_complete(tool_call_id, function_name, function_args, function_result):
+ 3348:                 """Queue a completed tool result for live function_call_output streaming."""
+ 3349:                 _stream_q.put(("__tool_completed__", {
+ 3350:                     "tool_call_id": tool_call_id,
+ 3351:                     "name": function_name,
+ 3352:                     "arguments": function_args or {},
+ 3353:                     "result": function_result,
+ 3354:                 }))
+ 3355: 
+ 3356:             agent_ref = [None]
+ 3357:             agent_task = asyncio.ensure_future(self._run_agent(
+ 3358:                 user_message=user_message,
+ 3359:                 conversation_history=conversation_history,
+ 3360:                 ephemeral_system_prompt=instructions,
+ 3361:                 session_id=session_id,
+ 3362:                 stream_delta_callback=_on_delta,
+ 3363:                 tool_progress_callback=_on_tool_progress,
+ 3364:                 tool_start_callback=_on_tool_start,
+ 3365:                 tool_complete_callback=_on_tool_complete,
+ 3366:                 agent_ref=agent_ref,
+ 3367:                 gateway_session_key=gateway_session_key,
+ 3368:                 route=route,
+ 3369:             ))
+ 3370:             # Ensure SSE drain loops can terminate without relying on polling
+ 3371:             # agent_task.done(), which can race with queue timeout checks.
+ 3372:             agent_task.add_done_callback(lambda _fut: _stream_q.put(None))
+ 3373: 
+ 3374:             response_id = f"resp_{uuid.uuid4().hex[:28]}"
+ 3375:             model_name = body.get("model", self._model_name)
+ 3376:             created_at = int(time.time())
+ 3377: 
+ 3378:             return await self._write_sse_responses(
+ 3379:                 request=request,
+ 3380:                 response_id=response_id,
+ 3381:                 model=model_name,
+ 3382:                 created_at=created_at,
+ 3383:                 stream_q=_stream_q,
+ 3384:                 agent_task=agent_task,
+ 3385:                 agent_ref=agent_ref,
+ 3386:                 conversation_history=conversation_history,
+ 3387:                 user_message=user_message,
+ 3388:                 instructions=instructions,
+ 3389:                 conversation=conversation,
+ 3390:                 store=store,
+ 3391:                 session_id=session_id,
+ 3392:                 gateway_session_key=gateway_session_key,
+ 3393:             )
+ 3394: 
+ 3395:         async def _compute_response():
+ 3396:             return await self._run_agent(
+ 3397:                 user_message=user_message,
+ 3398:                 conversation_history=conversation_history,
+ 3399:                 ephemeral_system_prompt=instructions,
+ 3400:                 session_id=session_id,
+ 3401:                 gateway_session_key=gateway_session_key,
+ 3402:                 route=route,
+ 3403:             )
+ 3404: 
+ 3405:         idempotency_key = request.headers.get("Idempotency-Key")
+ 3406:         if idempotency_key:
+ 3407:             fp = _make_request_fingerprint(
+ 3408:                 body,
+ 3409:                 keys=["input", "instructions", "previous_response_id", "conversation", "model", "tools"],
+ 3410:             )
+ 3411:             try:
+ 3412:                 result, usage = await _idem_cache.get_or_set(idempotency_key, fp, _compute_response)
+ 3413:             except Exception as e:
+ 3414:                 logger.error("Error running agent for responses: %s", e, exc_info=True)
+ 3415:                 return web.json_response(
+ 3416:                     _openai_error(f"Internal server error: {e}", err_type="server_error"),
+ 3417:                     status=500,
+ 3418:                 )
+ 3419:         else:
+ 3420:             try:
+ 3421:                 result, usage = await _compute_response()
+ 3422:             except Exception as e:
+ 3423:                 logger.error("Error running agent for responses: %s", e, exc_info=True)
+ 3424:                 return web.json_response(
+ 3425:                     _openai_error(f"Internal server error: {e}", err_type="server_error"),
+ 3426:                     status=500,
+ 3427:                 )
+ 3428: 
+ 3429:         final_response = _resolve_media_to_data_urls(result.get("final_response", ""))
+ 3430:         if not final_response:
+ 3431:             final_response = _redact_api_error_text(result.get("error", "(No response generated)"))
+ 3432: 
+ 3433:         response_id = f"resp_{uuid.uuid4().hex[:28]}"
+ 3434:         created_at = int(time.time())
+ 3435: 
+ 3436:         # Build the full conversation history for storage
+ 3437:         # (includes tool calls from the agent run)
+ 3438:         full_history = self._build_response_conversation_history(
+ 3439:             conversation_history,
+ 3440:             user_message,
+ 3441:             result,
+ 3442:             final_response,
+ 3443:         )
+ 3444: 
+ 3445:         # Build output items from the current turn only.  AIAgent returns a
+ 3446:         # full transcript in result["messages"], while older/mocked paths may
+ 3447:         # return only the current turn suffix.
+ 3448:         output_start_index = self._response_messages_turn_start_index(
+ 3449:             conversation_history,
+ 3450:             user_message,
+ 3451:             result,
+ 3452:         )
+ 3453:         output_items = self._extract_output_items(result, start_index=output_start_index)
+ 3454: 
+ 3455:         response_data = {
+ 3456:             "id": response_id,
+ 3457:             "object": "response",
+ 3458:             "status": "completed",
+ 3459:             "created_at": created_at,
+ 3460:             "model": body.get("model", self._model_name),
+ 3461:             "output": output_items,
+ 3462:             "usage": {
+ 3463:                 "input_tokens": usage.get("input_tokens", 0),
+ 3464:                 "output_tokens": usage.get("output_tokens", 0),
+ 3465:                 "total_tokens": usage.get("total_tokens", 0),
+ 3466:             },
+ 3467:         }
+ 3468: 
+ 3469:         # Store the complete response object for future chaining / GET retrieval
+ 3470:         if store:
+ 3471:             self._response_store.put(response_id, {
+ 3472:                 "response": response_data,
+ 3473:                 "conversation_history": full_history,
+ 3474:                 "instructions": instructions,
+ 3475:                 "session_id": session_id,
+ 3476:             })
+ 3477:             # Update conversation mapping so the next request with the same
+ 3478:             # conversation name automatically chains to this response
+ 3479:             if conversation:
+ 3480:                 self._response_store.set_conversation(conversation, response_id)
+ 3481: 
+ 3482:         response_headers = {"X-Hermes-Session-Id": session_id}
+ 3483:         if gateway_session_key:
+ 3484:             response_headers["X-Hermes-Session-Key"] = gateway_session_key
+ 3485:         return web.json_response(response_data, headers=response_headers)
+ 3486: 
+ 3487:     # ------------------------------------------------------------------
+ 3488:     # GET / DELETE response endpoints
+ 3489:     # ------------------------------------------------------------------
+ 3490: 
+ 3491:     async def _handle_get_response(self, request: "web.Request") -> "web.Response":
+ 3492:         """GET /v1/responses/{response_id} â€” retrieve a stored response."""
+ 3493:         auth_err = self._check_auth(request)
+ 3494:         if auth_err:
+ 3495:             return auth_err
+ 3496: 
+ 3497:         response_id = request.match_info["response_id"]
+ 3498:         stored = self._response_store.get(response_id)
+ 3499:         if stored is None:
+ 3500:             return web.json_response(_openai_error(f"Response not found: {response_id}"), status=404)
+ 3501: 
+ 3502:         return web.json_response(stored["response"])
+ 3503: 
+ 3504:     async def _handle_delete_response(self, request: "web.Request") -> "web.Response":
+ 3505:         """DELETE /v1/responses/{response_id} â€” delete a stored response."""
+
+=== Execution / approval / tool candidate L4000-L4485 ===
+ 4000:         ``platform="api_server"`` and ``async_delivery=False`` so a new route
+ 4001:         physically cannot reintroduce the silent-no-op bug (#10760) by
+ 4002:         forgetting to mark the channel as non-delivering. There is no
+ 4003:         ``async_delivery`` parameter to get wrong; the stateless HTTP path can
+ 4004:         never wake the agent after the turn ends, on ANY route.
+ 4005: 
+ 4006:         Returns reset tokens; pass them to ``clear_session_vars`` in a
+ 4007:         ``finally`` block (the binding is request-scoped and must not outlive
+ 4008:         the turn â€” a session resumed later on a delivering interface, e.g. the
+ 4009:         CLI or a gateway platform, re-binds fresh and is NOT blocked).
+ 4010:         """
+ 4011:         from gateway.session_context import set_session_vars
+ 4012: 
+ 4013:         return set_session_vars(
+ 4014:             platform="api_server",
+ 4015:             chat_id=chat_id,
+ 4016:             session_key=session_key,
+ 4017:             session_id=session_id,
+ 4018:             async_delivery=False,
+ 4019:         )
+ 4020: 
+ 4021:     async def _run_agent(
+ 4022:         self,
+ 4023:         user_message: str,
+ 4024:         conversation_history: List[Dict[str, str]],
+ 4025:         ephemeral_system_prompt: Optional[str] = None,
+ 4026:         session_id: Optional[str] = None,
+ 4027:         stream_delta_callback=None,
+ 4028:         tool_progress_callback=None,
+ 4029:         tool_start_callback=None,
+ 4030:         tool_complete_callback=None,
+ 4031:         agent_ref: Optional[list] = None,
+ 4032:         gateway_session_key: Optional[str] = None,
+ 4033:         route: Optional[Dict[str, Any]] = None,
+ 4034:     ) -> tuple:
+ 4035:         """
+ 4036:         Create an agent and run a conversation in a thread executor.
+ 4037: 
+ 4038:         Returns ``(result_dict, usage_dict)`` where *usage_dict* contains
+ 4039:         ``input_tokens``, ``output_tokens`` and ``total_tokens``.
+ 4040: 
+ 4041:         *route* is an optional ``model_routes`` entry (resolved from the
+ 4042:         request's ``model`` field) that overrides the global model/provider
+ 4043:         for this specific request.
+ 4044: 
+ 4045:         If *agent_ref* is a one-element list, the AIAgent instance is stored
+ 4046:         at ``agent_ref[0]`` before ``run_conversation`` begins.  This allows
+ 4047:         callers (e.g. the SSE writer) to call ``agent.interrupt()`` from
+ 4048:         another thread to stop in-progress LLM calls.
+ 4049:         """
+ 4050:         loop = asyncio.get_running_loop()
+ 4051: 
+ 4052:         def _run():
+ 4053:             from gateway.session_context import clear_session_vars
+ 4054: 
+ 4055:             tokens = self._bind_api_server_session(
+ 4056:                 chat_id=session_id or "",
+ 4057:                 session_key=gateway_session_key or session_id or "",
+ 4058:                 session_id=session_id or "",
+ 4059:             )
+ 4060:             try:
+ 4061:                 agent = self._create_agent(
+ 4062:                     ephemeral_system_prompt=ephemeral_system_prompt,
+ 4063:                     session_id=session_id,
+ 4064:                     stream_delta_callback=stream_delta_callback,
+ 4065:                     tool_progress_callback=tool_progress_callback,
+ 4066:                     tool_start_callback=tool_start_callback,
+ 4067:                     tool_complete_callback=tool_complete_callback,
+ 4068:                     gateway_session_key=gateway_session_key,
+ 4069:                     route=route,
+ 4070:                 )
+ 4071:                 if agent_ref is not None:
+ 4072:                     agent_ref[0] = agent
+ 4073:                 effective_task_id = session_id or str(uuid.uuid4())
+ 4074:                 result = agent.run_conversation(
+ 4075:                     user_message=user_message,
+ 4076:                     conversation_history=conversation_history,
+ 4077:                     task_id=effective_task_id,
+ 4078:                 )
+ 4079:                 usage = {
+ 4080:                     "input_tokens": getattr(agent, "session_prompt_tokens", 0) or 0,
+ 4081:                     "output_tokens": getattr(agent, "session_completion_tokens", 0) or 0,
+ 4082:                     "total_tokens": getattr(agent, "session_total_tokens", 0) or 0,
+ 4083:                 }
+ 4084:                 # Include the effective session ID in the result so callers
+ 4085:                 # (e.g. X-Hermes-Session-Id header) can track compression-
+ 4086:                 # triggered session rotations. (#16938)
+ 4087:                 _eff_sid = getattr(agent, "session_id", session_id)
+ 4088:                 if isinstance(_eff_sid, str) and _eff_sid:
+ 4089:                     result["session_id"] = _eff_sid
+ 4090:                 return result, usage
+ 4091:             finally:
+ 4092:                 clear_session_vars(tokens)
+ 4093: 
+ 4094:         self._inflight_agent_runs += 1
+ 4095:         try:
+ 4096:             return await loop.run_in_executor(None, _run)
+ 4097:         finally:
+ 4098:             self._inflight_agent_runs -= 1
+ 4099: 
+ 4100:     # ------------------------------------------------------------------
+ 4101:     # /v1/runs â€” structured event streaming
+ 4102:     # ------------------------------------------------------------------
+ 4103: 
+ 4104:     _RUN_STREAM_TTL = 300  # seconds before orphaned runs are swept
+ 4105:     _RUN_STATUS_TTL = 3600  # seconds to retain terminal run status for polling
+ 4106: 
+ 4107:     def _set_run_status(self, run_id: str, status: str, **fields: Any) -> Dict[str, Any]:
+ 4108:         """Update pollable run status without exposing private agent objects."""
+ 4109:         now = time.time()
+ 4110:         current = self._run_statuses.get(run_id, {})
+ 4111:         current.update({
+ 4112:             "object": "hermes.run",
+ 4113:             "run_id": run_id,
+ 4114:             "status": status,
+ 4115:             "updated_at": now,
+ 4116:         })
+ 4117:         current.setdefault("created_at", fields.pop("created_at", now))
+ 4118:         current.update(fields)
+ 4119:         self._run_statuses[run_id] = current
+ 4120:         return current
+ 4121: 
+ 4122:     def _make_run_event_callback(self, run_id: str, loop: "asyncio.AbstractEventLoop"):
+ 4123:         """Return a tool_progress_callback that pushes structured events to the run's SSE queue."""
+ 4124:         def _push(event: Dict[str, Any]) -> None:
+ 4125:             self._set_run_status(
+ 4126:                 run_id,
+ 4127:                 self._run_statuses.get(run_id, {}).get("status", "running"),
+ 4128:                 last_event=event.get("event"),
+ 4129:             )
+ 4130:             q = self._run_streams.get(run_id)
+ 4131:             if q is None:
+ 4132:                 return
+ 4133:             try:
+ 4134:                 loop.call_soon_threadsafe(q.put_nowait, event)
+ 4135:             except Exception:
+ 4136:                 pass
+ 4137: 
+ 4138:         def _callback(event_type: str, tool_name: str = None, preview: str = None, args=None, **kwargs):
+ 4139:             ts = time.time()
+ 4140:             if event_type == "tool.started":
+ 4141:                 _push({
+ 4142:                     "event": "tool.started",
+ 4143:                     "run_id": run_id,
+ 4144:                     "timestamp": ts,
+ 4145:                     "tool": tool_name,
+ 4146:                     "preview": preview,
+ 4147:                 })
+ 4148:             elif event_type == "tool.completed":
+ 4149:                 _push({
+ 4150:                     "event": "tool.completed",
+ 4151:                     "run_id": run_id,
+ 4152:                     "timestamp": ts,
+ 4153:                     "tool": tool_name,
+ 4154:                     "duration": round(kwargs.get("duration", 0), 3),
+ 4155:                     "error": kwargs.get("is_error", False),
+ 4156:                 })
+ 4157:             elif event_type == "reasoning.available":
+ 4158:                 _push({
+ 4159:                     "event": "reasoning.available",
+ 4160:                     "run_id": run_id,
+ 4161:                     "timestamp": ts,
+ 4162:                     "text": preview or "",
+ 4163:                 })
+ 4164:             # _thinking and subagent_progress are intentionally not forwarded
+ 4165: 
+ 4166:         return _callback
+ 4167: 
+ 4168:     async def _handle_runs(self, request: "web.Request") -> "web.Response":
+ 4169:         """POST /v1/runs â€” start an agent run, return run_id immediately."""
+ 4170:         auth_err = self._check_auth(request)
+ 4171:         if auth_err:
+ 4172:             return auth_err
+ 4173: 
+ 4174:         # Long-term memory scope header (see chat_completions for details).
+ 4175:         gateway_session_key, key_err = self._parse_session_key_header(request)
+ 4176:         if key_err is not None:
+ 4177:             return key_err
+ 4178: 
+ 4179:         # Enforce concurrency limit (shared across all agent-serving
+ 4180:         # endpoints; configurable via gateway.api_server.max_concurrent_runs).
+ 4181:         limited = self._concurrency_limited_response()
+ 4182:         if limited is not None:
+ 4183:             return limited
+ 4184: 
+ 4185:         try:
+ 4186:             body = await request.json()
+ 4187:         except Exception:
+ 4188:             return web.json_response(_openai_error("Invalid JSON"), status=400)
+ 4189: 
+ 4190:         raw_input = body.get("input")
+ 4191:         if not raw_input:
+ 4192:             return web.json_response(_openai_error("Missing 'input' field"), status=400)
+ 4193: 
+ 4194:         user_message = raw_input if isinstance(raw_input, str) else (raw_input[-1].get("content", "") if isinstance(raw_input, list) else "")
+ 4195:         if not user_message:
+ 4196:             return web.json_response(_openai_error("No user message found in input"), status=400)
+ 4197: 
+ 4198:         instructions = body.get("instructions")
+ 4199:         previous_response_id = body.get("previous_response_id")
+ 4200: 
+ 4201:         # Accept explicit conversation_history from the request body.
+ 4202:         # Precedence: explicit conversation_history > previous_response_id.
+ 4203:         conversation_history: List[Dict[str, str]] = []
+ 4204:         raw_history = body.get("conversation_history")
+ 4205:         if raw_history:
+ 4206:             if not isinstance(raw_history, list):
+ 4207:                 return web.json_response(
+ 4208:                     _openai_error("'conversation_history' must be an array of message objects"),
+ 4209:                     status=400,
+ 4210:                 )
+ 4211:             for i, entry in enumerate(raw_history):
+ 4212:                 if not isinstance(entry, dict) or "role" not in entry or "content" not in entry:
+ 4213:                     return web.json_response(
+ 4214:                         _openai_error(f"conversation_history[{i}] must have 'role' and 'content' fields"),
+ 4215:                         status=400,
+ 4216:                     )
+ 4217:                 conversation_history.append({"role": str(entry["role"]), "content": str(entry["content"])})
+ 4218:             if previous_response_id:
+ 4219:                 logger.debug("Both conversation_history and previous_response_id provided; using conversation_history")
+ 4220: 
+ 4221:         stored_session_id = None
+ 4222:         if not conversation_history and previous_response_id:
+ 4223:             stored = self._response_store.get(previous_response_id)
+ 4224:             if stored:
+ 4225:                 conversation_history = list(stored.get("conversation_history", []))
+ 4226:                 stored_session_id = stored.get("session_id")
+ 4227:                 if instructions is None:
+ 4228:                     instructions = stored.get("instructions")
+ 4229: 
+ 4230:         # When input is a multi-message array, extract all but the last
+ 4231:         # message as conversation history (the last becomes user_message).
+ 4232:         # Only fires when no explicit history was provided.
+ 4233:         if not conversation_history and isinstance(raw_input, list) and len(raw_input) > 1:
+ 4234:             for msg in raw_input[:-1]:
+ 4235:                 if isinstance(msg, dict) and msg.get("role") and msg.get("content"):
+ 4236:                     content = msg["content"]
+ 4237:                     if isinstance(content, list):
+ 4238:                         # Flatten multi-part content blocks to text
+ 4239:                         content = " ".join(
+ 4240:                             part.get("text", "") for part in content
+ 4241:                             if isinstance(part, dict) and part.get("type") == "text"
+ 4242:                         )
+ 4243:                     conversation_history.append({"role": msg["role"], "content": str(content)})
+ 4244: 
+ 4245:         run_id = f"run_{uuid.uuid4().hex}"
+ 4246:         session_id = body.get("session_id") or stored_session_id or run_id
+ 4247:         # Approval queues gate host-side tool execution and must be isolated
+ 4248:         # per API run.  Client-provided session IDs and memory session keys are
+ 4249:         # conversation/memory scopes, not authorization namespaces: multiple
+ 4250:         # concurrent runs can intentionally share them, and resolving an
+ 4251:         # approval for one run must not unblock another run's dangerous command.
+ 4252:         approval_session_key = run_id
+ 4253:         ephemeral_system_prompt = instructions
+ 4254:         loop = asyncio.get_running_loop()
+ 4255:         q: "asyncio.Queue[Optional[Dict]]" = asyncio.Queue()
+ 4256:         created_at = time.time()
+ 4257:         self._run_streams[run_id] = q
+ 4258:         self._run_streams_created[run_id] = created_at
+ 4259:         self._run_approval_sessions[run_id] = approval_session_key
+ 4260: 
+ 4261:         event_cb = self._make_run_event_callback(run_id, loop)
+ 4262: 
+ 4263:         # Also wire stream_delta_callback so message.delta events flow through.
+ 4264:         def _text_cb(delta: Optional[str]) -> None:
+ 4265:             if delta is None:
+ 4266:                 return
+ 4267:             try:
+ 4268:                 loop.call_soon_threadsafe(q.put_nowait, {
+ 4269:                     "event": "message.delta",
+ 4270:                     "run_id": run_id,
+ 4271:                     "timestamp": time.time(),
+ 4272:                     "delta": delta,
+ 4273:                 })
+ 4274:             except Exception:
+ 4275:                 pass
+ 4276: 
+ 4277:         self._set_run_status(
+ 4278:             run_id,
+ 4279:             "queued",
+ 4280:             created_at=created_at,
+ 4281:             session_id=session_id,
+ 4282:             model=body.get("model", self._model_name),
+ 4283:         )
+ 4284: 
+ 4285:         # Per-client model routing for /v1/runs (see model_routes).
+ 4286:         route = self._resolve_route(body.get("model"))
+ 4287: 
+ 4288:         async def _run_and_close():
+ 4289:             try:
+ 4290:                 self._set_run_status(run_id, "running")
+ 4291:                 agent = self._create_agent(
+ 4292:                     ephemeral_system_prompt=ephemeral_system_prompt,
+ 4293:                     session_id=session_id,
+ 4294:                     stream_delta_callback=_text_cb,
+ 4295:                     tool_progress_callback=event_cb,
+ 4296:                     gateway_session_key=gateway_session_key,
+ 4297:                     route=route,
+ 4298:                 )
+ 4299:                 self._active_run_agents[run_id] = agent
+ 4300: 
+ 4301:                 def _approval_notify(approval_data: Dict[str, Any]) -> None:
+ 4302:                     event = dict(approval_data or {})
+ 4303:                     # Redact credentials from the command before it enters the
+ 4304:                     # SSE/API event stream â€” same egress bug as #48456, second
+ 4305:                     # transport: API/desktop clients would otherwise receive the
+ 4306:                     # raw command Tirith flagged. Reuse the gateway seam.
+ 4307:                     if "command" in event:
+ 4308:                         from gateway.run import _redact_approval_command
+ 4309: 
+ 4310:                         event["command"] = _redact_approval_command(event.get("command"))
+ 4311:                     event.update({
+ 4312:                         "event": "approval.request",
+ 4313:                         "run_id": run_id,
+ 4314:                         "timestamp": time.time(),
+ 4315:                         "choices": ["once", "session", "always", "deny"],
+ 4316:                     })
+ 4317:                     self._set_run_status(
+ 4318:                         run_id,
+ 4319:                         "waiting_for_approval",
+ 4320:                         last_event="approval.request",
+ 4321:                     )
+ 4322:                     try:
+ 4323:                         loop.call_soon_threadsafe(q.put_nowait, event)
+ 4324:                     except Exception:
+ 4325:                         pass
+ 4326: 
+ 4327:                 def _run_sync():
+ 4328:                     from gateway.session_context import clear_session_vars
+ 4329:                     from tools.approval import (
+ 4330:                         register_gateway_notify,
+ 4331:                         reset_current_session_key,
+ 4332:                         set_current_session_key,
+ 4333:                         unregister_gateway_notify,
+ 4334:                     )
+ 4335: 
+ 4336:                     effective_task_id = session_id or run_id
+ 4337:                     approval_token = None
+ 4338:                     session_tokens = []
+ 4339:                     try:
+ 4340:                         # Bind approval/session identity for this API run via
+ 4341:                         # contextvars so concurrent runs do not share process
+ 4342:                         # environment state.
+ 4343:                         approval_token = set_current_session_key(approval_session_key)
+ 4344:                         session_tokens = self._bind_api_server_session(
+ 4345:                             session_key=approval_session_key,
+ 4346:                         )
+ 4347:                         register_gateway_notify(approval_session_key, _approval_notify)
+ 4348:                         r = agent.run_conversation(
+ 4349:                             user_message=user_message,
+ 4350:                             conversation_history=conversation_history,
+ 4351:                             task_id=effective_task_id,
+ 4352:                         )
+ 4353:                     finally:
+ 4354:                         try:
+ 4355:                             unregister_gateway_notify(approval_session_key)
+ 4356:                         finally:
+ 4357:                             if approval_token is not None:
+ 4358:                                 try:
+ 4359:                                     reset_current_session_key(approval_token)
+ 4360:                                 except Exception:
+ 4361:                                     pass
+ 4362:                             if session_tokens:
+ 4363:                                 try:
+ 4364:                                     clear_session_vars(session_tokens)
+ 4365:                                 except Exception:
+ 4366:                                     pass
+ 4367:                     u = {
+ 4368:                         "input_tokens": getattr(agent, "session_prompt_tokens", 0) or 0,
+ 4369:                         "output_tokens": getattr(agent, "session_completion_tokens", 0) or 0,
+ 4370:                         "total_tokens": getattr(agent, "session_total_tokens", 0) or 0,
+ 4371:                     }
+ 4372:                     return r, u
+ 4373: 
+ 4374:                 result, usage = await asyncio.get_running_loop().run_in_executor(None, _run_sync)
+ 4375:                 # Check for structured failure (non-retryable client errors like
+ 4376:                 # 401/400 return failed=True instead of raising, so the except
+ 4377:                 # block below never fires â€” issue #15561).
+ 4378:                 if isinstance(result, dict) and result.get("failed"):
+ 4379:                     error_msg = _redact_api_error_text(result.get("error") or "agent run failed")
+ 4380:                     q.put_nowait({
+ 4381:                         "event": "run.failed",
+ 4382:                         "run_id": run_id,
+ 4383:                         "timestamp": time.time(),
+ 4384:                         "error": error_msg,
+ 4385:                     })
+ 4386:                     self._set_run_status(
+ 4387:                         run_id,
+ 4388:                         "failed",
+ 4389:                         error=error_msg,
+ 4390:                         last_event="run.failed",
+ 4391:                     )
+ 4392:                 else:
+ 4393:                     final_response = result.get("final_response", "") if isinstance(result, dict) else ""
+ 4394:                     q.put_nowait({
+ 4395:                         "event": "run.completed",
+ 4396:                         "run_id": run_id,
+ 4397:                         "timestamp": time.time(),
+ 4398:                         "output": final_response,
+ 4399:                         "usage": usage,
+ 4400:                     })
+ 4401:                     self._set_run_status(
+ 4402:                         run_id,
+ 4403:                         "completed",
+ 4404:                         output=final_response,
+ 4405:                         usage=usage,
+ 4406:                         last_event="run.completed",
+ 4407:                     )
+ 4408:             except asyncio.CancelledError:
+ 4409:                 self._set_run_status(
+ 4410:                     run_id,
+ 4411:                     "cancelled",
+ 4412:                     last_event="run.cancelled",
+ 4413:                 )
+ 4414:                 try:
+ 4415:                     q.put_nowait({
+ 4416:                         "event": "run.cancelled",
+ 4417:                         "run_id": run_id,
+ 4418:                         "timestamp": time.time(),
+ 4419:                     })
+ 4420:                 except Exception:
+ 4421:                     pass
+ 4422:                 raise
+ 4423:             except Exception as exc:
+ 4424:                 logger.exception("[api_server] run %s failed", run_id)
+ 4425:                 self._set_run_status(
+ 4426:                     run_id,
+ 4427:                     "failed",
+ 4428:                     error=_redact_api_error_text(exc),
+ 4429:                     last_event="run.failed",
+ 4430:                 )
+ 4431:                 try:
+ 4432:                     q.put_nowait({
+ 4433:                         "event": "run.failed",
+ 4434:                         "run_id": run_id,
+ 4435:                         "timestamp": time.time(),
+ 4436:                         "error": _redact_api_error_text(exc),
+ 4437:                     })
+ 4438:                 except Exception:
+ 4439:                     pass
+ 4440:             finally:
+ 4441:                 # If the asyncio wrapper is cancelled (for example via
+ 4442:                 # /stop), the executor thread can still be blocked waiting
+ 4443:                 # on an approval Event.  Unregistering here releases those
+ 4444:                 # waits immediately; the in-thread unregister is harmlessly
+ 4445:                 # idempotent on normal completion.
+ 4446:                 try:
+ 4447:                     from tools.approval import unregister_gateway_notify
+ 4448: 
+ 4449:                     unregister_gateway_notify(approval_session_key)
+ 4450:                 except Exception:
+ 4451:                     pass
+ 4452:                 # Sentinel: signal SSE stream to close
+ 4453:                 try:
+ 4454:                     q.put_nowait(None)
+ 4455:                 except Exception:
+ 4456:                     pass
+ 4457:                 self._active_run_agents.pop(run_id, None)
+ 4458:                 self._active_run_tasks.pop(run_id, None)
+ 4459:                 self._run_approval_sessions.pop(run_id, None)
+ 4460: 
+ 4461:         task = asyncio.create_task(_run_and_close())
+ 4462:         self._active_run_tasks[run_id] = task
+ 4463:         try:
+ 4464:             self._background_tasks.add(task)
+ 4465:         except TypeError:
+ 4466:             pass
+ 4467:         if hasattr(task, "add_done_callback"):
+ 4468:             task.add_done_callback(self._background_tasks.discard)
+ 4469: 
+ 4470:         response_headers = (
+ 4471:             {"X-Hermes-Session-Key": gateway_session_key} if gateway_session_key else {}
+ 4472:         )
+ 4473:         return web.json_response(
+ 4474:             {"run_id": run_id, "status": "started"},
+ 4475:             status=202,
+ 4476:             headers=response_headers,
+ 4477:         )
+ 4478: 
+ 4479:     async def _handle_get_run(self, request: "web.Request") -> "web.Response":
+ 4480:         """GET /v1/runs/{run_id} â€” return pollable run status for external UIs."""
+ 4481:         auth_err = self._check_auth(request)
+ 4482:         if auth_err:
+ 4483:             return auth_err
+ 4484: 
+ 4485:         run_id = request.match_info["run_id"]

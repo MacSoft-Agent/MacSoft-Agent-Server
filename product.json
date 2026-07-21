@@ -1,0 +1,12 @@
+{
+  "product": "MacSoft Agent",
+  "product_version": "0.1.0",
+  "channel": "stable",
+  "runtime_base_version": "v2026.7.7.2",
+  "runtime_base_commit": "79f12748022817a7c4f3fee747e45e9e6979214a",
+  "build_date": "2026-07-14",
+  "build_id": "macsoft-agent-0.1.0-stable.20260714.1",
+  "data_schema_version": 1,
+  "protected_resource_version": 1,
+  "update_manifest_url": null
+}

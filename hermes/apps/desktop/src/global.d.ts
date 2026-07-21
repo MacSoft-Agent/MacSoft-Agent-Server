@@ -15,6 +15,14 @@ declare global {
       macSoftDesktopChat: {
         getStatus: () => Promise<MacSoftDesktopChatStatusResult>
       }
+      macSoftAdminChat: {
+        listSessions: () => Promise<MacSoftAdminSession[]>
+        createSession: (title?: string) => Promise<MacSoftAdminSession>
+        getMessages: (sessionId: string) => Promise<MacSoftAdminMessage[]>
+        deleteSession: (sessionId: string) => Promise<void>
+        startStream: (input: { sessionId: string; message: string }) => Promise<{ streamId: string }>
+        onStreamEvent: (callback: (payload: MacSoftAdminStreamEvent) => void) => () => void
+      }
       // Resolve a backend connection. Omit `profile` (or pass the primary) for
       // the window's backend; pass a named profile to lazily spawn/reuse that
       // profile's backend from the pool.
@@ -276,6 +284,31 @@ export type MacSoftDesktopChatStatus = 'idle' | 'connecting' | 'ready' | 'unavai
 export interface MacSoftDesktopChatStatusResult {
   status: MacSoftDesktopChatStatus
   message?: string
+}
+
+export interface MacSoftAdminSession {
+  id: string
+  session_id: string
+  title: string
+  created_at: string
+  updated_at: string
+}
+
+export interface MacSoftAdminMessage {
+  id: string
+  message_id: string
+  session_id: string
+  role: string
+  content: string
+  status: string
+  model: string | null
+  created_at: string
+}
+
+export interface MacSoftAdminStreamEvent {
+  streamId: string
+  event: 'message_start' | 'activity' | 'token_delta' | 'error' | 'message_done'
+  data: Record<string, unknown>
 }
 
 export interface MacSoftServiceStatus {

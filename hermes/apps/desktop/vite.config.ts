@@ -56,6 +56,7 @@ export default defineConfig({
     }
   },
   resolve: {
+    extensions: ['.tsx', '.ts', '.jsx', '.js', '.mjs'],
     alias: {
       '@': path.resolve(__dirname, './src'),
       '@hermes/shared': path.resolve(__dirname, '../shared/src'),

@@ -26,7 +26,8 @@ import {
   screen,
   session,
   shell,
-  systemPreferences
+  systemPreferences,
+  type WebContents
 } from 'electron'
 import nodePty from 'node-pty'
 
@@ -7385,6 +7386,135 @@ export function getMacSoftDesktopAdminChatClient() {
   macSoftDesktopAdminChatClient ||= new MacSoftDesktopAdminChatClient(getMacSoftHostClient())
   return macSoftDesktopAdminChatClient
 }
+
+const MACSOFT_ADMIN_STREAM_CHANNEL = 'hermes:macsoft-admin-chat:stream'
+const macSoftAdminStreams = new Map<
+  string,
+  { controller: AbortController; onDestroyed: () => void; webContents: WebContents }
+>()
+const MACSOFT_ADMIN_SESSION_ID_RE = /^admin_sess_[a-z0-9]+$/
+const MACSOFT_ADMIN_MAX_MESSAGE_BYTES = 32_000
+const MACSOFT_ADMIN_STREAM_EVENTS = new Set(['message_start', 'activity', 'token_delta', 'error', 'message_done'])
+
+function validateMacSoftAdminSessionId(value: unknown): string {
+  if (typeof value !== 'string' || !MACSOFT_ADMIN_SESSION_ID_RE.test(value)) {
+    throw new Error('Invalid Admin session.')
+  }
+  return value
+}
+
+function validateMacSoftAdminMessage(value: unknown): string {
+  if (typeof value !== 'string' || !value.trim() || Buffer.byteLength(value, 'utf8') > MACSOFT_ADMIN_MAX_MESSAGE_BYTES) {
+    throw new Error('Admin message is invalid.')
+  }
+  return value
+}
+
+function sendMacSoftAdminStreamEvent(
+  streamId: string,
+  webContents: WebContents,
+  event: string,
+  data: unknown
+) {
+  if (webContents.isDestroyed() || !MACSOFT_ADMIN_STREAM_EVENTS.has(event) || !data || typeof data !== 'object') {
+    return
+  }
+  webContents.send(MACSOFT_ADMIN_STREAM_CHANNEL, { streamId, event, data })
+}
+
+function cleanupMacSoftAdminStream(streamId: string) {
+  const active = macSoftAdminStreams.get(streamId)
+  if (!active) return
+  active.webContents.removeListener('destroyed', active.onDestroyed)
+  macSoftAdminStreams.delete(streamId)
+}
+
+async function pumpMacSoftAdminStream(
+  streamId: string,
+  response: Response,
+  webContents: Electron.WebContents,
+  controller: AbortController
+) {
+  const reader = response.body?.getReader()
+  let buffer = ''
+  const decoder = new TextDecoder()
+
+  const emitRecord = (record: string) => {
+    let event = ''
+    const dataLines: string[] = []
+    for (const line of record.split(/\r?\n/)) {
+      if (line.startsWith('event:')) event = line.slice(6).trim()
+      if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart())
+    }
+    if (!MACSOFT_ADMIN_STREAM_EVENTS.has(event) || dataLines.length === 0) return
+    try {
+      sendMacSoftAdminStreamEvent(streamId, webContents, event, JSON.parse(dataLines.join('\n')))
+    } catch {
+      sendMacSoftAdminStreamEvent(streamId, webContents, 'error', {
+        code: 'malformed_stream_event',
+        message: 'MacSoft Server returned an invalid chat event.'
+      })
+    }
+  }
+
+  try {
+    if (!reader) throw new Error('Admin chat stream has no response body.')
+    while (true) {
+      const chunk = await reader.read()
+      if (chunk.done) break
+      buffer += decoder.decode(chunk.value, { stream: true })
+      const records = buffer.split(/\r?\n\r?\n/)
+      buffer = records.pop() || ''
+      records.forEach(emitRecord)
+    }
+    buffer += decoder.decode()
+    if (buffer.trim()) emitRecord(buffer)
+  } catch {
+    if (!controller.signal.aborted) {
+      sendMacSoftAdminStreamEvent(streamId, webContents, 'error', {
+        code: 'stream_disconnected',
+        message: 'MacSoft Server chat stream disconnected.'
+      })
+    }
+  } finally {
+    cleanupMacSoftAdminStream(streamId)
+  }
+}
+
+ipcMain.handle('hermes:macsoft-admin:list-sessions', () => getMacSoftDesktopAdminChatClient().listAdminSessions())
+ipcMain.handle('hermes:macsoft-admin:create-session', (_event, title) => {
+  if (title !== undefined && (typeof title !== 'string' || title.length > 80)) throw new Error('Invalid Admin session title.')
+  return getMacSoftDesktopAdminChatClient().createAdminSession(title)
+})
+ipcMain.handle('hermes:macsoft-admin:get-messages', (_event, sessionId) =>
+  getMacSoftDesktopAdminChatClient().readAdminMessages(validateMacSoftAdminSessionId(sessionId))
+)
+ipcMain.handle('hermes:macsoft-admin:delete-session', (_event, sessionId) =>
+  getMacSoftDesktopAdminChatClient().deleteAdminSession(validateMacSoftAdminSessionId(sessionId))
+)
+ipcMain.handle('hermes:macsoft-admin:start-stream', async (event, request) => {
+  const payload = event.sender
+  if (macSoftAdminStreams.size > 0) throw new Error('Admin chat is already processing a request.')
+  const sessionId = validateMacSoftAdminSessionId(request?.sessionId)
+  const message = validateMacSoftAdminMessage(request?.message)
+  const controller = new AbortController()
+  const streamId = crypto.randomUUID()
+  const webContents = payload
+  const onDestroyed = () => {
+    controller.abort()
+    cleanupMacSoftAdminStream(streamId)
+  }
+  macSoftAdminStreams.set(streamId, { controller, onDestroyed, webContents })
+  webContents.once('destroyed', onDestroyed)
+  try {
+    const response = await getMacSoftDesktopAdminChatClient().startAdminChatStream(sessionId, message, controller.signal)
+    void pumpMacSoftAdminStream(streamId, response, webContents, controller)
+    return { streamId }
+  } catch (error) {
+    cleanupMacSoftAdminStream(streamId)
+    throw new Error(error instanceof Error ? error.message : 'Admin chat could not start.')
+  }
+})
 ipcMain.handle('hermes:macsoft-host:status', () => getMacSoftHostClient().status())
 ipcMain.handle('hermes:macsoft-desktop-chat:status', () => getMacSoftDesktopChatClient().getStatus())
 ipcMain.handle('hermes:macsoft-host:service-action', (_event, name, action) =>

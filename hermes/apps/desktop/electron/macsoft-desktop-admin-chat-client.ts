@@ -1,5 +1,6 @@
 const ADMIN_SERVER_BASE_URL = 'http://127.0.0.1:8787'
 const ADMIN_REQUEST_TIMEOUT_MS = 10_000
+const ADMIN_STREAM_TIMEOUT_MS = 30 * 60 * 1_000
 
 interface TrustedHostTokenProvider {
   trustedHostToken: () => string
@@ -73,8 +74,8 @@ export class MacSoftDesktopAdminChatClient {
     await this.requestJson(`/api/admin/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' })
   }
 
-  async startAdminChatStream(sessionId: string, message: string): Promise<Response> {
-    return this.requestStream('/api/admin/chat/stream', { session_id: sessionId, message, uploaded_file_ids: [] })
+  async startAdminChatStream(sessionId: string, message: string, signal?: AbortSignal): Promise<Response> {
+    return this.requestStream('/api/admin/chat/stream', { session_id: sessionId, message, uploaded_file_ids: [] }, signal)
   }
 
   private async requestJson(pathname: string, init: RequestInit): Promise<any> {
@@ -82,17 +83,22 @@ export class MacSoftDesktopAdminChatClient {
     return this.readJson(response)
   }
 
-  private async requestStream(pathname: string, payload: unknown): Promise<Response> {
-    return this.request(pathname, { method: 'POST', body: JSON.stringify(payload), headers: { Accept: 'text/event-stream' } })
+  private async requestStream(pathname: string, payload: unknown, signal?: AbortSignal): Promise<Response> {
+    return this.request(pathname, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      headers: { Accept: 'text/event-stream' },
+      signal
+    }, ADMIN_STREAM_TIMEOUT_MS)
   }
 
-  private async request(pathname: string, init: RequestInit): Promise<Response> {
+  private async request(pathname: string, init: RequestInit, timeoutMs = this.timeoutMs): Promise<Response> {
     await this.ensureAdminAccess()
-    let response = await this.send(pathname, init)
+    let response = await this.send(pathname, init, timeoutMs)
     if (response.status === 401) {
       this.adminAccessToken = null
       await this.ensureAdminAccess()
-      response = await this.send(pathname, init)
+      response = await this.send(pathname, init, timeoutMs)
     }
     if (!response.ok) {
       throw new Error('MacSoft Server Admin request failed.')
@@ -100,7 +106,7 @@ export class MacSoftDesktopAdminChatClient {
     return response
   }
 
-  private async send(pathname: string, init: RequestInit): Promise<Response> {
+  private async send(pathname: string, init: RequestInit, timeoutMs: number): Promise<Response> {
     return this.fetchImpl(`${ADMIN_SERVER_BASE_URL}${pathname}`, {
       ...init,
       headers: {
@@ -109,7 +115,7 @@ export class MacSoftDesktopAdminChatClient {
         ...init.headers,
         Authorization: `Bearer ${this.adminAccessToken ?? ''}`
       },
-      signal: AbortSignal.timeout(this.timeoutMs)
+      signal: init.signal ?? AbortSignal.timeout(timeoutMs)
     })
   }
 

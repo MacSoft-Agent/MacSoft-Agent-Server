@@ -66,10 +66,12 @@ import { droppedFileInlineRefs, type SessionDragPayload, sessionInlineRef } from
 import type { ChatBarState } from './composer/types'
 import { type DroppedFile, partitionDroppedFiles } from './hooks/use-composer-actions'
 import { useFileDropZone } from './hooks/use-file-drop-zone'
+import { useMacSoftAdminChat } from './hooks/use-macsoft-admin-chat'
 import {
   resolveMacSoftPromptCapabilities,
   type MacSoftDesktopChatStatus
 } from './hooks/use-macsoft-desktop-chat-status'
+import { MacSoftAdminChatSurface } from './macsoft-admin-chat-surface'
 import { ScrollToBottomButton } from './scroll-to-bottom-button'
 import { SessionActionsMenu } from './sidebar/session-actions-menu'
 import { threadLoadingState } from './thread-loading'
@@ -310,25 +312,28 @@ export function ChatView({
   const gatewayState = useStore($gatewayState)
   const gatewaySwapTarget = useStore($gatewaySwapTarget)
   const gatewayOpen = gatewayState === 'open'
-  const { canEditPrompt, canSubmitPrompt } = resolveMacSoftPromptCapabilities(
+  const adminChat = useMacSoftAdminChat(macSoftCustomerRuntime, macSoftDesktopChatStatus === 'ready')
+  const nativePromptCapabilities = resolveMacSoftPromptCapabilities(
     macSoftCustomerRuntime,
     macSoftDesktopChatStatus,
     gatewayOpen
   )
+  const canEditPrompt = macSoftCustomerRuntime ? adminChat.canEditPrompt : nativePromptCapabilities.canEditPrompt
+  const canSubmitPrompt = macSoftCustomerRuntime ? adminChat.canSubmitPrompt : nativePromptCapabilities.canSubmitPrompt
+  const composerBusy = macSoftCustomerRuntime ? adminChat.streaming : busy
   const submitPrompt = useCallback<ChatViewProps['onSubmit']>(
     (text, options) => {
-      if (macSoftCustomerRuntime && !canSubmitPrompt) {
-        notify({
-          kind: 'info',
-          title: 'Server admin chat',
-          message: 'Server admin chat is not available yet.'
-        })
-        return false
+      if (macSoftCustomerRuntime) {
+        if (options?.attachments?.length) {
+          notify({ kind: 'info', title: 'Server admin chat', message: 'Attachments are not supported in Admin chat yet.' })
+          return false
+        }
+        return adminChat.submit(text)
       }
 
       return onSubmit(text, options)
     },
-    [canSubmitPrompt, macSoftCustomerRuntime, onSubmit]
+    [adminChat, macSoftCustomerRuntime, onSubmit]
   )
   const introPersonality = useStore($introPersonality)
   const introSeed = useStore($introSeed)
@@ -486,6 +491,14 @@ export function ChatView({
         onThreadMessagesChange={onThreadMessagesChange}
         suppressMessages={routeSessionMismatch}
       >
+        {macSoftCustomerRuntime ? (
+          <MacSoftAdminChatSurface
+            controller={adminChat}
+            onCreate={() => void adminChat.createSession()}
+            onDelete={sessionId => void adminChat.deleteSession(sessionId)}
+            onSelect={sessionId => void adminChat.selectSession(sessionId)}
+          />
+        ) : (
         <div
           className="relative min-h-0 max-w-full flex-1 overflow-hidden bg-(--ui-chat-surface-background) contain-[layout_paint]"
           data-slot="composer-bounds"
@@ -523,6 +536,7 @@ export function ChatView({
           <ChatDropOverlay kind={dragKind} />
           <ChatSwapOverlay profile={gatewaySwapTarget} />
         </div>
+        )}
         {/* Composer renders OUTSIDE the contain:[layout paint] wrapper above:
             that wrapper is a containing block for — and clips — position:fixed
             descendants, so the popped-out (fixed) composer would anchor to the
@@ -534,7 +548,7 @@ export function ChatView({
         {showChatBar && (
           <Suspense fallback={<ChatBarFallback />}>
             <ChatBar
-              busy={busy}
+              busy={composerBusy}
               cwd={currentCwd}
               canSubmitPrompt={canSubmitPrompt}
               disabled={!canEditPrompt}
@@ -545,7 +559,7 @@ export function ChatView({
               onAddUrl={onAddUrl}
               onAttachDroppedItems={onAttachDroppedItems}
               onAttachImageBlob={onAttachImageBlob}
-              onCancel={onCancel}
+              onCancel={macSoftCustomerRuntime ? () => undefined : onCancel}
               onBlockedSubmit={
                 macSoftCustomerRuntime
                   ? () =>
@@ -561,17 +575,19 @@ export function ChatView({
               onPickFolders={onPickFolders}
               onPickImages={onPickImages}
               onRemoveAttachment={onRemoveAttachment}
-              onSteer={onSteer}
+              onSteer={macSoftCustomerRuntime ? () => false : onSteer}
               onSubmit={submitPrompt}
               onTranscribeAudio={onTranscribeAudio}
               statusMessage={
-                macSoftCustomerRuntime &&
-                (macSoftDesktopChatStatus === 'unavailable' || macSoftDesktopChatStatus === 'error')
-                  ? 'MacSoft Server is unavailable.'
+                macSoftCustomerRuntime
+                  ? adminChat.error ||
+                    (macSoftDesktopChatStatus === 'unavailable' || macSoftDesktopChatStatus === 'error'
+                      ? 'MacSoft Server is unavailable.'
+                      : undefined)
                   : undefined
               }
-              queueSessionKey={selectedSessionId}
-              sessionId={activeSessionId}
+              queueSessionKey={macSoftCustomerRuntime ? adminChat.selectedSessionId : selectedSessionId}
+              sessionId={macSoftCustomerRuntime ? adminChat.selectedSessionId : activeSessionId}
               state={chatBarState}
             />
           </Suspense>

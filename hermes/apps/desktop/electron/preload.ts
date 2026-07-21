@@ -1,10 +1,30 @@
-import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
+
+type MacSoftAdminStreamEvent = {
+  streamId: string
+  event: 'message_start' | 'activity' | 'token_delta' | 'error' | 'message_done'
+  data: Record<string, unknown>
+}
 
 contextBridge.exposeInMainWorld('hermesDesktop', {
   macSoftCustomerRuntime: ipcRenderer.sendSync('hermes:macsoft-customer-runtime') === true,
   macSoftFirstRun: ipcRenderer.sendSync('hermes:macsoft-first-run-navigation') === true,
   macSoftDesktopChat: {
     getStatus: () => ipcRenderer.invoke('hermes:macsoft-desktop-chat:status')
+  },
+  macSoftAdminChat: {
+    listSessions: () => ipcRenderer.invoke('hermes:macsoft-admin:list-sessions'),
+    createSession: (title?: string) => ipcRenderer.invoke('hermes:macsoft-admin:create-session', title),
+    getMessages: (sessionId: string) => ipcRenderer.invoke('hermes:macsoft-admin:get-messages', sessionId),
+    deleteSession: (sessionId: string) => ipcRenderer.invoke('hermes:macsoft-admin:delete-session', sessionId),
+    startStream: (input: { sessionId: string; message: string }) =>
+      ipcRenderer.invoke('hermes:macsoft-admin:start-stream', input),
+    onStreamEvent: (callback: (payload: MacSoftAdminStreamEvent) => void) => {
+      const listener = (_event: IpcRendererEvent, payload: MacSoftAdminStreamEvent) => callback(payload)
+      ipcRenderer.on('hermes:macsoft-admin-chat:stream', listener)
+
+      return () => ipcRenderer.removeListener('hermes:macsoft-admin-chat:stream', listener)
+    }
   },
   getConnection: profile => ipcRenderer.invoke('hermes:connection', profile),
   revalidateConnection: () => ipcRenderer.invoke('hermes:connection:revalidate'),

@@ -11,6 +11,7 @@ interface HarnessProps {
   activeSessionIdRef: MutableRefObject<null | string>
   creatingSessionRef: MutableRefObject<boolean>
   currentView: string
+  enabled?: boolean
   freshDraftReady: boolean
   gatewayState: string
   locationPathname: string
@@ -34,6 +35,33 @@ describe('useRouteResume', () => {
   afterEach(() => {
     cleanup()
     vi.restoreAllMocks()
+  })
+
+  it('does not run Hermes Gateway route recovery when explicitly disabled', () => {
+    const resumeSession = vi.fn(async () => undefined)
+    const startFreshSessionDraft = vi.fn()
+
+    render(
+      <RouteResumeHarness
+        activeSessionId={null}
+        activeSessionIdRef={{ current: null }}
+        creatingSessionRef={{ current: false }}
+        currentView="chat"
+        enabled={false}
+        freshDraftReady={false}
+        gatewayState="open"
+        locationPathname="/admin-1"
+        resumeSession={resumeSession}
+        routedSessionId="admin-1"
+        runtimeIdByStoredSessionIdRef={{ current: new Map() }}
+        selectedStoredSessionId={null}
+        selectedStoredSessionIdRef={{ current: null }}
+        startFreshSessionDraft={startFreshSessionDraft}
+      />
+    )
+
+    expect(resumeSession).not.toHaveBeenCalled()
+    expect(startFreshSessionDraft).not.toHaveBeenCalled()
   })
 
   it('does not re-resume the old session during a /:sid -> /new transition', () => {

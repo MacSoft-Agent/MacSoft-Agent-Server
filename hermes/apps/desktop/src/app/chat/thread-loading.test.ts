@@ -31,4 +31,8 @@ describe('thread loading state', () => {
     expect(lastVisibleMessageIsUser(messages)).toBe(false)
     expect(threadLoadingState(false, true, true, lastVisibleMessageIsUser(messages))).toBeUndefined()
   })
+
+  it('shows response loading for an active MacSoft Admin stream with an optimistic assistant', () => {
+    expect(threadLoadingState(false, false, false, false, true)).toBe('response')
+  })
 })

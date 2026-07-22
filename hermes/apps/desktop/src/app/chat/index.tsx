@@ -30,8 +30,8 @@ import { useIncrementalExternalStoreRuntime } from '@/lib/incremental-external-s
 import { cn } from '@/lib/utils'
 import type { ComposerAttachment } from '@/store/composer'
 import { $pinnedSessionIds } from '@/store/layout'
-import { $gatewaySwapTarget } from '@/store/profile'
 import { notify } from '@/store/notifications'
+import { $gatewaySwapTarget } from '@/store/profile'
 import {
   $activeSessionId,
   $awaitingResponse,
@@ -66,18 +66,18 @@ import { droppedFileInlineRefs, type SessionDragPayload, sessionInlineRef } from
 import type { ChatBarState } from './composer/types'
 import { type DroppedFile, partitionDroppedFiles } from './hooks/use-composer-actions'
 import { useFileDropZone } from './hooks/use-file-drop-zone'
-import { useMacSoftAdminChat } from './hooks/use-macsoft-admin-chat'
+import type { MacSoftAdminChatController } from './hooks/use-macsoft-admin-chat'
 import {
-  resolveMacSoftPromptCapabilities,
-  type MacSoftDesktopChatStatus
+  type MacSoftDesktopChatStatus,
+  resolveMacSoftPromptCapabilities
 } from './hooks/use-macsoft-desktop-chat-status'
-import { MacSoftAdminChatSurface } from './macsoft-admin-chat-surface'
 import { ScrollToBottomButton } from './scroll-to-bottom-button'
 import { SessionActionsMenu } from './sidebar/session-actions-menu'
 import { threadLoadingState } from './thread-loading'
 
 interface ChatViewProps extends Omit<React.ComponentProps<'div'>, 'onSubmit'> {
   gateway: HermesGateway | null
+  macSoftAdminChat?: MacSoftAdminChatController
   macSoftCustomerRuntime?: boolean
   macSoftDesktopChatStatus?: MacSoftDesktopChatStatus
   modelMenuContent?: React.ReactNode
@@ -272,6 +272,7 @@ function ChatRuntimeBoundary({
 export function ChatView({
   className,
   gateway,
+  macSoftAdminChat,
   macSoftCustomerRuntime = false,
   macSoftDesktopChatStatus = 'idle',
   modelMenuContent,
@@ -312,22 +313,31 @@ export function ChatView({
   const gatewayState = useStore($gatewayState)
   const gatewaySwapTarget = useStore($gatewaySwapTarget)
   const gatewayOpen = gatewayState === 'open'
-  const adminChat = useMacSoftAdminChat(macSoftCustomerRuntime, macSoftDesktopChatStatus === 'ready')
+  const adminChat = macSoftAdminChat
+  const macSoftAdminStreaming = macSoftCustomerRuntime && Boolean(adminChat?.streaming)
+
   const nativePromptCapabilities = resolveMacSoftPromptCapabilities(
     macSoftCustomerRuntime,
     macSoftDesktopChatStatus,
     gatewayOpen
   )
-  const canEditPrompt = macSoftCustomerRuntime ? adminChat.canEditPrompt : nativePromptCapabilities.canEditPrompt
-  const canSubmitPrompt = macSoftCustomerRuntime ? adminChat.canSubmitPrompt : nativePromptCapabilities.canSubmitPrompt
-  const composerBusy = macSoftCustomerRuntime ? adminChat.streaming : busy
+
+  const canEditPrompt = macSoftCustomerRuntime ? Boolean(adminChat?.canEditPrompt) : nativePromptCapabilities.canEditPrompt
+  const canSubmitPrompt = macSoftCustomerRuntime ? Boolean(adminChat?.canSubmitPrompt) : nativePromptCapabilities.canSubmitPrompt
+  const composerBusy = macSoftCustomerRuntime ? Boolean(adminChat?.streaming) : busy
+  const cancelPrompt = macSoftCustomerRuntime && adminChat ? adminChat.stop : onCancel
+
   const submitPrompt = useCallback<ChatViewProps['onSubmit']>(
     (text, options) => {
       if (macSoftCustomerRuntime) {
+        if (!adminChat) {return false}
+
         if (options?.attachments?.length) {
           notify({ kind: 'info', title: 'Server admin chat', message: 'Attachments are not supported in Admin chat yet.' })
+
           return false
         }
+
         return adminChat.submit(text)
       }
 
@@ -335,6 +345,7 @@ export function ChatView({
     },
     [adminChat, macSoftCustomerRuntime, onSubmit]
   )
+
   const introPersonality = useStore($introPersonality)
   const introSeed = useStore($introSeed)
   // PERF: ChatView must not subscribe to $messages — the atom is replaced on
@@ -376,15 +387,24 @@ export function ChatView({
   // Suppress the loader and show an explicit error + manual Retry instead of
   // spinning forever. Gated on the route matching so a stale latch from another
   // session can't blank the current one.
-  const resumeExhausted = isRoutedSessionView && resumeExhaustedSessionId === routedSessionId
+  const resumeExhausted =
+    !macSoftCustomerRuntime && isRoutedSessionView && resumeExhaustedSessionId === routedSessionId
 
   const loadingSession =
-    !resumeExhausted && isRoutedSessionView && (routeSessionMismatch || (messagesEmpty && !activeSessionId))
+    (!resumeExhausted && isRoutedSessionView && (routeSessionMismatch || (messagesEmpty && !activeSessionId))) ||
+    (macSoftCustomerRuntime && Boolean(adminChat?.historyLoading))
 
-  const threadLoading = threadLoadingState(loadingSession, busy, awaitingResponse, lastVisibleIsUser)
+  const threadLoading = threadLoadingState(
+    loadingSession,
+    busy,
+    awaitingResponse,
+    lastVisibleIsUser,
+    macSoftAdminStreaming,
+  )
   // Hide the composer in the exhausted error state too: there's no live runtime
   // to send to until a retry rebinds one. Watch windows are pure spectators of a
   // subagent run driven elsewhere — no composer, transcript is read-only.
+
   const showChatBar = !loadingSession && !resumeExhausted && !isWatchWindow()
   const threadKey = selectedSessionId || activeSessionId || (isRoutedSessionView ? location.pathname : 'new')
 
@@ -485,20 +505,12 @@ export function ChatView({
 
       <ChatRuntimeBoundary
         busy={busy}
-        onCancel={onCancel}
+        onCancel={cancelPrompt}
         onEdit={onEdit}
         onReload={onReload}
         onThreadMessagesChange={onThreadMessagesChange}
         suppressMessages={routeSessionMismatch}
       >
-        {macSoftCustomerRuntime ? (
-          <MacSoftAdminChatSurface
-            controller={adminChat}
-            onCreate={() => void adminChat.createSession()}
-            onDelete={sessionId => void adminChat.deleteSession(sessionId)}
-            onSelect={sessionId => void adminChat.selectSession(sessionId)}
-          />
-        ) : (
         <div
           className="relative min-h-0 max-w-full flex-1 overflow-hidden bg-(--ui-chat-surface-background) contain-[layout_paint]"
           data-slot="composer-bounds"
@@ -511,7 +523,7 @@ export function ChatView({
             intro={showIntro ? { personality: introPersonality, seed: introSeed } : undefined}
             loading={threadLoading}
             onBranchInNewChat={onBranchInNewChat}
-            onCancel={onCancel}
+            onCancel={cancelPrompt}
             onDismissError={onDismissError}
             onRestoreToMessage={onRestoreToMessage}
             sessionId={activeSessionId}
@@ -536,7 +548,6 @@ export function ChatView({
           <ChatDropOverlay kind={dragKind} />
           <ChatSwapOverlay profile={gatewaySwapTarget} />
         </div>
-        )}
         {/* Composer renders OUTSIDE the contain:[layout paint] wrapper above:
             that wrapper is a containing block for — and clips — position:fixed
             descendants, so the popped-out (fixed) composer would anchor to the
@@ -549,8 +560,8 @@ export function ChatView({
           <Suspense fallback={<ChatBarFallback />}>
             <ChatBar
               busy={composerBusy}
+              canSubmitPrompt={canSubmitPrompt || (macSoftCustomerRuntime && Boolean(adminChat?.streaming))}
               cwd={currentCwd}
-              canSubmitPrompt={canSubmitPrompt || (macSoftCustomerRuntime && adminChat.streaming)}
               disabled={!canEditPrompt}
               focusKey={activeSessionId}
               gateway={gateway}
@@ -559,7 +570,6 @@ export function ChatView({
               onAddUrl={onAddUrl}
               onAttachDroppedItems={onAttachDroppedItems}
               onAttachImageBlob={onAttachImageBlob}
-              onCancel={macSoftCustomerRuntime ? adminChat.stop : onCancel}
               onBlockedSubmit={
                 macSoftCustomerRuntime
                   ? () =>
@@ -570,6 +580,7 @@ export function ChatView({
                       })
                   : undefined
               }
+              onCancel={cancelPrompt}
               onPasteClipboardImage={onPasteClipboardImage}
               onPickFiles={onPickFiles}
               onPickFolders={onPickFolders}
@@ -578,18 +589,18 @@ export function ChatView({
               onSteer={macSoftCustomerRuntime ? () => false : onSteer}
               onSubmit={submitPrompt}
               onTranscribeAudio={onTranscribeAudio}
+              queueSessionKey={macSoftCustomerRuntime ? adminChat?.selectedSessionId : selectedSessionId}
+              queueWhileBusy={!macSoftCustomerRuntime}
+              sessionId={macSoftCustomerRuntime ? adminChat?.selectedSessionId : activeSessionId}
+              state={chatBarState}
               statusMessage={
                 macSoftCustomerRuntime
-                  ? adminChat.error ||
+                  ? adminChat?.error ||
                     (macSoftDesktopChatStatus === 'unavailable' || macSoftDesktopChatStatus === 'error'
                       ? 'MacSoft Server is unavailable.'
                       : undefined)
                   : undefined
               }
-              queueSessionKey={macSoftCustomerRuntime ? adminChat.selectedSessionId : selectedSessionId}
-              queueWhileBusy={!macSoftCustomerRuntime}
-              sessionId={macSoftCustomerRuntime ? adminChat.selectedSessionId : activeSessionId}
-              state={chatBarState}
             />
           </Suspense>
         )}

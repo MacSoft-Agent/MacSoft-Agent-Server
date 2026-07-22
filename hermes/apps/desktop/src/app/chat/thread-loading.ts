@@ -17,10 +17,15 @@ export function threadLoadingState(
   loadingSession: boolean,
   busy: boolean,
   awaitingResponse: boolean,
-  lastVisibleIsUser: boolean
+  lastVisibleIsUser: boolean,
+  macSoftAdminStreaming = false
 ): ThreadLoadingState | undefined {
   if (loadingSession) {
     return 'session'
+  }
+
+  if (macSoftAdminStreaming) {
+    return 'response'
   }
 
   if (busy && awaitingResponse && lastVisibleIsUser) {

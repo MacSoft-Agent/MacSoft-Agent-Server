@@ -63,14 +63,20 @@ import {
   $sessions,
   getRememberedSessionId,
   sessionPinId,
+  setActiveSessionId,
   setAwaitingResponse,
   setBusy,
   setCurrentBranch,
   setCurrentCwd,
   setCurrentModel,
   setCurrentProvider,
+  setFreshDraftReady,
   setMessages,
-  setRememberedSessionId
+  setRememberedSessionId,
+  setSelectedStoredSessionId,
+  setSessions,
+  setSessionsLoading,
+  setSessionsTotal
 } from '../store/session'
 import { onSessionsChanged } from '../store/session-sync'
 import { clearSessionTodos, setSessionTodos, todosForHydration } from '../store/todos'
@@ -80,6 +86,9 @@ import { isSecondaryWindow } from '../store/windows'
 import { ChatView } from './chat'
 import { requestComposerFocus, requestComposerInsert } from './chat/composer/focus'
 import { useComposerActions } from './chat/hooks/use-composer-actions'
+import { sessionFromServer, useMacSoftAdminChat } from './chat/hooks/use-macsoft-admin-chat'
+import { useMacSoftDesktopChatStatus } from './chat/hooks/use-macsoft-desktop-chat-status'
+import { resolveMacSoftAdminRouteAction } from './chat/macsoft-admin-route'
 import {
   ChatPreviewRail,
   PREVIEW_RAIL_MAX_WIDTH,
@@ -90,7 +99,6 @@ import { ChatSidebar } from './chat/sidebar'
 import { CommandPalette } from './command-palette'
 import { useGatewayBoot } from './gateway/hooks/use-gateway-boot'
 import { useGatewayRequest } from './gateway/hooks/use-gateway-request'
-import { useMacSoftDesktopChatStatus } from './chat/hooks/use-macsoft-desktop-chat-status'
 import { useKeybinds } from './hooks/use-keybinds'
 import { SIDEBAR_COLLAPSE_MEDIA_QUERY } from './layout-constants'
 import { shouldOpenFirstRunSettings } from './macsoft-customer-navigation'
@@ -127,6 +135,7 @@ import { ModelMenuPanel } from './shell/model-menu-panel'
 import type { StatusbarItem } from './shell/statusbar-controls'
 import type { TitlebarTool } from './shell/titlebar-controls'
 import { useGroupRegistry } from './shell/use-group-registry'
+import type { SidebarNavItem } from './types'
 import { UpdatesOverlay } from './updates-overlay'
 
 const AgentsView = lazy(async () => ({ default: (await import('./agents')).AgentsView }))
@@ -307,10 +316,10 @@ export function DesktopController() {
     restoredLastSessionRef.current = true
     const last = getRememberedSessionId()
 
-    if (last && location.pathname === NEW_CHAT_ROUTE) {
+    if (!macSoftCustomerRuntime && last && location.pathname === NEW_CHAT_ROUTE) {
       navigate(sessionRoute(last), { replace: true })
     }
-  }, [location.pathname, navigate])
+  }, [location.pathname, macSoftCustomerRuntime, navigate])
 
   useEffect(() => {
     if (resumeExhaustedSessionId && getRememberedSessionId() === resumeExhaustedSessionId) {
@@ -646,10 +655,184 @@ export function DesktopController() {
     updateSessionState
   })
 
+  const macSoftAdminChat = useMacSoftAdminChat(macSoftCustomerRuntime, macSoftDesktopChat.status === 'ready')
+
+  const startFreshMacSoftAdminDraft = macSoftAdminChat.startFreshDraft
+  const selectMacSoftAdminSession = macSoftAdminChat.selectSession
+  const deleteMacSoftAdminSession = macSoftAdminChat.deleteSession
+  const macSoftRouteOpenRef = useRef<string | null>(null)
+  const macSoftDraftTransitionRef = useRef(false)
+
+  useEffect(() => {
+    if (!macSoftCustomerRuntime) {
+      return
+    }
+
+    setSessions(macSoftAdminChat.sessions.map(sessionFromServer))
+    setSessionsTotal(macSoftAdminChat.sessions.length)
+    setSessionsLoading(macSoftAdminChat.loading && macSoftAdminChat.sessions.length === 0)
+  }, [macSoftAdminChat.loading, macSoftAdminChat.sessions, macSoftCustomerRuntime])
+
+  useEffect(() => {
+    if (!macSoftCustomerRuntime) {
+      return
+    }
+
+    const sessionId = macSoftAdminChat.selectedSessionId
+
+    setActiveSessionId(sessionId)
+    activeSessionIdRef.current = sessionId
+    setSelectedStoredSessionId(sessionId)
+    selectedStoredSessionIdRef.current = sessionId
+    setMessages(macSoftAdminChat.messages)
+    setBusy(macSoftAdminChat.streaming)
+    busyRef.current = macSoftAdminChat.streaming
+    setAwaitingResponse(macSoftAdminChat.streaming)
+    setFreshDraftReady(!sessionId && macSoftAdminChat.messages.length === 0)
+  }, [
+    activeSessionIdRef,
+    busyRef,
+    macSoftAdminChat.messages,
+    macSoftAdminChat.selectedSessionId,
+    macSoftAdminChat.streaming,
+    macSoftCustomerRuntime,
+    selectedStoredSessionIdRef
+  ])
+
+  const startFreshSessionForRuntime = useCallback(
+    (replaceRoute = false) => {
+      if (macSoftCustomerRuntime) {
+        if (!startFreshMacSoftAdminDraft()) {
+          return
+        }
+
+        macSoftDraftTransitionRef.current = true
+        macSoftRouteOpenRef.current = null
+      }
+
+      startFreshSessionDraft(replaceRoute)
+    },
+    [macSoftCustomerRuntime, startFreshMacSoftAdminDraft, startFreshSessionDraft]
+  )
+
+  const resumeSessionForRuntime = useCallback(
+    (sessionId: string, focus = false) =>
+      macSoftCustomerRuntime ? selectMacSoftAdminSession(sessionId) : resumeSession(sessionId, focus),
+    [macSoftCustomerRuntime, resumeSession, selectMacSoftAdminSession]
+  )
+
+  const handleSidebarNavigate = useCallback(
+    (item: SidebarNavItem) => {
+      if (macSoftCustomerRuntime && item.action === 'new-session') {
+        startFreshSessionForRuntime()
+
+        return
+      }
+
+      selectSidebarItem(item)
+    },
+    [macSoftCustomerRuntime, selectSidebarItem, startFreshSessionForRuntime]
+  )
+
+  const removeSessionForRuntime = useCallback(
+    async (sessionId: string) => {
+      if (macSoftCustomerRuntime) {
+        const wasSelected = selectedStoredSessionIdRef.current === sessionId
+        const hasReplacement = $sessions.get().some(session => session.id !== sessionId)
+        const removed = await deleteMacSoftAdminSession(sessionId)
+
+        if (removed && wasSelected && !hasReplacement) {
+          startFreshSessionDraft(true)
+        }
+      } else {
+        await removeSession(sessionId)
+      }
+    },
+    [
+      deleteMacSoftAdminSession,
+      macSoftCustomerRuntime,
+      removeSession,
+      selectedStoredSessionIdRef,
+      startFreshSessionDraft
+    ]
+  )
+
+  useEffect(() => {
+    const action = resolveMacSoftAdminRouteAction({
+      customerRuntime: macSoftCustomerRuntime,
+      draftTransition: macSoftDraftTransitionRef.current,
+      openedRoute: macSoftRouteOpenRef.current,
+      ready: macSoftDesktopChat.status === 'ready',
+      routedSessionId,
+      selectedSessionId: macSoftAdminChat.selectedSessionId,
+      sessionIds: macSoftAdminChat.sessions.map(session => session.session_id),
+      sessionsLoaded: macSoftAdminChat.sessionsLoaded
+    })
+
+    if (action.type === 'new') {
+      startFreshSessionForRuntime(true)
+
+      return
+    }
+
+    if (action.type !== 'open') {
+      return
+    }
+
+    macSoftRouteOpenRef.current = action.sessionId
+    void selectMacSoftAdminSession(action.sessionId).then(opened => {
+      if (!opened && macSoftRouteOpenRef.current === action.sessionId) {
+        macSoftRouteOpenRef.current = null
+      }
+    })
+  }, [
+    macSoftAdminChat.selectedSessionId,
+    macSoftAdminChat.sessions,
+    macSoftAdminChat.sessionsLoaded,
+    macSoftCustomerRuntime,
+    macSoftDesktopChat.status,
+    routedSessionId,
+    selectMacSoftAdminSession,
+    startFreshSessionForRuntime
+  ])
+
+  useEffect(() => {
+    if (!macSoftCustomerRuntime) {
+      return
+    }
+
+    if (macSoftDraftTransitionRef.current) {
+      if (!routedSessionId && !macSoftAdminChat.selectedSessionId) {
+        macSoftDraftTransitionRef.current = false
+      }
+
+      return
+    }
+
+    if (currentView !== 'chat' || !macSoftAdminChat.selectedSessionId) {
+      return
+    }
+
+    const routeStillExists = routedSessionId
+      ? macSoftAdminChat.sessions.some(session => session.session_id === routedSessionId)
+      : false
+
+    if (!routedSessionId || !routeStillExists) {
+      navigate(sessionRoute(macSoftAdminChat.selectedSessionId), { replace: true })
+    }
+  }, [
+    currentView,
+    macSoftAdminChat.selectedSessionId,
+    macSoftAdminChat.sessions,
+    macSoftCustomerRuntime,
+    navigate,
+    routedSessionId
+  ])
+
   // Single global listener for every rebindable hotkey (incl. profile switching)
   // plus the on-screen keybind editor's capture mode.
   useKeybinds({
-    startFreshSession: startFreshSessionDraft,
+    startFreshSession: startFreshSessionForRuntime,
     toggleCommandCenter,
     toggleSelectedPin
   })
@@ -665,8 +848,8 @@ export function DesktopController() {
     }
 
     lastFreshRef.current = freshSessionRequest
-    startFreshSessionDraft()
-  }, [freshSessionRequest, startFreshSessionDraft])
+    startFreshSessionForRuntime()
+  }, [freshSessionRequest, startFreshSessionForRuntime])
 
   // Swapping the live gateway to another profile must re-pull that profile's
   // global model + active-profile pill. Both are nanostores, so the blanket
@@ -753,7 +936,7 @@ export function DesktopController() {
 
   const startSessionInWorkspace = useCallback(
     (path: null | string) => {
-      startFreshSessionDraft()
+      startFreshSessionForRuntime()
 
       // A worktree lane carries its own path; the trunk "+" can be path-less (the
       // main checkout is implicit), so fall back to the active project's root
@@ -788,7 +971,7 @@ export function DesktopController() {
         })
         .catch(() => undefined)
     },
-    [requestGateway, startFreshSessionDraft]
+    [requestGateway, startFreshSessionForRuntime]
   )
 
   // Composer "branch off into a new worktree": the composer already created the
@@ -836,7 +1019,7 @@ export function DesktopController() {
     requestGateway,
     resumeStoredSession: resumeSession,
     selectedStoredSessionIdRef,
-    startFreshSessionDraft,
+    startFreshSessionDraft: startFreshSessionForRuntime,
     sttEnabled,
     updateSessionState
   })
@@ -1002,6 +1185,7 @@ export function DesktopController() {
     activeSessionIdRef,
     creatingSessionRef,
     currentView,
+    enabled: !macSoftCustomerRuntime,
     freshDraftReady,
     gatewayState,
     locationPathname: location.pathname,
@@ -1034,9 +1218,10 @@ export function DesktopController() {
   const sidebar = (
     <ChatSidebar
       currentView={currentView}
+      macSoftCustomerRuntime={macSoftCustomerRuntime}
       onArchiveSession={sessionId => void archiveSession(sessionId)}
       onBranchSession={sessionId => void branchStoredSession(sessionId)}
-      onDeleteSession={sessionId => void removeSession(sessionId)}
+      onDeleteSession={sessionId => void removeSessionForRuntime(sessionId)}
       onLoadMoreMessaging={loadMoreMessagingForPlatform}
       onLoadMoreProfileSessions={loadMoreSessionsForProfile}
       onLoadMoreSessions={loadMoreSessions}
@@ -1044,7 +1229,7 @@ export function DesktopController() {
         setCronFocusJobId(jobId)
         navigate(CRON_ROUTE)
       }}
-      onNavigate={selectSidebarItem}
+      onNavigate={handleSidebarNavigate}
       onNewSessionInWorkspace={startSessionInWorkspace}
       onResumeSession={sessionId => navigate(sessionRoute(sessionId))}
       onTriggerCronJob={jobId => {
@@ -1080,7 +1265,7 @@ export function DesktopController() {
       {!macSoftCustomerRuntime && (
         <ModelPickerOverlay gateway={gatewayRef.current || undefined} onSelect={selectModel} />
       )}
-      <SessionPickerOverlay onResume={resumeSession} />
+      <SessionPickerOverlay onResume={resumeSessionForRuntime} />
       {!macSoftCustomerRuntime && (
         <ModelVisibilityOverlay gateway={gatewayRef.current || undefined} onOpenProviders={openProviderSettings} />
       )}
@@ -1119,7 +1304,7 @@ export function DesktopController() {
           <CommandCenterView
             initialSection={commandCenterInitialSection}
             onClose={closeOverlayToPreviousRoute}
-            onDeleteSession={removeSession}
+            onDeleteSession={removeSessionForRuntime}
             onNavigateRoute={path => navigate(path)}
             onOpenSession={sessionId => navigate(sessionRoute(sessionId))}
           />
@@ -1158,6 +1343,7 @@ export function DesktopController() {
   const chatView = (
     <ChatView
       gateway={gatewayRef.current}
+      macSoftAdminChat={macSoftAdminChat}
       macSoftCustomerRuntime={macSoftCustomerRuntime}
       macSoftDesktopChatStatus={macSoftDesktopChat.status}
       maxVoiceRecordingSeconds={voiceMaxRecordingSeconds}
@@ -1170,7 +1356,7 @@ export function DesktopController() {
       onCancel={cancelRun}
       onDeleteSelectedSession={() => {
         if (selectedStoredSessionId) {
-          void removeSession(selectedStoredSessionId)
+          void removeSessionForRuntime(selectedStoredSessionId)
         }
       }}
       onDismissError={dismissError}
@@ -1182,10 +1368,10 @@ export function DesktopController() {
       onReload={reloadFromMessage}
       onRemoveAttachment={id => void composer.removeAttachment(id)}
       onRestoreToMessage={restoreToMessage}
-      onRetryResume={sessionId => void resumeSession(sessionId, true)}
+      onRetryResume={sessionId => void resumeSessionForRuntime(sessionId, true)}
       onSteer={steerPrompt}
       onSubmit={submitText}
-      onThreadMessagesChange={handleThreadMessagesChange}
+      onThreadMessagesChange={macSoftCustomerRuntime ? () => undefined : handleThreadMessagesChange}
       onToggleSelectedPin={toggleSelectedPin}
       onTranscribeAudio={transcribeVoiceAudio}
     />

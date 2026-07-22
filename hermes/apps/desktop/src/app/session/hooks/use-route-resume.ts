@@ -4,6 +4,7 @@ import { isNewChatRoute } from '@/app/routes'
 import { setResumeExhaustedSessionId } from '@/store/session'
 
 interface RouteResumeOptions {
+  enabled?: boolean
   activeSessionId: string | null
   activeSessionIdRef: MutableRefObject<string | null>
   creatingSessionRef: MutableRefObject<boolean>
@@ -80,7 +81,8 @@ export function useRouteResume({
   runtimeIdByStoredSessionIdRef,
   selectedStoredSessionId,
   selectedStoredSessionIdRef,
-  startFreshSessionDraft
+  startFreshSessionDraft,
+  enabled = true
 }: RouteResumeOptions) {
   const lastPathnameRef = useRef<string | null>(null)
   const seenGatewayStateRef = useRef(false)
@@ -97,6 +99,10 @@ export function useRouteResume({
   const prevResumeExhaustedRef = useRef<string | null>(null)
 
   useEffect(() => {
+    if (!enabled) {
+      return
+    }
+
     const gatewayOpen = gatewayState === 'open'
     const pathnameChanged = lastPathnameRef.current !== locationPathname
     // Fire only on a genuine closed->open transition (a reconnect). seenGatewayStateRef
@@ -174,7 +180,8 @@ export function useRouteResume({
     runtimeIdByStoredSessionIdRef,
     selectedStoredSessionId,
     selectedStoredSessionIdRef,
-    startFreshSessionDraft
+    startFreshSessionDraft,
+    enabled
   ])
 
   // Bounded auto-retry: when the routed session's resume failed terminally
@@ -188,6 +195,10 @@ export function useRouteResume({
   // success keeps it clear (the effect's guard then no-ops), a repeat failure
   // re-arms it and we back off further, capped at MAX_RESUME_RETRIES.
   useEffect(() => {
+    if (!enabled) {
+      return
+    }
+
     // Detect the exhausted-latch armed->cleared edge for the current route. Only
     // resumeSession clears $resumeExhaustedSessionId (manual Retry / reconnect /
     // reselect) — the auto-retry loop never touches it — so this transition
@@ -280,6 +291,7 @@ export function useRouteResume({
     resumeFailedSessionId,
     resumeExhaustedSessionId,
     routedSessionId,
-    selectedStoredSessionIdRef
+    selectedStoredSessionIdRef,
+    enabled
   ])
 }

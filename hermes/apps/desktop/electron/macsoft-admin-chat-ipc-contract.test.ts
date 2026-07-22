@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+
 import { describe, expect, it } from 'vitest'
 
 const electronDir = dirname(fileURLToPath(import.meta.url))
@@ -35,7 +36,10 @@ describe('MacSoft Admin chat IPC contract', () => {
 
     expect(composer).toContain("hasComposerPayload && queueWhileBusy ? 'queue' : 'stop'")
     expect(chat).toContain('queueWhileBusy={!macSoftCustomerRuntime}')
-    expect(chat).toContain('onCancel={macSoftCustomerRuntime ? adminChat.stop : onCancel}')
-    expect(chat).toContain('canSubmitPrompt={canSubmitPrompt || (macSoftCustomerRuntime && adminChat.streaming)}')
+    expect(chat).toContain('const cancelPrompt = macSoftCustomerRuntime && adminChat ? adminChat.stop : onCancel')
+    expect(chat).toContain('onCancel={cancelPrompt}')
+    expect(chat).toContain(
+      'canSubmitPrompt={canSubmitPrompt || (macSoftCustomerRuntime && Boolean(adminChat?.streaming))}'
+    )
   })
 })

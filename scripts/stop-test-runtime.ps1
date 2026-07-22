@@ -8,6 +8,28 @@ $ProjectRoot = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 $StatePath = Join-Path $ProjectRoot 'server\data\host\test-runtime.json'
 $OwnedPorts = @(8766, 8643, 8642, 8787, 5174)
 
+function Get-ListeningPortRecords {
+    try {
+        return @(
+            Get-NetTCPConnection -State Listen -ErrorAction Stop |
+                Select-Object LocalPort, OwningProcess
+        )
+    } catch {
+        return @(
+            netstat -ano |
+                Select-String 'LISTENING' |
+                ForEach-Object {
+                    if ($_.Line -match ':([0-9]+)\s+\S+\s+LISTENING\s+([0-9]+)\s*$') {
+                        [pscustomobject]@{
+                            LocalPort = [int]$matches[1]
+                            OwningProcess = [int]$matches[2]
+                        }
+                    }
+                }
+        )
+    }
+}
+
 function Get-ProcessRecord {
     param([int]$ProcessId)
 
@@ -86,7 +108,7 @@ if ($hostProcess) {
 $deadline = [DateTime]::UtcNow.AddSeconds(15)
 do {
     $listeners = @(
-        Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+        Get-ListeningPortRecords |
             Where-Object { $OwnedPorts -contains $_.LocalPort }
     )
     if ($listeners.Count -eq 0) {

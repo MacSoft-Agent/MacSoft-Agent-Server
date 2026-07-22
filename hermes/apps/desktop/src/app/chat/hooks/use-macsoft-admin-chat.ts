@@ -17,6 +17,7 @@ export interface MacSoftAdminActivity {
 export interface MacSoftAdminChatState {
   error: string | null
   historyLoading: boolean
+  interrupting: boolean
   messages: MacSoftAdminUiMessage[]
   sessions: MacSoftAdminSession[]
   selectedSessionId: string | null
@@ -30,6 +31,7 @@ export const initialMacSoftAdminChatState: MacSoftAdminChatState = {
   activity: null,
   error: null,
   historyLoading: false,
+  interrupting: false,
   loading: false,
   messages: [],
   selectedSessionId: null,
@@ -45,6 +47,8 @@ type AdminAction =
   | { type: 'history'; messages: MacSoftAdminUiMessage[] }
   | { type: 'user-message'; message: MacSoftAdminUiMessage }
   | { type: 'stream-start'; streamId: string }
+  | { type: 'interrupt-start' }
+  | { type: 'interrupt-error'; message: string }
   | { type: 'stream-event'; event: MacSoftAdminStreamEvent }
   | { type: 'stream-error'; message: string }
   | { type: 'error'; message: string }
@@ -69,15 +73,19 @@ export function reduceMacSoftAdminChat(state: MacSoftAdminChatState, action: Adm
     case 'sessions':
       return { ...state, error: null, loading: false, selectedSessionId: action.selectedSessionId, sessions: action.sessions }
     case 'history-start':
-      return { ...state, activity: null, error: null, historyLoading: true, messages: [], streamId: null, streaming: false }
+      return { ...state, activity: null, error: null, historyLoading: true, interrupting: false, messages: [], streamId: null, streaming: false }
     case 'history':
       return { ...state, historyLoading: false, messages: action.messages }
     case 'user-message':
       return { ...state, error: null, messages: [...state.messages, action.message] }
     case 'stream-start':
-      return { ...state, activity: null, error: null, streamId: action.streamId, streaming: true }
+      return { ...state, activity: null, error: null, interrupting: false, streamId: action.streamId, streaming: true }
+    case 'interrupt-start':
+      return { ...state, error: null, interrupting: true }
+    case 'interrupt-error':
+      return { ...state, error: action.message, interrupting: false }
     case 'stream-error':
-      return { ...state, activity: null, error: action.message, streamId: null, streaming: false }
+      return { ...state, activity: null, error: action.message, interrupting: false, streamId: null, streaming: false }
     case 'error':
       return { ...state, error: action.message, loading: false, historyLoading: false }
     case 'stream-event': {
@@ -103,9 +111,9 @@ export function reduceMacSoftAdminChat(state: MacSoftAdminChatState, action: Adm
         }
       }
       if (event.event === 'error') {
-        return { ...state, activity: null, error: safeError(data.message, 'MacSoft Server could not complete the request.'), streamId: null, streaming: false }
+        return { ...state, activity: null, error: safeError(data.message, 'MacSoft Server could not complete the request.'), interrupting: false, streamId: null, streaming: false }
       }
-      if (event.event === 'message_done') return { ...state, activity: null, streamId: null, streaming: false }
+      if (event.event === 'message_done') return { ...state, activity: null, interrupting: false, streamId: null, streaming: false }
       return state
     }
   }
@@ -125,8 +133,10 @@ export function useMacSoftAdminChat(enabled: boolean, serverReady: boolean) {
   const [state, dispatch] = useReducer(reduceMacSoftAdminChat, initialMacSoftAdminChatState)
   const selectedSessionRef = useRef<string | null>(null)
   const streamIdRef = useRef<string | null>(null)
+  const interruptingRef = useRef(false)
   selectedSessionRef.current = state.selectedSessionId
   streamIdRef.current = state.streamId
+  interruptingRef.current = state.interrupting
 
   const loadHistory = useCallback(async (sessionId: string) => {
     dispatch({ type: 'history-start' })
@@ -213,6 +223,20 @@ export function useMacSoftAdminChat(enabled: boolean, serverReady: boolean) {
     [enabled, serverReady]
   )
 
+  const stop = useCallback(async () => {
+    const sessionId = selectedSessionRef.current
+    const streamId = streamIdRef.current
+    if (!enabled || !sessionId || !streamId || interruptingRef.current) return
+    interruptingRef.current = true
+    dispatch({ type: 'interrupt-start' })
+    try {
+      await window.hermesDesktop.macSoftAdminChat.stopStream({ sessionId, streamId })
+    } catch {
+      interruptingRef.current = false
+      dispatch({ type: 'interrupt-error', message: 'Admin chat could not be interrupted.' })
+    }
+  }, [enabled])
+
   useEffect(() => {
     if (!enabled || !serverReady) return
     let cancelled = false
@@ -265,6 +289,7 @@ export function useMacSoftAdminChat(enabled: boolean, serverReady: boolean) {
     createSession,
     deleteSession,
     selectSession,
+    stop,
     submit,
     ...macSoftAdminPromptCapabilities(state, serverReady)
   }

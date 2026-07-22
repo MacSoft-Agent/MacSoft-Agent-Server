@@ -1,7 +1,3 @@
 @echo off
-setlocal
-
-echo Close MacSoft Agent Desktop before continuing.
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\stop-runtime.ps1"
-
-endlocal
+call "%~dp0stop-test.bat"
+exit /b %ERRORLEVEL%

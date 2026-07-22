@@ -34,3 +34,23 @@ test('Admin client owns a fixed loopback API and does not expose tokens as a met
   assert.equal(typeof client.listAdminSessions, 'function')
   assert.equal('adminAccessToken' in client, true)
 })
+
+test('Admin interrupt stays on the authenticated 8787 Admin path', async () => {
+  const calls: Array<{ url: string; method: string | undefined; body: string | null }> = []
+  const client = new MacSoftDesktopAdminChatClient(
+    { trustedHostToken: () => 'host-secret' },
+    async (input, init) => {
+      const url = String(input)
+      calls.push({ url, method: init?.method, body: typeof init?.body === 'string' ? init.body : null })
+      if (url.endsWith('/auth/session')) {
+        return new Response(JSON.stringify({ access_token: 'admin-secret' }), { status: 200 })
+      }
+      return new Response(JSON.stringify({ ok: true }), { status: 200 })
+    }
+  )
+
+  await client.interruptAdminChat('admin_sess_123')
+  assert.equal(calls[1].url, 'http://127.0.0.1:8787/api/admin/chat/interrupt')
+  assert.equal(calls[1].method, 'POST')
+  assert.deepEqual(JSON.parse(calls[1].body || '{}'), { session_id: 'admin_sess_123' })
+})

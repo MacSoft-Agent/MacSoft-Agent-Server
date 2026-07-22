@@ -19,6 +19,8 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     deleteSession: (sessionId: string) => ipcRenderer.invoke('hermes:macsoft-admin:delete-session', sessionId),
     startStream: (input: { sessionId: string; message: string }) =>
       ipcRenderer.invoke('hermes:macsoft-admin:start-stream', input),
+    stopStream: (input: { sessionId: string; streamId: string }) =>
+      ipcRenderer.invoke('hermes:macsoft-admin:interrupt-stream', input),
     onStreamEvent: (callback: (payload: MacSoftAdminStreamEvent) => void) => {
       const listener = (_event: IpcRendererEvent, payload: MacSoftAdminStreamEvent) => callback(payload)
       ipcRenderer.on('hermes:macsoft-admin-chat:stream', listener)

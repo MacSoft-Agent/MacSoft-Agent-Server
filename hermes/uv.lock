@@ -1121,6 +1121,15 @@ wheels = [
 ]
 
 [[package]]
+name = "et-xmlfile"
+version = "2.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d3/38/af70d7ab1ae9d4da450eeec1fa3918940a5fafb9055e934af8d6eb0c2313/et_xmlfile-2.0.0.tar.gz", hash = "sha256:dab3f4764309081ce75662649be815c4c9081e88f0837825f90fd28317d4da54", size = 17234, upload-time = "2024-10-25T17:25:40.039Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c1/8b/5fe2cc11fee489817272089c4203e679c63b570a5aaeb18d852ae3cbba6a/et_xmlfile-2.0.0-py3-none-any.whl", hash = "sha256:7a91720bc756843502c3b7504c77b8fe44217c85c537d85037f0f536151b2caa", size = 18059, upload-time = "2024-10-25T17:25:39.051Z" },
+]
+
+[[package]]
 name = "eval-type-backport"
 version = "0.3.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1562,8 +1571,15 @@ all = [
     { name = "google-api-python-client" },
     { name = "google-auth-httplib2" },
     { name = "google-auth-oauthlib" },
+    { name = "httpx" },
+    { name = "httpx2" },
     { name = "mcp" },
+    { name = "openpyxl" },
+    { name = "psutil" },
+    { name = "pypdf" },
     { name = "python-multipart" },
+    { name = "pywin32", marker = "sys_platform == 'win32'" },
+    { name = "pyyaml" },
     { name = "simple-term-menu" },
     { name = "starlette" },
     { name = "uvicorn", extra = ["standard"] },
@@ -1632,6 +1648,18 @@ homeassistant = [
 ]
 honcho = [
     { name = "honcho-ai" },
+]
+macsoft-server = [
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "httpx2" },
+    { name = "openpyxl" },
+    { name = "psutil" },
+    { name = "pypdf" },
+    { name = "python-multipart" },
+    { name = "pywin32", marker = "sys_platform == 'win32'" },
+    { name = "pyyaml" },
+    { name = "uvicorn", extra = ["standard"] },
 ]
 matrix = [
     { name = "aiohttp" },
@@ -1761,6 +1789,7 @@ requires-dist = [
     { name = "exa-py", marker = "extra == 'exa'", specifier = "==2.10.2" },
     { name = "fal-client", marker = "extra == 'fal'", specifier = "==0.13.1" },
     { name = "fastapi", specifier = ">=0.104.0,<1" },
+    { name = "fastapi", marker = "extra == 'macsoft-server'", specifier = "==0.133.1" },
     { name = "fastapi", marker = "extra == 'web'", specifier = "==0.133.1" },
     { name = "faster-whisper", marker = "extra == 'voice'", specifier = "==1.2.1" },
     { name = "fire", specifier = "==0.7.1" },
@@ -1780,6 +1809,7 @@ requires-dist = [
     { name = "hermes-agent", extras = ["homeassistant"], marker = "extra == 'all'" },
     { name = "hermes-agent", extras = ["homeassistant"], marker = "extra == 'termux-all'" },
     { name = "hermes-agent", extras = ["honcho"], marker = "extra == 'termux'" },
+    { name = "hermes-agent", extras = ["macsoft-server"], marker = "extra == 'all'" },
     { name = "hermes-agent", extras = ["mcp"], marker = "extra == 'all'" },
     { name = "hermes-agent", extras = ["mcp"], marker = "extra == 'termux'" },
     { name = "hermes-agent", extras = ["pty"], marker = "extra == 'all'" },
@@ -1792,7 +1822,9 @@ requires-dist = [
     { name = "hermes-agent", extras = ["youtube"], marker = "extra == 'all'" },
     { name = "hindsight-client", marker = "extra == 'hindsight'", specifier = "==0.6.1" },
     { name = "honcho-ai", marker = "extra == 'honcho'", specifier = "==2.0.1" },
+    { name = "httpx", marker = "extra == 'macsoft-server'", specifier = "==0.28.1" },
     { name = "httpx", extras = ["socks"], specifier = "==0.28.1" },
+    { name = "httpx2", marker = "extra == 'macsoft-server'", specifier = "==2.7.0" },
     { name = "jinja2", specifier = "==3.1.6" },
     { name = "lark-oapi", marker = "extra == 'feishu'", specifier = "==1.5.3" },
     { name = "markdown", specifier = "==3.10.2" },
@@ -1807,24 +1839,30 @@ requires-dist = [
     { name = "nemo-relay", marker = "extra == 'nemo-relay'", specifier = "==0.3" },
     { name = "numpy", marker = "extra == 'voice'", specifier = "==2.4.3" },
     { name = "openai", specifier = "==2.24.0" },
+    { name = "openpyxl", marker = "extra == 'macsoft-server'", specifier = "==3.1.5" },
     { name = "packaging", specifier = "==26.0" },
     { name = "parallel-web", marker = "extra == 'parallel-web'", specifier = "==0.4.2" },
     { name = "pathspec", specifier = "==1.1.1" },
     { name = "pillow", specifier = "==12.2.0" },
     { name = "prompt-toolkit", specifier = "==3.0.52" },
     { name = "psutil", specifier = "==7.2.2" },
+    { name = "psutil", marker = "extra == 'macsoft-server'", specifier = "==7.2.2" },
     { name = "ptyprocess", marker = "sys_platform != 'win32'", specifier = ">=0.7.0,<1" },
     { name = "pydantic", specifier = "==2.13.4" },
     { name = "pyjwt", extras = ["crypto"], specifier = "==2.13.0" },
+    { name = "pypdf", marker = "extra == 'macsoft-server'", specifier = "==6.14.2" },
     { name = "pytest", marker = "extra == 'dev'", specifier = "==9.0.2" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = "==1.3.0" },
     { name = "python-dotenv", specifier = "==1.2.2" },
     { name = "python-multipart", specifier = ">=0.0.9,<1" },
+    { name = "python-multipart", marker = "extra == 'macsoft-server'", specifier = "==0.0.27" },
     { name = "python-multipart", marker = "extra == 'web'", specifier = "==0.0.27" },
     { name = "python-telegram-bot", extras = ["webhooks"], marker = "extra == 'messaging'", specifier = "==22.6" },
     { name = "python-telegram-bot", extras = ["webhooks"], marker = "extra == 'termux'", specifier = "==22.6" },
+    { name = "pywin32", marker = "sys_platform == 'win32' and extra == 'macsoft-server'", specifier = "==311" },
     { name = "pywinpty", marker = "sys_platform == 'win32'", specifier = ">=2.0.0,<3" },
     { name = "pyyaml", specifier = "==6.0.3" },
+    { name = "pyyaml", marker = "extra == 'macsoft-server'", specifier = "==6.0.3" },
     { name = "qrcode", marker = "extra == 'dingtalk'", specifier = "==7.4.2" },
     { name = "qrcode", marker = "extra == 'feishu'", specifier = "==7.4.2" },
     { name = "qrcode", marker = "extra == 'messaging'", specifier = "==7.4.2" },
@@ -1849,11 +1887,12 @@ requires-dist = [
     { name = "tzdata", marker = "sys_platform == 'win32'", specifier = "==2025.3" },
     { name = "urllib3", specifier = ">=2.7.0,<3" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.24.0,<1" },
+    { name = "uvicorn", extras = ["standard"], marker = "extra == 'macsoft-server'", specifier = "==0.41.0" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'web'", specifier = "==0.41.0" },
     { name = "websockets", specifier = "==15.0.1" },
     { name = "youtube-transcript-api", marker = "extra == 'youtube'", specifier = "==1.2.4" },
 ]
-provides-extras = ["anthropic", "exa", "firecrawl", "parallel-web", "fal", "edge-tts", "modal", "daytona", "hindsight", "dev", "messaging", "cron", "slack", "matrix", "wecom", "cli", "tts-premium", "voice", "pty", "honcho", "supermemory", "mem0", "vision", "mcp", "nemo-relay", "homeassistant", "sms", "teams", "computer-use", "acp", "mistral", "bedrock", "vertex", "azure-identity", "termux", "termux-all", "dingtalk", "feishu", "google", "youtube", "web", "all"]
+provides-extras = ["macsoft-server", "anthropic", "exa", "firecrawl", "parallel-web", "fal", "edge-tts", "modal", "daytona", "hindsight", "dev", "messaging", "cron", "slack", "matrix", "wecom", "cli", "tts-premium", "voice", "pty", "honcho", "supermemory", "mem0", "vision", "mcp", "nemo-relay", "homeassistant", "sms", "teams", "computer-use", "acp", "mistral", "bedrock", "vertex", "azure-identity", "termux", "termux-all", "dingtalk", "feishu", "google", "youtube", "web", "all"]
 
 [[package]]
 name = "hf-xet"
@@ -1933,6 +1972,19 @@ wheels = [
 ]
 
 [[package]]
+name = "httpcore2"
+version = "2.7.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "h11" },
+    { name = "truststore" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d5/fe/6a3f9f1a8bb8733326140737446aaf72fddb8b54b8f202302f5c84960613/httpcore2-2.7.0.tar.gz", hash = "sha256:6dc0fedf329a52a990930a5579edfebaea81118ea700ea0dd7de2b5e5be49efc", size = 65593, upload-time = "2026-07-14T20:40:01.111Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6f/6c/62e2e279e63fc4f7a5ee841ef13175a8bbc613f258e9dcc186e9de803a42/httpcore2-2.7.0-py3-none-any.whl", hash = "sha256:1452f589fe23f55b44546cd884294c41a29330af902bc0b71a761fd52d18f92b", size = 81506, upload-time = "2026-07-14T20:39:58.053Z" },
+]
+
+[[package]]
 name = "httplib2"
 version = "0.31.2"
 source = { registry = "https://pypi.org/simple" }
@@ -2006,6 +2058,22 @@ wheels = [
 ]
 
 [[package]]
+name = "httpx2"
+version = "2.7.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "httpcore2" },
+    { name = "idna" },
+    { name = "truststore" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a3/4a/129b2e21b90ac2985d3928d96792bccc39bc6dfe796c5eee2d8ec06d4105/httpx2-2.7.0.tar.gz", hash = "sha256:8b30709aed5c8465b0dd3b95c09ce301c8f79e7e7a2d00ab0af551e0d0375b07", size = 94487, upload-time = "2026-07-14T20:40:02.318Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1d/b8/c341bba6411bdfda786020343c47a75ef472f6085caf82391b142b1a3ad9/httpx2-2.7.0-py3-none-any.whl", hash = "sha256:ed2a2719c696789e09493bd8e2bec3d8bd925cc6e26b68389ec25ade132f7bf4", size = 90234, upload-time = "2026-07-14T20:39:59.531Z" },
+]
+
+[[package]]
 name = "huggingface-hub"
 version = "1.4.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2037,11 +2105,11 @@ wheels = [
 
 [[package]]
 name = "idna"
-version = "3.15"
+version = "3.18"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/82/77/7b3966d0b9d1d31a36ddf1746926a11dface89a83409bf1483f0237aa758/idna-3.15.tar.gz", hash = "sha256:ca962446ea538f7092a95e057da437618e886f4d349216d2b1e294abfdb65fdc", size = 199245, upload-time = "2026-05-12T22:45:57.011Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cd/63/9496c57188a2ee585e0f1db071d75089a11e98aa86eb99d9d7618fc1edce/idna-3.18.tar.gz", hash = "sha256:ffb385a7e039654cef1ab9ef32c6fafe283c0c0467bba1d9029738ce4a14a848", size = 196711, upload-time = "2026-06-02T14:34:07.794Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d2/23/408243171aa9aaba178d3e2559159c24c1171a641aa83b67bdd3394ead8e/idna-3.15-py3-none-any.whl", hash = "sha256:048adeaf8c2d788c40fee287673ccaa74c24ffd8dcf09ffa555a2fbb59f10ac8", size = 72340, upload-time = "2026-05-12T22:45:55.733Z" },
+    { url = "https://files.pythonhosted.org/packages/1e/5e/d4e9f1a599fb8e573b7b87160658329fbf28d19eac2718f51fc3def3aa5a/idna-3.18-py3-none-any.whl", hash = "sha256:7f952cbe720b688055e3f87de14f5c3e5fdaa8bc3928985c4077ca689de849a2", size = 65455, upload-time = "2026-06-02T14:34:06.319Z" },
 ]
 
 [[package]]
@@ -2795,6 +2863,18 @@ wheels = [
 ]
 
 [[package]]
+name = "openpyxl"
+version = "3.1.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "et-xmlfile" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3d/f9/88d94a75de065ea32619465d2f77b29a0469500e99012523b91cc4141cd1/openpyxl-3.1.5.tar.gz", hash = "sha256:cf0e3cf56142039133628b5acffe8ef0c12bc902d2aadd3e0fe5878dc08d1050", size = 186464, upload-time = "2024-06-28T14:03:44.161Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c0/da/977ded879c29cbd04de313843e76868e6e13408a94ed6b987245dc7c8506/openpyxl-3.1.5-py2.py3-none-any.whl", hash = "sha256:5282c12b107bffeef825f4617dc029afaf41d0ea60823bbb665ef3079dc79de2", size = 250910, upload-time = "2024-06-28T14:03:41.161Z" },
+]
+
+[[package]]
 name = "opentelemetry-api"
 version = "1.39.1"
 source = { registry = "https://pypi.org/simple" }
@@ -3399,6 +3479,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f3/91/9c6ee907786a473bf81c5f53cf703ba0957b23ab84c264080fb5a450416f/pyparsing-3.3.2.tar.gz", hash = "sha256:c777f4d763f140633dcb6d8a3eda953bf7a214dc4eff598413c070bcdc117cbc", size = 6851574, upload-time = "2026-01-21T03:57:59.36Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/10/bd/c038d7cc38edc1aa5bf91ab8068b63d4308c66c4c8bb3cbba7dfbc049f9c/pyparsing-3.3.2-py3-none-any.whl", hash = "sha256:850ba148bd908d7e2411587e247a1e4f0327839c40e2e5e6d05a007ecc69911d", size = 122781, upload-time = "2026-01-21T03:57:55.912Z" },
+]
+
+[[package]]
+name = "pypdf"
+version = "6.14.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/03/72/7dfd5ff1c9c37de97a731701f51af091325f123d9d4270361c9c69e4431f/pypdf-6.14.2.tar.gz", hash = "sha256:7873f502fe4385e79539b21d872392dc0c4e3714327c15881cbc7fbfd1f95b25", size = 6491182, upload-time = "2026-06-23T14:18:30.859Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/49/e6/136aa8993a2ae7214e0b0ef2edaa0d2e08d1d4e4982635b08a835ff31ec8/pypdf-6.14.2-py3-none-any.whl", hash = "sha256:3f07891af76dc002657e04993ab9b4de81de29f9013b9761d0b7968bff12e946", size = 349514, upload-time = "2026-06-23T14:18:28.867Z" },
 ]
 
 [[package]]
@@ -4132,6 +4221,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/09/a9/6ba95a270c6f1fbcd8dac228323f2777d886cb206987444e4bce66338dd4/tqdm-4.67.3.tar.gz", hash = "sha256:7d825f03f89244ef73f1d4ce193cb1774a8179fd96f31d7e1dcde62092b960bb", size = 169598, upload-time = "2026-02-03T17:35:53.048Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/16/e1/3079a9ff9b8e11b846c6ac5c8b5bfb7ff225eee721825310c91b3b50304f/tqdm-4.67.3-py3-none-any.whl", hash = "sha256:ee1e4c0e59148062281c49d80b25b67771a127c85fc9676d3be5f243206826bf", size = 78374, upload-time = "2026-02-03T17:35:50.982Z" },
+]
+
+[[package]]
+name = "truststore"
+version = "0.10.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/53/a3/1585216310e344e8102c22482f6060c7a6ea0322b63e026372e6dcefcfd6/truststore-0.10.4.tar.gz", hash = "sha256:9d91bd436463ad5e4ee4aba766628dd6cd7010cf3e2461756b3303710eebc301", size = 26169, upload-time = "2025-08-12T18:49:02.73Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/19/97/56608b2249fe206a67cd573bc93cd9896e1efb9e98bce9c163bcdc704b88/truststore-0.10.4-py3-none-any.whl", hash = "sha256:adaeaecf1cbb5f4de3b1959b42d41f6fab57b2b1666adb59e89cb0b53361d981", size = 18660, upload-time = "2025-08-12T18:49:01.46Z" },
 ]
 
 [[package]]

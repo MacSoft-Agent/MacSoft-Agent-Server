@@ -5,8 +5,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
+$Product = Get-Content -LiteralPath (Join-Path $ProjectRoot "product.json") -Raw | ConvertFrom-Json
 if (-not $Output) {
-    $Output = Join-Path $ProjectRoot "staging\MacSoft-Agent-0.1.0"
+    $Output = Join-Path $ProjectRoot "staging\MacSoft-Agent-$($Product.product_version)-$($Product.build_id)"
 }
 if (-not $DesktopDirectory) {
     $DesktopDirectory = Join-Path $ProjectRoot "hermes\apps\desktop\release\win-unpacked"

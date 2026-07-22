@@ -21,6 +21,7 @@ declare global {
         getMessages: (sessionId: string) => Promise<MacSoftAdminMessage[]>
         deleteSession: (sessionId: string) => Promise<void>
         startStream: (input: { sessionId: string; message: string }) => Promise<{ streamId: string }>
+        stopStream: (input: { sessionId: string; streamId: string }) => Promise<{ ok: true }>
         onStreamEvent: (callback: (payload: MacSoftAdminStreamEvent) => void) => () => void
       }
       // Resolve a backend connection. Omit `profile` (or pass the primary) for

@@ -41,6 +41,7 @@ export interface ChatBarProps {
   state: ChatBarState
   gateway?: HermesGateway | null
   queueSessionKey?: string | null
+  queueWhileBusy?: boolean
   sessionId?: string | null
   cwd?: string | null
   onCancel: () => Promise<void> | void

@@ -68,6 +68,7 @@ export function ChatBar({
   gateway,
   maxRecordingSeconds = 120,
   queueSessionKey,
+  queueWhileBusy = true,
   sessionId,
   state,
   onCancel,
@@ -195,7 +196,7 @@ export function ChatBar({
   const { stacked } = useComposerMetrics({ composerRef, composerSurfaceRef, editorRef, poppedOut })
   const hasComposerPayload = hasText || attachments.length > 0
   const canSubmit = busy || hasComposerPayload
-  const busyAction = busy && hasComposerPayload ? 'queue' : 'stop'
+  const busyAction = busy && hasComposerPayload && queueWhileBusy ? 'queue' : 'stop'
 
   // Steer only makes sense mid-turn, text-only (the gateway can't carry images
   // into a tool result) and never for a slash command (those execute inline).
@@ -225,6 +226,7 @@ export function ChatBar({
     onSteer,
     onSubmit,
     queueCurrentDraft,
+    queueWhileBusy,
     queueEdit,
     queuedPrompts,
     sessionId,

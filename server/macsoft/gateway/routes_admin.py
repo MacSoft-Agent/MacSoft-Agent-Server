@@ -19,7 +19,11 @@ from macsoft.admin.session_store import (
 from macsoft.chat.active_runs import get_active_chat_registry
 from macsoft.chat.activity import ActivityKind, ActivityMapper, ActivityStatus
 from macsoft.chat.capability_policy import build_protected_system_instruction, enforce_capability_boundary
-from macsoft.chat.hermes_client import HermesApiError, stream_hermes_reply_events
+from macsoft.chat.hermes_client import (
+    HermesApiError,
+    interrupt_hermes_run,
+    stream_interruptible_hermes_reply_events,
+)
 from macsoft.chat.result_formatter import format_assistant_reply, format_error_markdown, map_user_readable_error, user_requested_json
 from macsoft.db import connect_db
 from macsoft.gateway.routes_chat import MAX_CHAT_MESSAGE_BYTES, MAX_CHAT_MESSAGE_CHARS, SERVER_HERMES_MODEL_ID, sse_event
@@ -43,6 +47,12 @@ class AdminChatRequest(BaseModel):
     uploaded_file_ids: list[str] = Field(default_factory=list)
 
 
+class AdminInterruptRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str
+
+
 def _error(code: str, message: str) -> dict:
     return {"ok": False, "error": {"code": code, "message": message, "details": {}}}
 
@@ -56,6 +66,18 @@ def _require_session(request: Request, session_id: str):
     if session is None:
         raise HTTPException(status_code=404, detail=_error("admin_session_not_found", "Admin session does not exist."))
     return session
+
+
+def _request_admin_interrupt(config, registry, run_key: str) -> tuple[bool, str | None]:
+    active, run_id = registry.request_interrupt(run_key)
+    if active and run_id:
+        interrupt_hermes_run(
+            base_url=config.hermes.api_base_url,
+            api_key=config.hermes.api_key,
+            run_id=run_id,
+            timeout_seconds=config.hermes.request_timeout_seconds,
+        )
+    return active, run_id
 
 
 @router.post("/api/internal/desktop-admin/auth/session")
@@ -128,6 +150,42 @@ def delete_admin_session(
         conn.close()
 
 
+@router.post("/api/admin/chat/interrupt")
+def interrupt_admin_chat(
+    request: Request,
+    body: AdminInterruptRequest,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+) -> dict:
+    require_admin(request, authorization)
+    _require_session(request, body.session_id)
+    registry = get_active_chat_registry(request.app)
+    try:
+        active, run_id = _request_admin_interrupt(
+            request.app.state.config,
+            registry,
+            f"admin:{body.session_id}",
+        )
+    except HermesApiError as error:
+        readable = map_user_readable_error(
+            str(error), service=error.service, kind=error.kind, status_code=error.status_code
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=_error("admin_interrupt_failed", readable.detail),
+        ) from error
+    if not active:
+        raise HTTPException(
+            status_code=409,
+            detail=_error("admin_run_not_active", "This Admin session has no active reply."),
+        )
+    return {
+        "ok": True,
+        "session_id": body.session_id,
+        "status": "interrupting",
+        "upstream_run_bound": run_id is not None,
+    }
+
+
 @router.post("/api/admin/chat/stream")
 def admin_chat_stream(
     request: Request,
@@ -169,6 +227,7 @@ def admin_chat_stream(
         def event_stream() -> Iterator[str]:
             assistant_text = ""
             request_ok = True
+            interrupted = False
             mapper = ActivityMapper(message_id=assistant_message_id, enabled=True)
             try:
                 yield sse_event("message_start", {"message_id": assistant_message_id, "session_id": body.session_id, "model": SERVER_HERMES_MODEL_ID})
@@ -182,14 +241,22 @@ def admin_chat_stream(
                     yield sse_event("activity", activity)
                 try:
                     parts: list[str] = []
-                    for internal_event in stream_hermes_reply_events(
+                    for internal_event in stream_interruptible_hermes_reply_events(
                         base_url=config.hermes.api_base_url,
                         api_key=config.hermes.api_key,
                         messages=hermes_messages,
+                        session_id=f"macsoft_admin_{body.session_id}",
                         timeout_seconds=config.hermes.request_timeout_seconds,
+                        on_run_started=lambda run_id: registry.bind_run(run_key, run_id),
                     ):
                         if internal_event.get("type") == "text_delta":
-                            parts.append(str(internal_event.get("text") or ""))
+                            delta = str(internal_event.get("text") or "")
+                            parts.append(delta)
+                            if delta:
+                                yield sse_event("token_delta", {"text": delta})
+                            continue
+                        if internal_event.get("type") == "interrupted":
+                            interrupted = True
                             continue
                         mapped = mapper.observed_tool_event(internal_event)
                         if mapped is not None:
@@ -202,39 +269,55 @@ def admin_chat_stream(
                         ),
                     )
                 except HermesApiError as error:
-                    request_ok = False
-                    readable = map_user_readable_error(str(error), service=error.service, kind=error.kind, status_code=error.status_code)
-                    assistant_text = format_error_markdown(readable)
+                    if registry.interrupt_requested(run_key):
+                        interrupted = True
+                        assistant_text = "".join(parts).strip()
+                    else:
+                        request_ok = False
+                        readable = map_user_readable_error(str(error), service=error.service, kind=error.kind, status_code=error.status_code)
+                        assistant_text = format_error_markdown(readable)
+                        yield sse_event("token_delta", {"text": assistant_text})
 
-                stream_conn = connect_db(config)
-                try:
-                    assistant_message = save_admin_message(
-                        stream_conn,
-                        session_id=body.session_id,
-                        role="assistant",
-                        content=assistant_text,
-                        model=SERVER_HERMES_MODEL_ID,
-                        message_id=assistant_message_id,
-                    )
-                except Exception:
-                    persistence_error = _error("assistant_persistence_failed", "The generated reply could not be saved.")
-                    yield sse_event("error", persistence_error)
-                    yield sse_event("message_done", {"ok": False, "session_id": body.session_id, "error": persistence_error["error"]})
-                    return
-                finally:
-                    stream_conn.close()
+                assistant_message = None
+                if assistant_text:
+                    stream_conn = connect_db(config)
+                    try:
+                        assistant_message = save_admin_message(
+                            stream_conn,
+                            session_id=body.session_id,
+                            role="assistant",
+                            content=assistant_text,
+                            status="interrupted" if interrupted else "saved",
+                            model=SERVER_HERMES_MODEL_ID,
+                            message_id=assistant_message_id,
+                        )
+                    except Exception:
+                        persistence_error = _error("assistant_persistence_failed", "The generated reply could not be saved.")
+                        yield sse_event("error", persistence_error)
+                        yield sse_event("message_done", {"ok": False, "session_id": body.session_id, "error": persistence_error["error"]})
+                        return
+                    finally:
+                        stream_conn.close()
 
-                yield sse_event("token_delta", {"text": assistant_text})
                 yield sse_event("message_done", {
                     "ok": request_ok,
-                    "message_id": assistant_message["message_id"],
+                    "interrupted": interrupted,
+                    "message_id": assistant_message["message_id"] if assistant_message else None,
                     "session_id": body.session_id,
                     "user_message_id": user_message["message_id"],
                     "model": SERVER_HERMES_MODEL_ID,
                 })
             except GeneratorExit:
+                try:
+                    _request_admin_interrupt(config, registry, run_key)
+                except HermesApiError:
+                    pass
                 raise
             except Exception:
+                try:
+                    _request_admin_interrupt(config, registry, run_key)
+                except HermesApiError:
+                    pass
                 yield sse_event("error", _error("admin_chat_failed", "Admin chat could not complete the request."))
             finally:
                 mapper.close()

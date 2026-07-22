@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import json
 import re
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -9,12 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 INSTALLER = ROOT / "packaging" / "installer" / "MacSoft-Agent.nsi"
 MAINTENANCE_SCRIPT = ROOT / "packaging" / "installer" / "maintenance.ps1"
-STAGING_MANIFEST = (
-    ROOT
-    / "staging"
-    / "MacSoft-Agent-0.1.0-20260714.9"
-    / "staging-manifest.json"
-)
+STAGING_SOURCE = ROOT / "product_runtime" / "macsoft_runtime" / "staging.py"
 
 
 class PackagingContractTests(unittest.TestCase):
@@ -37,6 +32,78 @@ class PackagingContractTests(unittest.TestCase):
         self.assertIn("This action cannot be undone", self.installer)
         self.assertIn("if ($PurgeData -ne 1", self.maintenance)
         self.assertNotIn('RMDir /r "$APPDATA\\MacSoft Agent"', self.installer)
+
+    def test_server_runtime_dependencies_use_the_unified_product_uv_lock(self) -> None:
+        pyproject = tomllib.loads((ROOT / "hermes" / "pyproject.toml").read_text(encoding="utf-8"))
+        server_project = tomllib.loads((ROOT / "server" / "pyproject.toml").read_text(encoding="utf-8"))
+        requirements = {
+            line.strip().replace('"', "'")
+            for line in (ROOT / "server" / "requirements.txt").read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        }
+        product_extra = {
+            dependency.replace('"', "'")
+            for dependency in pyproject["project"]["optional-dependencies"]["macsoft-server"]
+        }
+        sync_script = (ROOT / "scripts" / "sync-server-runtime-dependencies.ps1").read_text(encoding="utf-8-sig")
+        self.assertEqual(requirements, product_extra)
+        self.assertEqual(requirements, {dependency.replace('"', "'") for dependency in server_project["project"]["dependencies"]})
+        self.assertIn("hermes-agent[macsoft-server]", pyproject["project"]["optional-dependencies"]["all"])
+        self.assertTrue((ROOT / "hermes" / "uv.lock").is_file())
+        self.assertTrue((ROOT / "server" / "uv.lock").is_file())
+        self.assertIn("'--extra', 'all'", sync_script)
+        self.assertIn("'--locked'", sync_script)
+
+        product_lock = tomllib.loads((ROOT / "hermes" / "uv.lock").read_text(encoding="utf-8"))
+        server_lock = tomllib.loads((ROOT / "server" / "uv.lock").read_text(encoding="utf-8"))
+        product_versions = {item["name"]: item["version"] for item in product_lock["package"] if "version" in item}
+        server_versions = {item["name"]: item["version"] for item in server_lock["package"] if "version" in item}
+        overlap = product_versions.keys() & server_versions.keys()
+        self.assertGreater(len(overlap), 10)
+        self.assertEqual(
+            {name: server_versions[name] for name in overlap},
+            {name: product_versions[name] for name in overlap},
+        )
+
+    def test_source_test_runtime_owns_the_complete_host_and_desktop_lifecycle(self) -> None:
+        start = (ROOT / "scripts" / "start-test-runtime.ps1").read_text(encoding="utf-8-sig")
+        stop = (ROOT / "scripts" / "stop-test-runtime.ps1").read_text(encoding="utf-8-sig")
+        self.assertIn("product_runtime.macsoft_runtime.cli", start)
+        self.assertIn("'development'", start)
+        self.assertIn("dev:macsoft", start)
+        self.assertIn("desktop_pid", start)
+        self.assertIn("test-runtime.json", start)
+        self.assertIn("Stop-RecordedProcessTree", stop)
+        self.assertIn("dev:macsoft", stop)
+        self.assertIn("product_runtime.macsoft_runtime.cli", stop)
+        self.assertIn("@(8766, 8643, 8642, 8787, 5174)", stop)
+
+    def test_mutable_development_state_is_ignored_but_templates_remain(self) -> None:
+        ignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn("runtime/", ignore)
+        self.assertIn("server/data/", ignore)
+        self.assertIn("server/initialization.json", ignore)
+        self.assertTrue((ROOT / "runtime.example" / "config.yaml.example").is_file())
+        self.assertTrue((ROOT / "packaging" / "templates" / "runtime" / "config.yaml").is_file())
+
+    def test_release_build_is_clean_commit_gated_and_version_driven(self) -> None:
+        release = (ROOT / "scripts" / "build-release.ps1").read_text(encoding="utf-8-sig")
+        staging = (ROOT / "scripts" / "build-staging.ps1").read_text(encoding="utf-8-sig")
+        installer_builder = (ROOT / "packaging" / "build-installer.ps1").read_text(encoding="utf-8-sig")
+        self.assertIn("MacSoft-Agent-Packaging", release)
+        self.assertIn("status --porcelain", release)
+        self.assertIn("$ExpectedCommit", release)
+        self.assertIn("--extra all --locked", release)
+        self.assertIn("ci", release)
+        self.assertIn("run pack --workspace apps/desktop", release)
+        self.assertIn("build-staging.ps1", release)
+        self.assertIn("build-installer.ps1", release)
+        self.assertIn("build-report.json", release)
+        self.assertIn("$Product.product_version", staging)
+        self.assertIn("$Product.build_id", staging)
+        self.assertIn("$manifest.product_version", installer_builder)
+        self.assertNotIn("'/DPRODUCT_VERSION=0.1.0'", installer_builder)
+        self.assertIn('${PRODUCT_FILE_VERSION}', self.installer)
 
     def test_uninstall_is_checked_and_has_reboot_fallback(self) -> None:
         self.assertIn("Stop-OwnedServiceTree", self.maintenance)
@@ -90,14 +157,10 @@ class PackagingContractTests(unittest.TestCase):
         self.assertNotIn('RMDir /r "$APPDATA\\MacSoft Agent"', self.installer)
 
     def test_packaged_payload_does_not_contain_a_database(self) -> None:
-        manifest = json.loads(STAGING_MANIFEST.read_text(encoding="utf-8"))
-        packaged_databases = [
-            entry["path"]
-            for entry in manifest["files"]
-            if entry["path"].lower().endswith(".db")
-            or entry["path"].lower().endswith("macsoft-server.db")
-        ]
-        self.assertEqual(packaged_databases, [])
+        staging_source = STAGING_SOURCE.read_text(encoding="utf-8")
+        self.assertIn('"macsoft-server.db"', staging_source)
+        self.assertIn('"state.db"', staging_source)
+        self.assertIn("Forbidden state file included", staging_source)
 
     def test_maintenance_has_no_pid_automatic_variable_collision(self) -> None:
         self.assertIsNone(re.search(r"\$pid\b", self.maintenance, re.IGNORECASE))

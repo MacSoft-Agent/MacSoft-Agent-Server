@@ -10,13 +10,7 @@ if not exist "%HERMES_HOME%\config.yaml" (
 )
 
 cd /d "%PROJECT_ROOT%hermes"
-start "MacSoft Agent Desktop Renderer" /b cmd.exe /d /c "call npm.cmd run dev:renderer --workspace apps/desktop"
-powershell.exe -NoProfile -Command "$deadline=(Get-Date).AddSeconds(60); do { if (Get-NetTCPConnection -State Listen -LocalPort 5174 -ErrorAction SilentlyContinue) { exit 0 }; Start-Sleep -Seconds 1 } while ((Get-Date) -lt $deadline); exit 1"
-if errorlevel 1 (
-    echo [ERROR] MacSoft Agent Desktop renderer did not start on port 5174.
-    exit /b 1
-)
-
-call npm.cmd run dev:electron --workspace apps/desktop
+set "MACSOFT_AGENT_ROOT=%PROJECT_ROOT%"
+call npm.cmd run dev:macsoft --workspace apps/desktop
 
 endlocal

@@ -13,12 +13,8 @@ from urllib.error import URLError
 import yaml
 
 
-PLUGIN_DIR = Path(
-    os.environ.get(
-        "MACSOFT_AUTOCOUNT_PLUGIN_TEST_ROOT",
-        r"C:\MacSoft-Agent\runtime\plugins\macsoft-autocount",
-    )
-)
+DEFAULT_PLUGIN_DIR = Path(__file__).resolve().parents[2] / "runtime" / "plugins" / "macsoft-autocount"
+PLUGIN_DIR = Path(os.environ.get("MACSOFT_AUTOCOUNT_PLUGIN_TEST_ROOT", str(DEFAULT_PLUGIN_DIR)))
 PACKAGE_NAME = "macsoft_autocount_runtime_tests"
 
 spec = importlib.util.spec_from_file_location(

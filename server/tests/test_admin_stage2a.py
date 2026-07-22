@@ -114,7 +114,7 @@ class AdminStage2ATests(unittest.TestCase):
             conn.close()
         body = AdminChatRequest(session_id=created["session_id"], message="Hello")
         with patch(
-            "macsoft.gateway.routes_admin.stream_hermes_reply_events",
+            "macsoft.gateway.routes_admin.stream_interruptible_hermes_reply_events",
             return_value=iter([{"type": "text_delta", "text": "Hi"}]),
         ):
             response = admin_chat_stream(self.request, body, f"Bearer {token}")

@@ -11,6 +11,7 @@ describe('MacSoft Admin chat IPC contract', () => {
 
     expect(preload).toContain("macSoftAdminChat: {")
     expect(preload).toContain("ipcRenderer.invoke('hermes:macsoft-admin:start-stream'")
+    expect(preload).toContain("ipcRenderer.invoke('hermes:macsoft-admin:interrupt-stream'")
     expect(preload).toContain('ipcRenderer.removeListener')
     expect(preload).not.toContain('adminAccessToken')
   })
@@ -23,5 +24,18 @@ describe('MacSoft Admin chat IPC contract', () => {
     expect(main).toContain("const MACSOFT_ADMIN_MAX_MESSAGE_BYTES = 32_000")
     expect(main).toContain("'message_done'")
     expect(main).toContain("'malformed_stream_event'")
+    expect(main).toContain("ipcMain.handle('hermes:macsoft-admin:interrupt-stream'")
+    expect(main).toContain('active.webContents !== event.sender')
+    expect(main).toContain('.interruptAdminChat(sessionId)')
+  })
+
+  it('keeps Admin busy interaction as Stop instead of queueing a second prompt', async () => {
+    const composer = await readFile(join(electronDir, '../src/app/chat/composer/index.tsx'), 'utf8')
+    const chat = await readFile(join(electronDir, '../src/app/chat/index.tsx'), 'utf8')
+
+    expect(composer).toContain("hasComposerPayload && queueWhileBusy ? 'queue' : 'stop'")
+    expect(chat).toContain('queueWhileBusy={!macSoftCustomerRuntime}')
+    expect(chat).toContain('onCancel={macSoftCustomerRuntime ? adminChat.stop : onCancel}')
+    expect(chat).toContain('canSubmitPrompt={canSubmitPrompt || (macSoftCustomerRuntime && adminChat.streaming)}')
   })
 })

@@ -147,6 +147,8 @@ if (USER_DATA_OVERRIDE) {
 
 const DEV_SERVER = process.env.HERMES_DESKTOP_DEV_SERVER
 const IS_PACKAGED = app.isPackaged || Boolean(process.env.HERMES_DESKTOP_IS_PACKAGED)
+const IS_MACSOFT_TEST_RUNTIME = Boolean(DEV_SERVER) && process.env.MACSOFT_DESKTOP_TEST_MODE === '1'
+const IS_MACSOFT_CUSTOMER_RUNTIME = IS_PACKAGED || IS_MACSOFT_TEST_RUNTIME
 const IS_MAC = process.platform === 'darwin'
 const IS_WINDOWS = process.platform === 'win32'
 const IS_WSL = isWslEnvironment()
@@ -3367,7 +3369,7 @@ function createActiveBackend(backendArgs) {
 }
 
 function resolveHermesBackend(backendArgs) {
-  if (IS_PACKAGED) {
+  if (IS_MACSOFT_CUSTOMER_RUNTIME) {
     return {
       kind: 'macsoft-host-managed',
       label: 'MacSoft Agent Host managed services',
@@ -6312,7 +6314,7 @@ async function prepareProfileDeleteRequest(request) {
 }
 
 async function startHermes() {
-  if (IS_PACKAGED) {
+  if (IS_MACSOFT_CUSTOMER_RUNTIME) {
     if (connectionPromise) {
       return connectionPromise
     }
@@ -6977,7 +6979,7 @@ function createWindow() {
 ipcMain.handle('hermes:connection', async (_event, profile) => {
   const connection = await ensureBackend(profile)
 
-  if (IS_PACKAGED) {
+  if (IS_MACSOFT_CUSTOMER_RUNTIME) {
     // The Host control token is also the localhost config-backend session
     // token. Keep it in Electron main, where hermes:api adds it to requests;
     // the customer renderer has no Agent socket and never needs the secret.
@@ -7390,7 +7392,7 @@ export function getMacSoftDesktopAdminChatClient() {
 const MACSOFT_ADMIN_STREAM_CHANNEL = 'hermes:macsoft-admin-chat:stream'
 const macSoftAdminStreams = new Map<
   string,
-  { controller: AbortController; onDestroyed: () => void; webContents: WebContents }
+  { controller: AbortController; onDestroyed: () => void; sessionId: string; webContents: WebContents }
 >()
 const MACSOFT_ADMIN_SESSION_ID_RE = /^admin_sess_[a-z0-9]+$/
 const MACSOFT_ADMIN_MAX_MESSAGE_BYTES = 32_000
@@ -7501,10 +7503,15 @@ ipcMain.handle('hermes:macsoft-admin:start-stream', async (event, request) => {
   const streamId = crypto.randomUUID()
   const webContents = payload
   const onDestroyed = () => {
-    controller.abort()
-    cleanupMacSoftAdminStream(streamId)
+    void getMacSoftDesktopAdminChatClient()
+      .interruptAdminChat(sessionId)
+      .catch(() => undefined)
+      .finally(() => {
+        controller.abort()
+        cleanupMacSoftAdminStream(streamId)
+      })
   }
-  macSoftAdminStreams.set(streamId, { controller, onDestroyed, webContents })
+  macSoftAdminStreams.set(streamId, { controller, onDestroyed, sessionId, webContents })
   webContents.once('destroyed', onDestroyed)
   try {
     const response = await getMacSoftDesktopAdminChatClient().startAdminChatStream(sessionId, message, controller.signal)
@@ -7515,6 +7522,17 @@ ipcMain.handle('hermes:macsoft-admin:start-stream', async (event, request) => {
     throw new Error(error instanceof Error ? error.message : 'Admin chat could not start.')
   }
 })
+ipcMain.handle('hermes:macsoft-admin:interrupt-stream', async (event, request) => {
+  const sessionId = validateMacSoftAdminSessionId(request?.sessionId)
+  const streamId = request?.streamId
+  if (typeof streamId !== 'string' || streamId.length > 80) throw new Error('Invalid Admin stream.')
+  const active = macSoftAdminStreams.get(streamId)
+  if (!active || active.sessionId !== sessionId || active.webContents !== event.sender) {
+    throw new Error('Admin stream is not active.')
+  }
+  await getMacSoftDesktopAdminChatClient().interruptAdminChat(sessionId)
+  return { ok: true }
+})
 ipcMain.handle('hermes:macsoft-host:status', () => getMacSoftHostClient().status())
 ipcMain.handle('hermes:macsoft-desktop-chat:status', () => getMacSoftDesktopChatClient().getStatus())
 ipcMain.handle('hermes:macsoft-host:service-action', (_event, name, action) =>
@@ -7524,7 +7542,7 @@ ipcMain.handle('hermes:macsoft-host:set-autostart', (_event, enabled) =>
   getMacSoftHostClient().setAutoStart(Boolean(enabled))
 )
 ipcMain.on('hermes:macsoft-customer-runtime', event => {
-  event.returnValue = IS_PACKAGED
+  event.returnValue = IS_MACSOFT_CUSTOMER_RUNTIME
 })
 ipcMain.on('hermes:macsoft-first-run-navigation', event => {
   event.returnValue = macSoftFirstRunNavigationPending

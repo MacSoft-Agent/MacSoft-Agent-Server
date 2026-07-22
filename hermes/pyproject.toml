@@ -141,6 +141,21 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# MacSoft Server shares the packaged Hermes interpreter. Keep these exact pins
+# in the single Hermes uv.lock so Server support cannot replace Hermes
+# dependencies with a separately resolved graph.
+macsoft-server = [
+  "fastapi==0.133.1",
+  "uvicorn[standard]==0.41.0",
+  "pyyaml==6.0.3",
+  "python-multipart==0.0.27",
+  "openpyxl==3.1.5",
+  "pypdf==6.14.2",
+  "httpx==0.28.1",
+  "httpx2==2.7.0",
+  "psutil==7.2.2",
+  "pywin32==311; sys_platform == 'win32'",
+]
 # Native Anthropic provider — only needed when provider=anthropic (not via
 # OpenRouter or other aggregators).
 anthropic = ["anthropic==0.87.0"]  # CVE-2026-34450, CVE-2026-34452
@@ -302,6 +317,7 @@ all = [
   "hermes-agent[google]",
   "hermes-agent[web]",
   "hermes-agent[youtube]",
+  "hermes-agent[macsoft-server]",
 ]
 
 [project.scripts]

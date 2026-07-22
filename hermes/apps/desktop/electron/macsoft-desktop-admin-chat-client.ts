@@ -78,6 +78,13 @@ export class MacSoftDesktopAdminChatClient {
     return this.requestStream('/api/admin/chat/stream', { session_id: sessionId, message, uploaded_file_ids: [] }, signal)
   }
 
+  async interruptAdminChat(sessionId: string): Promise<void> {
+    await this.requestJson('/api/admin/chat/interrupt', {
+      method: 'POST',
+      body: JSON.stringify({ session_id: sessionId })
+    })
+  }
+
   private async requestJson(pathname: string, init: RequestInit): Promise<any> {
     const response = await this.request(pathname, init)
     return this.readJson(response)

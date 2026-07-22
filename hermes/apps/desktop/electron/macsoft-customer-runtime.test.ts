@@ -12,6 +12,14 @@ test('packaged customer runtime is Host managed before legacy backend discovery'
   assert.ok(legacyDiscovery > packagedGate)
 })
 
+test('MacSoft source test mode is explicit and restricted to the Vite development server', () => {
+  const packageJson = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+  assert.match(source, /const IS_MACSOFT_TEST_RUNTIME = Boolean\(DEV_SERVER\) && process\.env\.MACSOFT_DESKTOP_TEST_MODE === '1'/)
+  assert.match(source, /const IS_MACSOFT_CUSTOMER_RUNTIME = IS_PACKAGED \|\| IS_MACSOFT_TEST_RUNTIME/)
+  assert.match(source, /event\.returnValue = IS_MACSOFT_CUSTOMER_RUNTIME/)
+  assert.equal(packageJson.scripts['dev:macsoft'], 'cross-env MACSOFT_DESKTOP_TEST_MODE=1 npm run dev')
+})
+
 test('packaged customer runtime cannot enter the bootstrap downloader', () => {
   const ensure = source.slice(source.indexOf('async function ensureRuntime'), source.indexOf('async function startHermes'))
   const managedGate = ensure.indexOf("backend.kind === 'macsoft-host-managed'")
@@ -22,7 +30,7 @@ test('packaged customer runtime cannot enter the bootstrap downloader', () => {
 
 test('packaged customer runtime connects to the Host-managed configuration backend', () => {
   const start = source.slice(source.indexOf('async function startHermes'), source.indexOf('function wireCommonWindowHandlers'))
-  const packagedGate = start.indexOf('if (IS_PACKAGED)')
+  const packagedGate = start.indexOf('if (IS_MACSOFT_CUSTOMER_RUNTIME)')
   const legacyRuntime = start.indexOf('await waitForUpdateToFinish()')
   assert.ok(packagedGate >= 0)
   assert.ok(legacyRuntime > packagedGate)

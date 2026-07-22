@@ -550,7 +550,7 @@ export function ChatView({
             <ChatBar
               busy={composerBusy}
               cwd={currentCwd}
-              canSubmitPrompt={canSubmitPrompt}
+              canSubmitPrompt={canSubmitPrompt || (macSoftCustomerRuntime && adminChat.streaming)}
               disabled={!canEditPrompt}
               focusKey={activeSessionId}
               gateway={gateway}
@@ -559,7 +559,7 @@ export function ChatView({
               onAddUrl={onAddUrl}
               onAttachDroppedItems={onAttachDroppedItems}
               onAttachImageBlob={onAttachImageBlob}
-              onCancel={macSoftCustomerRuntime ? () => undefined : onCancel}
+              onCancel={macSoftCustomerRuntime ? adminChat.stop : onCancel}
               onBlockedSubmit={
                 macSoftCustomerRuntime
                   ? () =>
@@ -587,6 +587,7 @@ export function ChatView({
                   : undefined
               }
               queueSessionKey={macSoftCustomerRuntime ? adminChat.selectedSessionId : selectedSessionId}
+              queueWhileBusy={!macSoftCustomerRuntime}
               sessionId={macSoftCustomerRuntime ? adminChat.selectedSessionId : activeSessionId}
               state={chatBarState}
             />

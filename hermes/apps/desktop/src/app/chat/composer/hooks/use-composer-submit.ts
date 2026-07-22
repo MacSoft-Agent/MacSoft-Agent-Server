@@ -31,6 +31,7 @@ interface UseComposerSubmitArgs {
   onSteer: ChatBarProps['onSteer']
   onSubmit: ChatBarProps['onSubmit']
   queueCurrentDraft: () => boolean
+  queueWhileBusy: boolean
   queueEdit: QueueEditState | null
   queuedPrompts: QueuedPromptEntry[]
   sessionId: string | null | undefined
@@ -67,6 +68,7 @@ export function useComposerSubmit({
   onSteer,
   onSubmit,
   queueCurrentDraft,
+  queueWhileBusy,
   queueEdit,
   queuedPrompts,
   sessionId,
@@ -143,11 +145,11 @@ export function useComposerSubmit({
       // busy guard for commands that genuinely need an idle session (skill
       // /send directives).  Queuing them would make every slash command wait
       // for the current turn to finish, which is how the TUI never behaves.
-      if (!attachments.length && SLASH_COMMAND_RE.test(text.trim())) {
+      if (queueWhileBusy && !attachments.length && SLASH_COMMAND_RE.test(text.trim())) {
         triggerHaptic('submit')
         clearDraft()
         dispatchSubmit(text)
-      } else if (payloadPresent) {
+      } else if (payloadPresent && queueWhileBusy) {
         queueCurrentDraft()
       } else {
         // Stop button (the only way to reach here while busy with an empty

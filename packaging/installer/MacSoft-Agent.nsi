@@ -15,6 +15,9 @@ Unicode true
 !ifndef PRODUCT_VERSION
   !define PRODUCT_VERSION "0.1.0"
 !endif
+!ifndef PRODUCT_FILE_VERSION
+  !define PRODUCT_FILE_VERSION "0.1.0.0"
+!endif
 
 !define PRODUCT_NAME "MacSoft Agent"
 !define SERVICE_NAME "MacSoftAgentHost"
@@ -32,7 +35,7 @@ SetCompressorDictSize 64
 ShowInstDetails show
 ShowUninstDetails show
 
-VIProductVersion "0.1.0.0"
+VIProductVersion "${PRODUCT_FILE_VERSION}"
 VIAddVersionKey /LANG=1033 "ProductName" "${PRODUCT_NAME}"
 VIAddVersionKey /LANG=1033 "FileDescription" "MacSoft Agent Windows Installer"
 VIAddVersionKey /LANG=1033 "ProductVersion" "${PRODUCT_VERSION}"

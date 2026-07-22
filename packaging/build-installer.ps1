@@ -21,6 +21,15 @@ if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
 }
 
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+$productVersion = [string]$manifest.product_version
+if ($productVersion -notmatch '^\d+\.\d+\.\d+(?:\.\d+)?$') {
+    throw "The staging manifest contains an invalid product version: $productVersion"
+}
+$versionParts = @($productVersion.Split('.') | ForEach-Object { [int]$_ })
+while ($versionParts.Count -lt 4) {
+    $versionParts += 0
+}
+$productFileVersion = ($versionParts[0..3] -join '.')
 $expected = @{}
 foreach ($entry in $manifest.files) {
     $expected[[string]$entry.path] = $entry
@@ -68,7 +77,7 @@ if (Test-Path -LiteralPath $output) {
     Remove-Item -LiteralPath $output -Force
 }
 
-& $NsisPath "/DPAYLOAD_ROOT=$payload" "/DOUTPUT_FILE=$output" '/DPRODUCT_VERSION=0.1.0' $installerScript
+& $NsisPath "/DPAYLOAD_ROOT=$payload" "/DOUTPUT_FILE=$output" "/DPRODUCT_VERSION=$productVersion" "/DPRODUCT_FILE_VERSION=$productFileVersion" $installerScript
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $output -PathType Leaf)) {
     throw "NSIS failed with exit code $LASTEXITCODE."
 }

@@ -59,4 +59,22 @@ describe('MacSoft Admin chat reducer', () => {
     expect(state.streaming).toBe(false)
     expect(state.streamId).toBeNull()
   })
+
+  it('keeps the stream busy while an interrupt is pending and releases it on completion', () => {
+    const streaming = reduceMacSoftAdminChat(initialMacSoftAdminChatState, {
+      type: 'stream-start',
+      streamId: 'stream-1'
+    })
+    const interrupting = reduceMacSoftAdminChat(streaming, { type: 'interrupt-start' })
+    expect(interrupting.streaming).toBe(true)
+    expect(interrupting.interrupting).toBe(true)
+
+    const completed = reduceMacSoftAdminChat(interrupting, {
+      type: 'stream-event',
+      event: { data: { interrupted: true, ok: true }, event: 'message_done', streamId: 'stream-1' }
+    })
+    expect(completed.streaming).toBe(false)
+    expect(completed.interrupting).toBe(false)
+    expect(completed.streamId).toBeNull()
+  })
 })

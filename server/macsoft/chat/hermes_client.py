@@ -2,7 +2,7 @@
 
 import json
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -235,3 +235,170 @@ def stream_hermes_reply_events(
             "MacSoft Agent service returned an empty assistant response.",
             kind="protocol",
         )
+
+
+def _run_headers(api_key: str, *, accept: str = "application/json") -> dict[str, str]:
+    return {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "Accept": accept,
+    }
+
+
+def _read_json_response(response: Any) -> dict[str, Any]:
+    try:
+        payload = json.loads(response.read().decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise HermesApiError(
+            "MacSoft Agent service returned invalid JSON.",
+            kind="protocol",
+        ) from error
+    if not isinstance(payload, dict):
+        raise HermesApiError(
+            "MacSoft Agent service returned an invalid response.",
+            kind="protocol",
+        )
+    return payload
+
+
+def _start_hermes_run(
+    *,
+    base_url: str,
+    api_key: str,
+    messages: list[dict[str, Any]],
+    session_id: str,
+    timeout_seconds: int,
+) -> str:
+    normalized = _normalized_messages(messages)
+    user_index = next(
+        (index for index in range(len(normalized) - 1, -1, -1) if normalized[index]["role"] == "user"),
+        -1,
+    )
+    if user_index < 0:
+        raise HermesApiError("MacSoft Agent request has no user message.", kind="invalid_request")
+    instructions = "\n\n".join(
+        str(message["content"]) for message in normalized[:user_index] if message["role"] == "system"
+    )
+    history = [message for message in normalized[:user_index] if message["role"] != "system"]
+    payload = {
+        "model": "hermes-agent",
+        "input": normalized[user_index]["content"],
+        "conversation_history": history,
+        "instructions": instructions,
+        "session_id": session_id,
+    }
+    request = Request(
+        url=f"{base_url.rstrip('/')}/v1/runs",
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers=_run_headers(api_key),
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=timeout_seconds) as response:
+            result = _read_json_response(response)
+    except (HTTPError, URLError, TimeoutError) as error:
+        _raise_transport_error(error, base_url=base_url, timeout_seconds=timeout_seconds)
+    run_id = result.get("run_id")
+    if not isinstance(run_id, str) or not run_id.startswith("run_"):
+        raise HermesApiError("MacSoft Agent service did not return a run ID.", kind="protocol")
+    return run_id
+
+
+def interrupt_hermes_run(
+    *, base_url: str, api_key: str, run_id: str, timeout_seconds: int
+) -> bool:
+    request = Request(
+        url=f"{base_url.rstrip('/')}/v1/runs/{run_id}/stop",
+        data=b"{}",
+        headers=_run_headers(api_key),
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=min(timeout_seconds, 10)):
+            return True
+    except HTTPError as error:
+        if error.code == 404:
+            return False
+        _raise_transport_error(error, base_url=base_url, timeout_seconds=timeout_seconds)
+    except (URLError, TimeoutError) as error:
+        _raise_transport_error(error, base_url=base_url, timeout_seconds=timeout_seconds)
+    return False
+
+
+def stream_interruptible_hermes_reply_events(
+    *,
+    base_url: str,
+    api_key: str,
+    messages: list[dict[str, Any]],
+    session_id: str,
+    timeout_seconds: int,
+    on_run_started: Callable[[str], bool],
+) -> Iterator[dict[str, str]]:
+    """Start a Hermes Run, expose its run ID, and yield its controlled SSE events."""
+    run_id = _start_hermes_run(
+        base_url=base_url,
+        api_key=api_key,
+        messages=messages,
+        session_id=session_id,
+        timeout_seconds=timeout_seconds,
+    )
+    if on_run_started(run_id):
+        interrupt_hermes_run(
+            base_url=base_url,
+            api_key=api_key,
+            run_id=run_id,
+            timeout_seconds=timeout_seconds,
+        )
+
+    request = Request(
+        url=f"{base_url.rstrip('/')}/v1/runs/{run_id}/events",
+        headers=_run_headers(api_key, accept="text/event-stream"),
+        method="GET",
+    )
+    text_seen = False
+    interrupted = False
+    data_lines: list[str] = []
+
+    def dispatch() -> Iterator[dict[str, str]]:
+        nonlocal text_seen, interrupted, data_lines
+        data_text = "\n".join(data_lines).strip()
+        data_lines = []
+        if not data_text:
+            return
+        try:
+            payload = json.loads(data_text)
+        except json.JSONDecodeError as error:
+            raise HermesApiError("MacSoft Agent service returned malformed run SSE data.", kind="protocol") from error
+        if not isinstance(payload, dict):
+            return
+        event = payload.get("event")
+        if event == "message.delta":
+            delta = payload.get("delta")
+            if isinstance(delta, str) and delta:
+                text_seen = text_seen or bool(delta.strip())
+                yield {"type": "text_delta", "text": delta, "run_id": run_id}
+        elif event in {"tool.started", "tool.completed"}:
+            tool = payload.get("tool") or payload.get("tool_name")
+            if isinstance(tool, str):
+                yield {"type": "tool", "tool": tool, "status": event.split(".", 1)[1], "run_id": run_id}
+        elif event == "run.cancelled":
+            interrupted = True
+            yield {"type": "interrupted", "run_id": run_id}
+        elif event == "run.failed":
+            raise HermesApiError(str(payload.get("error") or "MacSoft Agent run failed."), kind="run_failed")
+
+    try:
+        with urlopen(request, timeout=timeout_seconds) as response:
+            for raw_line in response:
+                line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
+                if not line:
+                    yield from dispatch()
+                elif line.startswith("data:"):
+                    data_lines.append(line[5:].lstrip())
+            if data_lines:
+                yield from dispatch()
+    except (HTTPError, URLError, TimeoutError) as error:
+        _raise_transport_error(error, base_url=base_url, timeout_seconds=timeout_seconds)
+
+    if not text_seen and not interrupted:
+        raise HermesApiError("MacSoft Agent service returned an empty assistant response.", kind="protocol")

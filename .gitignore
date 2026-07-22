@@ -34,6 +34,9 @@ hermes/apps/desktop/coverage/
 # ============================================================
 # Runtime data and databases
 # ============================================================
+runtime/
+server/data/
+server/initialization.json
 *.db
 *.db-shm
 *.db-wal

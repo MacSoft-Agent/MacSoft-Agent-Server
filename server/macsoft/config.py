@@ -100,10 +100,8 @@ def load_config(config_path: str | None = None) -> AppConfig:
                 )
             ).rstrip("/"),
             api_key=str(
-                hermes_data.get(
-                    "api_key",
-                    "macsoft-local-dev",
-                )
+                os.environ.get("MACSOFT_HERMES_API_KEY")
+                or hermes_data.get("api_key", "macsoft-local-dev")
             ),
             request_timeout_seconds=int(
                 hermes_data.get(

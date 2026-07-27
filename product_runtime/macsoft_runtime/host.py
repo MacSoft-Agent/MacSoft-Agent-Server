@@ -77,6 +77,7 @@ def build_service_specs(paths: ProductPaths, metadata: ProductMetadata) -> dict[
     server = _read_yaml(paths.server_config)
     api = runtime.get("platforms", {}).get("api_server", {}).get("extra", {})
     ai_port = int(api.get("port", 8642))
+    ai_api_key = str(api.get("key", "")).strip()
     server_port = int(server.get("server", {}).get("port", 8787))
     cert_file = paths.program_root / "python" / "Lib" / "site-packages" / "certifi" / "cacert.pem"
     shared_environment = {
@@ -131,6 +132,7 @@ def build_service_specs(paths: ProductPaths, metadata: ProductMetadata) -> dict[
             environment={
                 **shared_environment,
                 "MACSOFT_SERVER_CONFIG": str(paths.server_config),
+                "MACSOFT_HERMES_API_KEY": ai_api_key,
                 "PYTHONPATH": str(paths.server_program_root),
             },
             health_url=f"http://127.0.0.1:{server_port}/health",

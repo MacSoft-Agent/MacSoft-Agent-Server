@@ -21,6 +21,7 @@ from macsoft_runtime.host import (
     ChildProcessJob,
     MacSoftAgentHost,
     ServiceSpec,
+    build_service_specs,
 )
 from macsoft_runtime.metadata import ProductMetadata
 from macsoft_runtime.paths import resolve_packaged_paths
@@ -111,6 +112,22 @@ class HostTests(unittest.TestCase):
             except (OSError, urllib.error.URLError):
                 time.sleep(0.02)
         self.fail(f"Test service did not bind port {port}.")
+
+    def test_server_receives_the_ai_service_internal_key_from_runtime(self) -> None:
+        self.paths.runtime_root.mkdir(parents=True)
+        self.paths.server_config.parent.mkdir(parents=True, exist_ok=True)
+        self.paths.runtime_config.write_text(
+            "platforms:\n  api_server:\n    extra:\n      port: 8642\n      key: runtime-owned-key\n",
+            encoding="utf-8",
+        )
+        self.paths.server_config.write_text(
+            "server:\n  port: 8787\nhermes:\n  api_key: stale-yaml-key\n",
+            encoding="utf-8",
+        )
+
+        specs = build_service_specs(self.paths, METADATA)
+
+        self.assertEqual(specs["server"].environment["MACSOFT_HERMES_API_KEY"], "runtime-owned-key")
 
     def test_owned_process_passes_health_and_stops_safely(self) -> None:
         port = free_port()

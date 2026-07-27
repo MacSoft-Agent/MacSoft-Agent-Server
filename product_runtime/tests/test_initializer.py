@@ -46,10 +46,35 @@ class FirstRunInitializationTests(unittest.TestCase):
 
     def test_upgrade_preserves_mutable_customer_data(self) -> None:
         initialize_product_data(self.paths, self.metadata)
-        custom = "customer setting\n"
+        original = self.paths.runtime_config.read_text("utf-8")
+        custom = original.replace("default: gpt-5.4", "default: customer-model")
         self.paths.runtime_config.write_text(custom, encoding="utf-8")
         second = initialize_product_data(self.paths, self.metadata)
         self.assertEqual(self.paths.runtime_config.read_text("utf-8"), custom)
+        self.assertIn("runtime\\config.yaml" if __import__('os').name == 'nt' else "runtime/config.yaml", second.preserved)
+
+    def test_upgrade_synchronizes_internal_api_key_without_rewriting_other_settings(self) -> None:
+        initialize_product_data(self.paths, self.metadata)
+        state = json.loads((self.paths.config_root / "initialization.json").read_text("utf-8"))
+        local_api_key = state["local_api_key"]
+        runtime = self.paths.runtime_config.read_text("utf-8").replace(local_api_key, "stale-runtime-key")
+        server = self.paths.server_config.read_text("utf-8").replace(local_api_key, "stale-server-key")
+        runtime += "\n# preserved runtime comment\n"
+        server = server.replace('port: 8787', 'port: 9876') + "\n# preserved server comment\n"
+        self.paths.runtime_config.write_text(runtime, encoding="utf-8")
+        self.paths.server_config.write_text(server, encoding="utf-8")
+
+        second = initialize_product_data(self.paths, self.metadata)
+
+        runtime_after = self.paths.runtime_config.read_text("utf-8")
+        server_after = self.paths.server_config.read_text("utf-8")
+        self.assertIn(local_api_key, runtime_after)
+        self.assertIn(local_api_key, server_after)
+        self.assertNotIn("stale-runtime-key", runtime_after)
+        self.assertNotIn("stale-server-key", server_after)
+        self.assertIn("# preserved runtime comment", runtime_after)
+        self.assertIn("port: 9876", server_after)
+        self.assertIn("# preserved server comment", server_after)
         self.assertIn("runtime\\config.yaml" if __import__('os').name == 'nt' else "runtime/config.yaml", second.preserved)
 
     def test_modified_protected_resource_is_not_overwritten(self) -> None:

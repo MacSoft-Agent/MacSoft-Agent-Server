@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import secrets
 import sqlite3
 import tempfile
@@ -51,6 +52,36 @@ def _copy_template_once(source: Path, destination: Path, replacements: dict[str,
         raw = raw.replace(old, new)
     _atomic_write(destination, raw.encode("utf-8"))
     return True
+
+
+_YAML_KEY_LINE = re.compile(r"^([ \t]*)([A-Za-z_][A-Za-z0-9_-]*):(?:[ \t]*(.*?))?(\r?\n)?$")
+
+
+def _synchronize_yaml_scalar(path: Path, key_path: tuple[str, ...], value: str) -> bool:
+    """Update one Host-owned YAML scalar without rewriting customer settings or comments."""
+    lines = path.read_text(encoding="utf-8-sig").splitlines(keepends=True)
+    parents: list[tuple[int, str]] = []
+
+    for index, line in enumerate(lines):
+        match = _YAML_KEY_LINE.match(line)
+        if not match:
+            continue
+        prefix, key, remainder, newline = match.groups()
+        indent = len(prefix.expandtabs(8))
+        while parents and parents[-1][0] >= indent:
+            parents.pop()
+        current_path = tuple(item[1] for item in parents) + (key,)
+        if current_path == key_path:
+            replacement = f"{prefix}{key}: {json.dumps(value)}{newline or ''}"
+            if replacement == line:
+                return False
+            lines[index] = replacement
+            _atomic_write(path, "".join(lines).encode("utf-8"))
+            return True
+        if not (remainder or "").strip() or (remainder or "").lstrip().startswith("#"):
+            parents.append((indent, key))
+
+    raise ValueError(f"{path.name} is missing required setting: {'.'.join(key_path)}")
 
 
 def _load_json(path: Path, fallback: dict) -> dict:
@@ -106,6 +137,21 @@ def initialize_product_data(paths: ProductPaths, metadata: ProductMetadata) -> I
             result.created.append(str(destination.relative_to(paths.data_root)))
         else:
             result.preserved.append(str(destination.relative_to(paths.data_root)))
+
+    # The localhost API credential is generated and owned by the Host. Keep the
+    # independently preserved runtime and Server YAML files aligned while
+    # leaving every provider credential and customer setting untouched.
+    _synchronize_yaml_scalar(
+        paths.runtime_config,
+        ("platforms", "api_server", "extra", "key"),
+        local_api_key,
+    )
+    if paths.is_packaged:
+        _synchronize_yaml_scalar(
+            paths.server_config,
+            ("hermes", "api_key"),
+            local_api_key,
+        )
 
     if not paths.server_database.exists():
         connection = sqlite3.connect(paths.server_database)

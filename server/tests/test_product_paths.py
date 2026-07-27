@@ -35,6 +35,20 @@ class ProductPathTests(unittest.TestCase):
         with patch.dict("os.environ", {"MACSOFT_PRODUCT_METADATA": str(root / "product.json")}):
             self.assertEqual(product_version(), "0.1.0")
 
+    def test_host_owned_hermes_api_key_overrides_preserved_yaml(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            config_path = Path(temp) / "macsoft-server.yaml"
+            config_path.write_text(CONFIG, encoding="utf-8")
+            with patch.dict(
+                "os.environ",
+                {
+                    "MACSOFT_SERVER_CONFIG": str(config_path),
+                    "MACSOFT_HERMES_API_KEY": "host-owned-key",
+                },
+            ):
+                config = load_config()
+            self.assertEqual(config.hermes.api_key, "host-owned-key")
+
 
 if __name__ == "__main__":
     unittest.main()

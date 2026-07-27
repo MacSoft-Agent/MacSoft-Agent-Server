@@ -86,7 +86,7 @@ AutoCount business commands still run through the agent/plugin path. The Setting
 
 ## Client execution progress
 
-MacSoft Server provides optional, backward-compatible `activity-v1` SSE progress. The Client still connects only to port 8787, and existing Clients continue receiving the original chat events. See [MacSoft Client Activity Protocol v1](./MACSOFT_CLIENT_ACTIVITY_PROTOCOL_V1.md) for negotiation, ordering, privacy, fallback, and test guidance.
+MacSoft Server provides optional, backward-compatible `activity-v1` SSE progress. The Client still connects only to port 8787, and existing Clients continue receiving the original chat events. See [MacSoft Client Activity Protocol v1](../contracts/MACSOFT_CLIENT_ACTIVITY_PROTOCOL_V1.md) for negotiation, ordering, privacy, fallback, and test guidance.
 
 The Server-owned Client Skill API, Skill ownership/isolation model, generic
 AutoCount validator, retry policy, controlled Sales Invoice procedure, and
@@ -96,7 +96,7 @@ single-run Tool Activity bridge are documented in
 Authenticated session soft deletion, protected live-information boundaries,
 the packaged Tool allowlist, migration/rollback behavior, and pre-packaging
 verification are documented in
-[MacSoft Pre-packaging Hardening](./MACSOFT_PREPACKAGING_HARDENING.md).
+[MacSoft Pre-packaging Hardening](../development/MACSOFT_PREPACKAGING_HARDENING.md).
 
 ## Saving, restart, and rollback
 

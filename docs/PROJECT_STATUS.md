@@ -9,7 +9,7 @@ tests, contracts, or architecture documents.
 
 | Item | Value |
 | --- | --- |
-| Program stage | Stage 4 - collaboration foundation and release preparation |
+| Program stage | Stage 5 - Desktop test baseline complete; awaiting acceptance |
 | Branch | `debug/skill-runtime-c6afbc9` |
 | Commit | `03e66401e06de51afd1cc47d89671f258e899401` |
 | Annotated tag | `baseline-0.1.0-20260727` |
@@ -28,10 +28,15 @@ start of Stage 4.
   generated/runtime material, created four coherent commits, and finished clean.
 - Stage 3 accepted and tagged the development baseline locally. The tag was not
   pushed.
+- Stage 4 established the repository collaboration foundation and the
+  evidence-based release-readiness map.
+- Stage 5 separated renderer, Electron, and packaging-script test ownership,
+  corrected test-only baseline debt, and restored a deterministic Desktop
+  regression gate without changing product behavior.
 - Customer updates are currently installer-managed. A built-in update service
   has not been approved or implemented.
-- Stage 4 may document and assess release readiness but must not fix a release
-  issue or create a Release Candidate.
+- Stage 4 documented and assessed release readiness without fixing release
+  issues or creating a Release Candidate.
 
 ## Verified evidence carried from Stage 2
 
@@ -42,12 +47,17 @@ start of Stage 4.
 - Repository cleanliness and staged/unstaged `git diff --check` passed.
 - Git object verification passed.
 
-The complete Desktop UI suite is not green. After generated JavaScript was
-removed, the TypeScript-based run still had 28 failures and collection errors.
-Confirmed categories include stale branding and model-option expectations,
-outdated component mocks, session and layout assertions, timeouts, and Vitest
-collecting Electron `node:test` files. These failures were not corrected in
-Stage 2 or Stage 4.
+## Stage 5 verification
+
+- Unified Desktop baseline command passed.
+- Renderer/UI: 153 files and 1,211 tests passed.
+- Electron: all 43 files were collected; 373 tests passed, 4 platform-specific
+  tests were explicitly skipped, and 0 failed.
+- Packaging scripts: 9 tests passed.
+- Desktop typecheck and targeted changed-file ESLint passed.
+- No generated JavaScript tests were present and no wrong-runner imports remain.
+- The two Bash syntax checks were skipped because Bash is unavailable on this
+  Windows machine; they remain a Linux verification requirement.
 
 ## Current release-readiness limitations
 
@@ -72,11 +82,11 @@ and acceptance needs.
 
 ## Active objective and next decision
 
-Stage 4 establishes durable collaboration guidance and an evidence-based
-release map. Its recommended Stage 5 task is Desktop test-runner and test
-baseline remediation, without product behavior changes.
+Stage 5 is complete. The next Product Owner decision is whether to accept the
+new HEAD as the development-baseline candidate.
 
-The next Product Owner decision is whether to accept Stage 4 and authorize that
-bounded Stage 5 task. External-release policy also requires later decisions on
-installer signing/trusted distribution and whether installer-only updates are
-acceptable for the first release.
+After acceptance, the recommended next bounded task is clean reproducible
+packaging from the accepted commit. It must not begin automatically. External
+release policy still requires later decisions on installer signing/trusted
+distribution and whether installer-only updates are acceptable for the first
+release.

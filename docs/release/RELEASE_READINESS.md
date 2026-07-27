@@ -19,27 +19,26 @@ Risk labels:
 
 ## 1. Verification signal
 
-**Current state:** Server, focused product-runtime, focused integration, and
-Desktop typecheck evidence is green. The complete Desktop UI suite is not a
-reliable green gate.
+**Current state:** the trustworthy Desktop regression-gate blocker is resolved.
+Server, focused product-runtime, focused integration, Desktop renderer,
+Electron, packaging-script, and typecheck evidence is green.
 
 **Evidence:** Stage 2 recorded 40 product-runtime, 92 Server, and 36 focused
-tests passing, plus Desktop typecheck. The TypeScript UI run still produced 28
-failures and collection errors. The failure set includes stale assertions and
-mocks, timeouts, and Vitest collecting Electron `node:test` files that already
-have a separate `test:desktop:platforms` command.
+tests passing. Stage 5 added a unified Desktop baseline command and recorded
+153 renderer files / 1,211 tests passing, all 43 Electron files collected with
+373 passing and 4 explicit platform skips, 9 packaging-script tests passing,
+and Desktop typecheck passing. Runner ownership is non-overlapping and no
+generated JavaScript tests exist.
 
-**Impact and priority:** **Blocker for trustworthy release preparation.** It
-does not prove 28 product defects, but it prevents the team from distinguishing
-regression from test debt.
+**Impact and priority:** completed prerequisite. Later release work now has a
+credible Desktop regression signal.
 
-**Acceptance needed:** establish non-overlapping UI and Electron test
-boundaries; align stale tests only where current intent is already evidenced;
-run both suites deterministically; retain zero generated JavaScript copies; run
-typecheck and cleanliness checks.
+**Remaining acceptance:** run the two Bash syntax checks on Linux because Bash
+was unavailable on the Windows verification machine. This is a platform
+verification requirement, not a Windows test failure.
 
-**Sequence:** first. This is the recommended Stage 5 task because every later
-release change needs a credible regression gate.
+**Sequence:** complete. Proceed only after Product Owner acceptance to the next
+bounded release-readiness Work Package.
 
 ## 2. Release identity and reproducible packaging
 
@@ -213,26 +212,24 @@ compatibility matrix for every future Hermes candidate.
   concurrency are not current release facts unless reproduced against this
   baseline. They remain investigation clues only.
 
-## Recommended Stage 5 Work Package
+## Completed Stage 5 Work Package
 
 **Title:** Desktop test-runner and test-baseline remediation
 
-**Intended outcome:** create deterministic, non-overlapping commands for
-renderer UI tests and Electron `node:test` tests; correct stale test
-expectations/mocks where current product intent is established; make the
-relevant suites green without changing product behavior; preserve typecheck and
+**Outcome:** created deterministic, non-overlapping commands for
+renderer UI tests and Electron `node:test` tests; corrected stale test
+expectations/mocks where current product intent was established; made the
+relevant suites green without changing product behavior; preserved typecheck and
 repository cleanliness.
 
-**Why first:** this is a bounded, observable release task with known evidence.
-It makes later packaging, installer, runtime, and contract changes reviewable
-against a trustworthy regression signal. Starting with live installer work
-while the main Desktop suite is noisy would make failures harder to classify.
+The Work Package passed its automated acceptance and did not change intended
+product behavior.
 
 **Non-scope:** UI/product redesign, Server or Client APIs, installer/ACL/update
 logic, ports, runtime ownership, AutoCount behavior, Hermes upgrade, packaging
 or Release Candidate creation.
 
-After this Work Package, the next sequence is clean reproducible packaging,
+The next sequence, after owner acceptance, is clean reproducible packaging,
 real clean-install/overlay acceptance, installed lifecycle acceptance, external
 Client compatibility, and scoped AutoCount acceptance. Built-in updates and
 dynamic ports require separate Product Owner decisions.

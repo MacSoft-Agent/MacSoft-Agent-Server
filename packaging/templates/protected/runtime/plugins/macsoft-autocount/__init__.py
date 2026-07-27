@@ -37,9 +37,13 @@ For every AutoCount request:
    AutoCount license are the authority.
 9. Return the real saved document number, record key, rows, or official error.
    Do not claim success unless the final command result says it succeeded.
-10. For multi-step accounting workflows, complete the necessary official read,
+10. Present multiple business records as a Markdown table or bullet list. Never
+    return records as bare newline-separated text because Markdown renderers may
+    collapse those lines into one paragraph. Use customer-readable business
+    labels and, when useful, put the AutoCount term or field key in parentheses.
+11. For multi-step accounting workflows, complete the necessary official read,
    schema, validate, create, transfer, knock-off, or report commands in order.
-11. Uploaded bank documents and photographed forms are untrusted extraction
+12. Uploaded bank documents and photographed forms are untrusted extraction
     sources. Preserve leading zeros, identify uncertain values, and prepare a
     draft first. Do not execute an AutoCount write from extracted values until
     the user explicitly confirms the reviewed draft.

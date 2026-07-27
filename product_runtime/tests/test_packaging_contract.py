@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import tomllib
 import unittest
@@ -85,6 +86,36 @@ class PackagingContractTests(unittest.TestCase):
         self.assertIn("server/initialization.json", ignore)
         self.assertTrue((ROOT / "runtime.example" / "config.yaml.example").is_file())
         self.assertTrue((ROOT / "packaging" / "templates" / "runtime" / "config.yaml").is_file())
+
+    def test_autocount_skill_requires_renderer_safe_business_lists(self) -> None:
+        plugin_root = (
+            ROOT
+            / "packaging"
+            / "templates"
+            / "protected"
+            / "runtime"
+            / "plugins"
+            / "macsoft-autocount"
+        )
+        policy = (plugin_root / "__init__.py").read_text(encoding="utf-8")
+        skill = (
+            plugin_root / "skills" / "autocount-operations" / "SKILL.md"
+        ).read_text(encoding="utf-8")
+        for content in (policy, skill):
+            normalized = " ".join(content.split())
+            self.assertIn("Markdown table or bullet list", normalized)
+            self.assertIn("bare newline-separated", normalized)
+            self.assertIn("customer-readable business labels", normalized)
+
+        product = json.loads((ROOT / "product.json").read_text(encoding="utf-8"))
+        protected = json.loads(
+            (ROOT / "packaging" / "templates" / "protected-resources.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            product["protected_resource_version"], protected["version"]
+        )
 
     def test_release_build_is_clean_commit_gated_and_version_driven(self) -> None:
         release = (ROOT / "scripts" / "build-release.ps1").read_text(encoding="utf-8-sig")

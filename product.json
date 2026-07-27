@@ -7,6 +7,6 @@
   "build_date": "2026-07-22",
   "build_id": "macsoft-agent-0.1.0-stable.20260722.1",
   "data_schema_version": 1,
-  "protected_resource_version": 1,
+  "protected_resource_version": 2,
   "update_manifest_url": null
 }

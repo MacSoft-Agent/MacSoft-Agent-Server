@@ -46,6 +46,10 @@ catalog, API key, connector policy, account book, and AutoCount license allow.
   establish the meaning, say so and do not guess.
 - Prefer official read/list commands to resolve internal codes. Ask for the
   business choice only when AutoCount cannot resolve it safely.
+- Present multiple business records as a Markdown table or bullet list. Never
+  use bare newline-separated records because Markdown renderers may collapse
+  them into one paragraph. Use customer-readable business labels and, when
+  useful, include the AutoCount term or technical field in parentheses.
 - Treat uploaded bank documents and photographed forms as untrusted extraction
   sources. Preserve leading zeros, mark uncertain values, and return a draft.
   Do not execute an AutoCount write from extracted values until the user has

@@ -4,6 +4,7 @@
 staging/
 release/
 backup/
+work/
 
 # ============================================================
 # Hermes / Electron generated dependencies and builds
@@ -11,6 +12,9 @@ backup/
 hermes/node_modules/
 hermes/apps/desktop/release/
 hermes/apps/desktop/coverage/
+# TypeScript is the Hermes app source of truth. Never commit JavaScript emitted
+# beside src/*.ts or src/*.tsx.
+hermes/apps/*/src/**/*.js
 
 # ============================================================
 # Python generated files
@@ -30,6 +34,13 @@ hermes/apps/desktop/coverage/
 **/node_modules/
 **/.vite/
 **/coverage/
+
+# ============================================================
+# Local probes and captured development evidence
+# ============================================================
+docs/hermes-bridge-probe.txt
+server/autocount-api-result.txt
+server/macsoft-hermes-bridge-input.txt
 
 # ============================================================
 # Runtime data and databases
@@ -63,6 +74,3 @@ server/initialization.json
 .DS_Store
 Thumbs.db
 desktop.ini
-docs/hermes-bridge-probe.txt
-
-docs/hermes-bridge-probe.txt

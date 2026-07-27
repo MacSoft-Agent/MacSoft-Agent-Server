@@ -2,7 +2,7 @@
 
 ## Status
 
-Complete - awaiting Product Owner acceptance
+Complete - published on cleaned history
 
 ## Owner
 
@@ -189,23 +189,20 @@ not materially improve the current lightweight workflow.
 
 ## Remaining risks
 
-- Revoke/rotate credentials represented by historical `runtime/auth.json`
-  before any further publication. Product Owner approval is required before
-  history remediation or force-pushing rewritten history.
-- The GitHub Actions workflow is locally parsed and its commands are verified,
-  but cannot run on GitHub until the commits are safely published.
-- Ubuntu-hosted execution remains unobserved locally; Git Bash executed both
-  Bash syntax tests, and the Ubuntu job is designed to provide the durable
-  Linux signal.
+- Contributors with an older clone must discard the old history and clone the
+  cleaned repository again; merging old branches could reintroduce the removed
+  object.
+- GitHub branch protection and secret-scanning availability depend on the
+  private-repository plan and authenticated API capabilities.
 - Dependency audit and Desktop lint debt require separate scoped work.
 - CODEOWNERS requires Product Owner-approved GitHub users or teams.
 
 ## Final status
 
-All Stage 6 repository-preparation criteria are met locally. Remote
-collaboration must not be activated until the historical credential exposure
-is contained. This result changes no product behavior, API, version, Build ID,
-Hermes baseline, accepted baseline tag, or GitHub setting.
+Stage 6 collaboration preparation and credential containment are complete on
+the cleaned published history. This result changes no product behavior, API,
+version, Build ID, or Hermes baseline. The retired historical tag is replaced
+by the safe collaboration baseline recorded below.
 
 ## Related commits and documents
 
@@ -214,3 +211,40 @@ Hermes baseline, accepted baseline tag, or GitHub setting.
 - Decision records: none; no durable product architecture decision changed
 - Status: `docs/PROJECT_STATUS.md`
 - Release evidence: `docs/release/RELEASE_READINESS.md`
+
+## Credential remediation and GitHub enablement
+
+The Product Owner authorized coordinated history replacement after
+`runtime/auth.json` was confirmed to contain OpenAI Codex OAuth access and
+refresh credentials. The Product Owner later confirmed revocation and provider
+re-login.
+
+The history was rewritten in an isolated clone, the credential path was removed
+from every retained reference, reflogs and the remediation clone object store
+were pruned, and the cleaned history replaced GitHub `main`. The old local tag
+`baseline-0.1.0-20260727` was not published and is retired.
+
+Important history mappings:
+
+| Historical commit | Cleaned equivalent |
+| --- | --- |
+| `c6afbc96c4b340b69fa06a96ae1e44a9d4ab5a7f` | `d19fc1b184bcc2674206bcad8b24f484ec2876c9` |
+| `03e66401e06de51afd1cc47d89671f258e899401` | `db56769544ac281457e43dc7bdcb607841fef9d2` |
+| `a41ca104e815aabdce6883be058a92126b5889d1` | `6f3e5ce7e121e38764cf40d0a5d3488beb106498` |
+| `0593a73797a890e7d0620c9321bb144bdbbd85ed` | `cef029de08f84ec1ac1c9ae858ae3b805b9e3e1e` |
+
+The historical and cleaned equivalents have identical trees. Subsequent
+changes only made hosted validation reproducible and corrected test-only
+Windows path comparisons; no product runtime behavior, API, schema, installer,
+port, AutoCount rule, version, Build ID, or Hermes pin changed.
+
+GitHub Actions run `30247652261` passed all three required source-validation
+jobs on the cleaned history:
+
+- Repository hygiene
+- Windows contributor baseline
+- Linux Electron contracts
+
+The accepted safe development tag is
+`baseline-0.1.0-collaboration-safe-20260727`. It marks a collaboration
+baseline, not production release approval.

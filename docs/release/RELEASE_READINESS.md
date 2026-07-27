@@ -2,8 +2,8 @@
 
 Assessment date: 2026-07-27
 
-Baseline: `baseline-0.1.0-20260727` /
-`03e66401e06de51afd1cc47d89671f258e899401`
+Baseline: `baseline-0.1.0-collaboration-safe-20260727` (resolve the
+annotated tag for the exact commit)
 
 This document maps evidence and missing acceptance. It is not a release
 approval and does not claim that an installer built from this baseline exists.
@@ -27,8 +27,10 @@ Electron, packaging-script, and typecheck evidence is green.
 tests passing. Stage 5 added a unified Desktop baseline command and recorded
 153 renderer files / 1,211 tests passing, all 43 Electron files collected with
 373 passing and 4 explicit platform skips, 9 packaging-script tests passing,
-and Desktop typecheck passing. Runner ownership is non-overlapping and no
-generated JavaScript tests exist.
+and Desktop typecheck passing. GitHub Actions run `30247652261` passed
+Repository hygiene, Windows contributor baseline, and Linux Electron
+contracts on the cleaned published history. Runner ownership is
+non-overlapping and no generated JavaScript tests exist.
 
 **Impact and priority:** completed prerequisite. Later release work now has a
 credible Desktop regression signal.
@@ -206,11 +208,13 @@ request template, and minimum Windows/Ubuntu GitHub Actions validation. An
 isolated clone restored Python and Node dependencies and passed product-runtime,
 Server, Desktop, script, typecheck, Bash syntax, and repository-hygiene checks.
 
-**Security finding:** historical `runtime/auth.json` contains likely credential
-material, and a commit containing it is an ancestor of the currently published
-GitHub `main`. The current tree no longer tracks the file and `runtime/` is
-ignored, but deletion from the current tree does not remove historical
-exposure.
+**Security remediation:** historical `runtime/auth.json` contained OpenAI
+Codex OAuth access and refresh credentials. Under Product Owner authorization,
+the file was removed from every retained history reference, the cleaned
+history replaced published `main`, the old baseline tag was retired, and the
+historical credential blob is not reachable from the cleaned repository. The
+Product Owner confirmed revocation and provider re-login. Values were never
+copied into documentation or logs.
 
 **Dependency finding:** locked `npm ci` reported 10 audit findings: 1 low,
 8 high, and 1 critical. The affected dependency graph was not changed in
@@ -222,19 +226,17 @@ not yet a valid required gate.
 
 **Impact and priority:**
 
-- credential revocation/rotation before further source publication:
-  **Blocker**;
-- deciding and executing history remediation with coordinated force-push:
-  **High**, Product Owner-controlled;
+- credential containment and history remediation: **Complete** for the retained
+  repository references; collaborators with an older clone must discard the
+  old history and clone again;
 - dependency audit triage before external release: **High**;
 - Desktop lint baseline remediation: **Later**, unless the owner makes lint a
   first-release gate.
 
-**Acceptance needed:** identify every credential category represented by the
-historical file without redistributing values; revoke/rotate it; determine
-whether the GitHub repository was public or otherwise accessible; choose a
-history-remediation and collaborator-notification plan; then publish the
-accepted commits and observe the new GitHub Actions workflow on a pull request.
+**Acceptance needed:** configure protected `main`, required checks, and secret
+scanning where the GitHub plan and repository permissions support them; assign
+real reviewer identities before adding CODEOWNERS; retain dependency-audit
+triage as separate release work.
 
 ## Confirmed boundaries and unsupported older conclusions
 

@@ -8,8 +8,9 @@ AutoCount integration, packaging, and contracts used by the separately owned
 Thin Client.
 
 - Repository root: `C:\MacSoft-Agent-Github\MacSoft-Agent`
-- Accepted baseline tag: `baseline-0.1.0-20260727`
-- Accepted baseline commit: `03e66401e06de51afd1cc47d89671f258e899401`
+- Accepted baseline tag: `baseline-0.1.0-collaboration-safe-20260727`
+- Accepted baseline commit: resolve the annotated tag above; see
+  `docs/PROJECT_STATUS.md` for current evidence
 - Product metadata authority: `product.json`
 - Current status: `docs/PROJECT_STATUS.md`
 

@@ -28,12 +28,14 @@ class ProductMetadataAndPathsTests(unittest.TestCase):
     def test_packaged_paths_separate_program_and_mutable_data(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             base = Path(temp)
-            paths = resolve_packaged_paths(base / "Program", base / "Data")
+            program_root = (base / "Program").resolve()
+            data_root = (base / "Data").resolve()
+            paths = resolve_packaged_paths(program_root, data_root)
             self.assertTrue(paths.is_packaged)
-            self.assertTrue(paths.python_executable.is_relative_to(base / "Program"))
-            self.assertTrue(paths.runtime_root.is_relative_to(base / "Data"))
-            self.assertTrue(paths.server_database.is_relative_to(base / "Data"))
-            self.assertFalse(paths.runtime_root.is_relative_to(base / "Program"))
+            self.assertTrue(paths.python_executable.is_relative_to(program_root))
+            self.assertTrue(paths.runtime_root.is_relative_to(data_root))
+            self.assertTrue(paths.server_database.is_relative_to(data_root))
+            self.assertFalse(paths.runtime_root.is_relative_to(program_root))
 
     def test_manifest_url_must_be_https_or_null(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

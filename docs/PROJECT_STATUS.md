@@ -9,7 +9,7 @@ tests, contracts, or architecture documents.
 
 | Item | Value |
 | --- | --- |
-| Program stage | Stage 5 - Desktop test baseline complete; awaiting acceptance |
+| Program stage | Stage 6 complete locally; awaiting acceptance and safe publication |
 | Branch | `debug/skill-runtime-c6afbc9` |
 | Commit | `03e66401e06de51afd1cc47d89671f258e899401` |
 | Annotated tag | `baseline-0.1.0-20260727` |
@@ -20,6 +20,10 @@ tests, contracts, or architecture documents.
 
 The tag resolved to the accepted commit and the working tree was clean at the
 start of Stage 4.
+
+The Product Owner separately approved
+`a41ca104e815aabdce6883be058a92126b5889d1` as the starting development state
+for Stage 6. The existing annotated baseline tag was deliberately not moved.
 
 ## Program history and owner decisions
 
@@ -33,6 +37,10 @@ start of Stage 4.
 - Stage 5 separated renderer, Electron, and packaging-script test ownership,
   corrected test-only baseline debt, and restored a deterministic Desktop
   regression gate without changing product behavior.
+- Stage 6 added contributor onboarding, locked dependency bootstrap, a unified
+  contributor verification command, pull-request guidance, and minimum
+  Windows/Linux GitHub Actions validation. An isolated clean clone restored
+  dependencies and passed the complete source baseline.
 - Customer updates are currently installer-managed. A built-in update service
   has not been approved or implemented.
 - Stage 4 documented and assessed release readiness without fixing release
@@ -61,6 +69,14 @@ start of Stage 4.
 
 ## Current release-readiness limitations
 
+- A historical `runtime/auth.json` with likely credential material exists in
+  an ancestor of the published GitHub `main`. Relevant credentials must be
+  revoked/rotated before further publication; history remediation requires
+  Product Owner approval.
+- Fresh `npm ci` reported 10 dependency audit findings: 1 low, 8 high, and
+  1 critical. They have not been remediated or risk-accepted.
+- Full Desktop lint is not green: 23 errors and 240 warnings remain as separate
+  baseline debt.
 - No release package has been built from the accepted baseline.
 - Clean installation, overlay upgrade, ProgramData preservation, uninstall and
   explicit purge behavior have automated contracts but no current real-machine
@@ -82,11 +98,9 @@ and acceptance needs.
 
 ## Active objective and next decision
 
-Stage 5 is complete. The next Product Owner decision is whether to accept the
-new HEAD as the development-baseline candidate.
+Stage 6 is complete locally. The Product Owner must first contain the historical
+credential exposure, then decide whether to accept and publish the Stage 6
+HEAD, configure protected `main`, and assign reviewer identities.
 
-After acceptance, the recommended next bounded task is clean reproducible
-packaging from the accepted commit. It must not begin automatically. External
-release policy still requires later decisions on installer signing/trusted
-distribution and whether installer-only updates are acceptable for the first
-release.
+Clean reproducible packaging remains the next release-readiness task after a
+safe published development baseline exists. It must not begin automatically.

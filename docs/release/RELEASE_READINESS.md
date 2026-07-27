@@ -198,13 +198,52 @@ signature and SHA-256 verification; controlled installer upgrade/rollback
 instructions; proof that packaged code cannot fetch or move the Hermes pin;
 compatibility matrix for every future Hermes candidate.
 
+## 8. Collaboration, source publication, and supply-chain hygiene
+
+**Current state:** Stage 6 created concise contributor onboarding, locked
+dependency bootstrap, a complete Windows source-verification command, a pull
+request template, and minimum Windows/Ubuntu GitHub Actions validation. An
+isolated clone restored Python and Node dependencies and passed product-runtime,
+Server, Desktop, script, typecheck, Bash syntax, and repository-hygiene checks.
+
+**Security finding:** historical `runtime/auth.json` contains likely credential
+material, and a commit containing it is an ancestor of the currently published
+GitHub `main`. The current tree no longer tracks the file and `runtime/` is
+ignored, but deletion from the current tree does not remove historical
+exposure.
+
+**Dependency finding:** locked `npm ci` reported 10 audit findings: 1 low,
+8 high, and 1 critical. The affected dependency graph was not changed in
+Stage 6.
+
+**Quality finding:** complete Desktop lint currently reports 23 errors and
+240 warnings. The verified Desktop tests and typecheck are green, but lint is
+not yet a valid required gate.
+
+**Impact and priority:**
+
+- credential revocation/rotation before further source publication:
+  **Blocker**;
+- deciding and executing history remediation with coordinated force-push:
+  **High**, Product Owner-controlled;
+- dependency audit triage before external release: **High**;
+- Desktop lint baseline remediation: **Later**, unless the owner makes lint a
+  first-release gate.
+
+**Acceptance needed:** identify every credential category represented by the
+historical file without redistributing values; revoke/rotate it; determine
+whether the GitHub repository was public or otherwise accessible; choose a
+history-remediation and collaborator-notification plan; then publish the
+accepted commits and observe the new GitHub Actions workflow on a pull request.
+
 ## Confirmed boundaries and unsupported older conclusions
 
 - A built-in updater is not partially working; it is deliberately unavailable.
 - Port handling is not dynamic; current behavior is detect-and-fail.
 - Automated installer contract tests do not equal a successful real Windows
   installation or overlay upgrade.
-- Passing focused tests does not make the complete Desktop UI suite green.
+- Passing source suites does not prove installed-product or external Client
+  acceptance.
 - Historical architecture reports contain point-in-time absolute paths, build
   IDs, staging names, and test counts. Current metadata and code take
   precedence.

@@ -28,7 +28,8 @@ class ProductPathTests(unittest.TestCase):
             config_path.write_text(CONFIG, encoding="utf-8")
             with patch.dict("os.environ", {"MACSOFT_SERVER_CONFIG": str(config_path)}):
                 config = load_config()
-            self.assertEqual(_resolve_db_path(config), config_path.parent / "data" / "macsoft-server.db")
+            expected_db_path = (config_path.parent / "data" / "macsoft-server.db").resolve()
+            self.assertEqual(_resolve_db_path(config), expected_db_path)
 
     def test_product_version_comes_from_authoritative_metadata(self) -> None:
         root = Path(__file__).resolve().parents[2]

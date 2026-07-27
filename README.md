@@ -8,6 +8,7 @@ installer output.
 
 ## Start here
 
+- [Contributor guide](CONTRIBUTING.md)
 - [Documentation map](docs/README.md)
 - [System architecture](docs/architecture/MACSOFT_AGENT_PRODUCT_FOUNDATION.md)
 - [Runtime operations](docs/operations/HERMES_RUNTIME_OPERATIONS.md)
@@ -34,7 +35,13 @@ and Server Desktop, not by these batch files.
 ## Local development
 
 Dependencies are intentionally not stored in Git. A checkout must restore the
-locked Python and Node environments before use. Once dependencies exist, run:
+locked Python and Node environments before use:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\bootstrap-development.ps1
+```
+
+Once dependencies exist, run:
 
 ```powershell
 cd C:\path\to\MacSoft-Agent
@@ -69,10 +76,7 @@ $env:PYTHONPATH = "$(Join-Path $PWD 'product_runtime');$(Join-Path $PWD 'server'
 Run Desktop checks from the repository root:
 
 ```powershell
-Push-Location .\hermes
-npm.cmd run typecheck --workspace apps/desktop
-npm.cmd run test:ui --workspace apps/desktop
-Pop-Location
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-development.ps1
 ```
 
 ## Release build

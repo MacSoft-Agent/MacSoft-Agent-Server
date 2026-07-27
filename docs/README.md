@@ -1,5 +1,9 @@
 # MacSoft Agent documentation
 
+New contributors should begin with the root
+[`CONTRIBUTING.md`](../CONTRIBUTING.md), then use this map for deeper product
+context.
+
 This is the navigation entry point for developers, reviewers, and Codex. Current
 code, schemas, tests, lock files, and `product.json` remain the primary
 authorities.

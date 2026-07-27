@@ -24,9 +24,11 @@ packaging-clone name or other release preconditions.
 - `hermes/`: pinned upstream-derived AI runtime and Server Desktop. The
   `hermes/AGENTS.md` instructions also apply inside this subtree and take
   precedence for Hermes-specific work; do not replace that file.
-- `host/`: Windows lifecycle and ownership of the AI Service, Server, and
-  configuration backend.
-- `plugins/`: approved runtime integrations, including AutoCount.
+- `product_runtime/`: Windows Host lifecycle and ownership of the AI Service,
+  Server, configuration backend, installed paths, and protected resources.
+- `hermes/plugins/` and `packaging/templates/protected/runtime/plugins/`:
+  approved runtime integrations and protected product plugin templates,
+  including AutoCount.
 - `packaging/` and `scripts/`: staging, installer, maintenance, and release
   workflows.
 - `docs/contracts/` and `docs/handoffs/`: cross-component contracts and work

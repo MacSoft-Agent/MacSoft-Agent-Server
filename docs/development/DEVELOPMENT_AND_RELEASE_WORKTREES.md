@@ -2,7 +2,8 @@
 
 ## Source test workspace
 
-`C:\hermes-packaging\server\MacSoft-Agent` is the only editable source workspace.
+Use a normal clone of the authoritative GitHub repository as the editable
+source workspace. The clone path is not part of product behavior.
 
 Run the complete source test product with:
 
@@ -21,9 +22,10 @@ to a release payload. Authoritative defaults live in `runtime.example` and
 
 ## Packaging clone
 
-`C:\hermes-packaging\server\MacSoft-Agent-Packaging` is a separate clean clone
-of the GitHub repository. It is not an editable source workspace. Fetch the
-accepted source commit and check it out exactly:
+`MacSoft-Agent-Packaging` is a separate clean clone of the GitHub repository.
+The exact directory name is required by the current release script. It is not
+an editable source workspace. Fetch the accepted source commit and check it out
+exactly:
 
 ```powershell
 git fetch origin

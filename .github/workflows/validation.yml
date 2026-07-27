@@ -1,0 +1,92 @@
+name: Repository validation
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validation-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "24"
+  PYTHON_VERSION: "3.12.13"
+  UV_VERSION: "0.11.16"
+
+jobs:
+  repository-hygiene:
+    name: Repository hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Check tracked repository structure
+        shell: pwsh
+        run: ./scripts/check-repository-cleanliness.ps1
+
+      - name: Check committed whitespace
+        shell: bash
+        run: git log -1 --check
+
+  windows-baseline:
+    name: Windows contributor baseline
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: hermes/package-lock.json
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: hermes/uv.lock
+
+      - name: Restore locked dependencies
+        shell: pwsh
+        run: ./scripts/bootstrap-development.ps1 -PythonVersion $env:PYTHON_VERSION
+
+      - name: Run contributor verification
+        shell: pwsh
+        run: ./scripts/verify-development.ps1
+
+  linux-electron:
+    name: Linux Electron contracts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: hermes/package-lock.json
+
+      - name: Restore locked Node dependencies
+        working-directory: hermes
+        run: npm ci
+
+      - name: Run Electron contracts, including Bash syntax checks
+        working-directory: hermes
+        run: npm run test:electron --workspace apps/desktop

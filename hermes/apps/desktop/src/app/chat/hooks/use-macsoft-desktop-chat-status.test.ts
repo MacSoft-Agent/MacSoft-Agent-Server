@@ -1,25 +1,24 @@
-import assert from 'node:assert/strict'
-import { test } from 'node:test'
+import { expect, test } from 'vitest'
 
 import { resolveMacSoftPromptCapabilities } from './use-macsoft-desktop-chat-status'
 
 test('MacSoft readiness controls editing independently from submission', () => {
-  assert.deepEqual(resolveMacSoftPromptCapabilities(true, 'ready', false), {
+  expect(resolveMacSoftPromptCapabilities(true, 'ready', false)).toEqual({
     canEditPrompt: true,
     canSubmitPrompt: false
   })
-  assert.deepEqual(resolveMacSoftPromptCapabilities(true, 'unavailable', true), {
+  expect(resolveMacSoftPromptCapabilities(true, 'unavailable', true)).toEqual({
     canEditPrompt: false,
     canSubmitPrompt: false
   })
 })
 
 test('upstream Hermes behavior still follows native Gateway readiness', () => {
-  assert.deepEqual(resolveMacSoftPromptCapabilities(false, 'idle', true), {
+  expect(resolveMacSoftPromptCapabilities(false, 'idle', true)).toEqual({
     canEditPrompt: true,
     canSubmitPrompt: true
   })
-  assert.deepEqual(resolveMacSoftPromptCapabilities(false, 'ready', false), {
+  expect(resolveMacSoftPromptCapabilities(false, 'ready', false)).toEqual({
     canEditPrompt: false,
     canSubmitPrompt: false
   })

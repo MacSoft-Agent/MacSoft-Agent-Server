@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as HermesApi from '@/hermes'
 import { queryClient } from '@/lib/query-client'
 
+import { SkillsView } from './index'
+
 const getSkills = vi.fn()
 const getToolsets = vi.fn()
 const toggleSkill = vi.fn()
@@ -49,15 +51,13 @@ function toolset(overrides: Record<string, unknown> = {}) {
 }
 
 function renderSkills() {
-  return import('./index').then(({ SkillsView }) =>
-    render(
-      // SkillsView reads skills/toolsets via useQuery, so it needs a provider.
-      <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={['/skills?tab=toolsets']}>
-          <SkillsView />
-        </MemoryRouter>
-      </QueryClientProvider>
-    )
+  return render(
+    // SkillsView reads skills/toolsets via useQuery, so it needs a provider.
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={['/skills?tab=toolsets']}>
+        <SkillsView />
+      </MemoryRouter>
+    </QueryClientProvider>
   )
 }
 
@@ -78,7 +78,7 @@ afterEach(() => {
 
 describe('SkillsView toolset management', () => {
   it('renders a switch for each toolset and toggles it off', async () => {
-    await renderSkills()
+    renderSkills()
 
     const sw = await screen.findByRole('switch', { name: 'Toggle Web Search toolset' })
     expect(sw.getAttribute('aria-checked')).toBe('true')
@@ -91,7 +91,7 @@ describe('SkillsView toolset management', () => {
   it('renders toolset titles without leading emoji', async () => {
     getToolsets.mockResolvedValue([toolset({ name: 'cronjob', label: '⏰ Cron Jobs', description: 'cron tools' })])
 
-    await renderSkills()
+    renderSkills()
 
     // The label renders in both the row and the auto-selected detail header, so
     // assert via the switch's (emoji-stripped) accessible name and the absence
@@ -104,7 +104,7 @@ describe('SkillsView toolset management', () => {
     // The master-detail UI dropped the resting "Configured" pill and the
     // "Configure" expander: the detail column auto-selects the first toolset
     // and renders its config panel directly, which fetches on mount.
-    await renderSkills()
+    renderSkills()
 
     await screen.findByRole('switch', { name: 'Toggle Web Search toolset' })
     await waitFor(() => expect(getToolsetConfig).toHaveBeenCalledWith('web'))

@@ -400,7 +400,7 @@ describe('assistant-ui streaming renderer', () => {
   it('renders assistant text incrementally before completion', async () => {
     const { container } = render(<StreamingHarness />)
 
-    expect(screen.getByRole('status', { name: 'Hermes is loading a response' })).toBeTruthy()
+    expect(screen.getByRole('status', { name: 'MacSoft Agent is loading a response' })).toBeTruthy()
 
     await wait(80)
 

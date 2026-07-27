@@ -18,7 +18,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -36,8 +36,9 @@ import {
   unpackedDirName
 } from './update-relaunch'
 
-const ROOT = '/home/u/.hermes/hermes-agent'
+const ROOT = path.join(path.parse(process.cwd()).root, 'home', 'u', '.hermes', 'hermes-agent')
 const UNPACKED = path.join(ROOT, 'apps', 'desktop', 'release', 'linux-unpacked')
+const BASH_AVAILABLE = spawnSync('bash', ['--version'], { stdio: 'ignore' }).status === 0
 
 // ---------------------------------------------------------------------------
 // 1) The execPath split — the heart of the GUI/backend skew guard.
@@ -187,7 +188,7 @@ test('shellQuote neutralizes single quotes and metacharacters', () => {
   assert.equal(shellQuote('$(rm -rf /)'), `'$(rm -rf /)'`)
 })
 
-test('buildRelaunchScript embeds pid/exec/args/env/cwd and is valid bash', () => {
+test('buildRelaunchScript embeds pid/exec/args/env/cwd', () => {
   const script = buildRelaunchScript({
     pid: 4242,
     execPath: '/home/u/.hermes/hermes-agent/apps/desktop/release/linux-unpacked/Hermes',
@@ -207,7 +208,17 @@ test('buildRelaunchScript embeds pid/exec/args/env/cwd and is valid bash', () =>
   assert.match(script, /cd '\/home\/u\/work dir'/)
   assert.match(script, /exec '.*\/linux-unpacked\/Hermes' 'hermes:\/\/open\/agent\/42' '--note=it'\\''s fine'/)
 
-  // It must be syntactically valid bash (`bash -n`). Write to a temp file and lint.
+})
+
+test('buildRelaunchScript is valid bash', { skip: !BASH_AVAILABLE }, () => {
+  const script = buildRelaunchScript({
+    pid: 4242,
+    execPath: '/home/u/.hermes/hermes-agent/apps/desktop/release/linux-unpacked/Hermes',
+    args: ['hermes://open/agent/42', "--note=it's fine"],
+    env: { HERMES_HOME: '/home/u/.hermes', HERMES_DESKTOP_REMOTE_URL: 'http://box:9119' },
+    cwd: '/home/u/work dir'
+  })
+
   const tmp = path.join(os.tmpdir(), `hermes-relaunch-test-${Date.now()}.sh`)
   fs.writeFileSync(tmp, script)
 
@@ -218,7 +229,19 @@ test('buildRelaunchScript embeds pid/exec/args/env/cwd and is valid bash', () =>
   }
 })
 
-test('buildRelaunchScript with no args/env still lints clean', () => {
+test('buildRelaunchScript with no args/env has a clean exec line', () => {
+  const script = buildRelaunchScript({
+    pid: 1,
+    execPath: '/opt/Hermes/Hermes',
+    args: [],
+    env: {},
+    cwd: ''
+  })
+
+  assert.match(script, /exec '\/opt\/Hermes\/Hermes'\n/)
+})
+
+test('buildRelaunchScript with no args/env still lints clean', { skip: !BASH_AVAILABLE }, () => {
   const script = buildRelaunchScript({
     pid: 1,
     execPath: '/opt/Hermes/Hermes',
@@ -235,7 +258,4 @@ test('buildRelaunchScript with no args/env still lints clean', () => {
   } finally {
     fs.rmSync(tmp, { force: true })
   }
-
-  // exec line has no trailing args.
-  assert.match(script, /exec '\/opt\/Hermes\/Hermes'\n/)
 })

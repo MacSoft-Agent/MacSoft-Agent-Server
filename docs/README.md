@@ -65,6 +65,9 @@ Release scripts and installer source remain authoritative over prose.
 high-value tasks. Small low-risk tasks may use a lighter report. The template is
 not a general backlog.
 
+- `work-packages/WP-003-hermes-compatibility.md` - current Hermes compatibility
+  investigation, evidence, risks, and gated implementation scope
+
 ## Decisions
 
 `decisions/` is for durable architecture decisions that future developers
@@ -75,6 +78,8 @@ should not unknowingly reverse. It is not for ordinary bug-fix notes.
 `contracts/` contains versioned cross-component behavior contracts.
 
 - `MACSOFT_CLIENT_ACTIVITY_PROTOCOL_V1.md`
+- `MACSOFT_HERMES_COMPATIBILITY_CONTRACT.md` - code-derived Host, Desktop,
+  Server, and Hermes runtime boundaries
 
 ## Handoffs
 
@@ -95,3 +100,6 @@ status.
 `reference/` contains generated or point-in-time inventories such as Hermes API
 routes and runtime inventories. Regenerate them for a new Hermes baseline; do
 not treat them as permanent API contracts.
+
+- `MACSOFT_HERMES_PATCH_INVENTORY.md` - point-in-time comparison with the
+  pinned upstream Hermes commit for upgrade reconciliation

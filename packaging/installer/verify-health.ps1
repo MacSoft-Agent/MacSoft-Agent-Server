@@ -20,7 +20,18 @@ while ([DateTime]::UtcNow -lt $deadline) {
 
     $aiHealthy = $false
     $serverHealthy = $false
+    $configHealthy = $false
     $controlHealthy = $false
+
+    try {
+        $config = Invoke-RestMethod -Uri 'http://127.0.0.1:8643/api/status' -Method Get -TimeoutSec 3
+        $configHealthy = $config.runtime_mode -eq 'config-only'
+        if (-not $configHealthy) {
+            $lastState = 'Configuration backend identity check failed.'
+        }
+    } catch {
+        $lastState = 'Configuration backend health is not ready.'
+    }
 
     try {
         $ai = Invoke-RestMethod -Uri 'http://127.0.0.1:8642/health' -Method Get -TimeoutSec 3
@@ -57,8 +68,8 @@ while ([DateTime]::UtcNow -lt $deadline) {
         $lastState = 'Host control endpoint is not ready.'
     }
 
-    if ($aiHealthy -and $serverHealthy -and $controlHealthy) {
-        Write-Output 'MacSoft Agent Host, AI Service, and MacSoft Server are healthy.'
+    if ($configHealthy -and $aiHealthy -and $serverHealthy -and $controlHealthy) {
+        Write-Output 'MacSoft Agent Host, configuration backend, AI Service, and MacSoft Server are healthy.'
         exit 0
     }
 

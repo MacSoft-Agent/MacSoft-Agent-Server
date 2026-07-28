@@ -67,6 +67,8 @@ not a general backlog.
 
 - `work-packages/WP-003-hermes-compatibility.md` - current Hermes compatibility
   investigation, evidence, risks, and gated implementation scope
+- `work-packages/WP-004-built-in-update.md` - trusted installer update scope,
+  verification evidence, and remaining installed-product gates
 
 ## Decisions
 
@@ -80,6 +82,8 @@ should not unknowingly reverse. It is not for ordinary bug-fix notes.
 - `MACSOFT_CLIENT_ACTIVITY_PROTOCOL_V1.md`
 - `MACSOFT_HERMES_COMPATIBILITY_CONTRACT.md` - code-derived Host, Desktop,
   Server, and Hermes runtime boundaries
+- `MACSOFT_UPDATE_CONTRACT.md` - signed release, download, installer,
+  persistence, rollback, and acceptance boundary
 
 ## Handoffs
 

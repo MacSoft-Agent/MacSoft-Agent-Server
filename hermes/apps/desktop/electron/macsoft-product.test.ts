@@ -32,6 +32,7 @@ test('authoritative metadata is loaded from the product root', () => {
   assert.equal(metadata.runtime_contract_version, 1)
   assert.equal(metadata.runtime_metadata_schema_version, 1)
   assert.equal(metadata.update_manifest_url, null)
+  assert.equal(metadata.update_manifest_public_key, null)
 })
 
 test('packaged runtime home is ProgramData and never LocalAppData', () => {

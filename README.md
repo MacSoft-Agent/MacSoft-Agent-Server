@@ -37,6 +37,11 @@ and Server Desktop, not by these batch files.
 Dependencies are intentionally not stored in Git. A checkout must restore the
 locked Python and Node environments before use:
 
+New contributors should follow the complete
+[Fresh Clone Development Setup](docs/development/FRESH_CLONE_SETUP.md), which
+covers prerequisites, dependency restoration, startup, verification, local
+configuration, and common failures.
+
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\bootstrap-development.ps1
 ```
@@ -81,12 +86,23 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-develop
 
 ## Release build
 
-Release creation is version-driven and clean-commit gated. Use the repository
-release script instead of manually copying source or dependencies:
+Release creation is version-driven and clean-commit gated. It must run from a
+separate clean clone whose directory name is exactly
+`MacSoft-Agent-Packaging`, checked out at the accepted 40-character commit.
+From that packaging clone, use the repository release script instead of
+manually copying source or dependencies:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-release.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\build-release.ps1 `
+  -ExpectedCommit <accepted-40-character-commit>
 ```
+
+The release script also requires `uv`, `npm`, available NSIS
+`makensis.exe`, no listeners on ports `8766`, `8643`, `8642`, `8787`, or
+`5174`, and a completely clean packaging working tree. See
+[Development and release worktrees](docs/development/DEVELOPMENT_AND_RELEASE_WORKTREES.md)
+before building.
 
 Generated `staging/`, `release/`, `backup/`, and `work/` directories are local
 artifacts and are ignored by Git.

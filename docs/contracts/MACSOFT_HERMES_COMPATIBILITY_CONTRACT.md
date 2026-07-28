@@ -50,7 +50,7 @@ starts both before MacSoft Server.
 - `hermes/hermes_cli/main.py::cmd_dashboard` for `serve`
 - `hermes/hermes_cli/main.py` gateway command dispatch
 - `hermes/hermes_cli/web_server.py` for the configuration backend
-- `hermes/gateway/platforms/api_server.py::ApiServerAdapter` for AI Service
+- `hermes/gateway/platforms/api_server.py::APIServerAdapter` for AI Service
 
 **Inputs**
 

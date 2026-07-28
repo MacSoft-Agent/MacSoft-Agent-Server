@@ -6,6 +6,7 @@ import threading
 from pathlib import Path
 
 from .control import HostControlServer
+from .compatibility import RuntimeCompatibilityError
 from .host import prepare_host
 from .metadata import load_product_metadata
 from .paths import resolve_development_paths, resolve_packaged_paths
@@ -42,8 +43,13 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGINT, request_stop)
     signal.signal(signal.SIGTERM, request_stop)
     try:
-        host.start_all()
         control.start()
+        try:
+            host.start_all()
+        except RuntimeCompatibilityError:
+            # Keep authenticated Host diagnostics available while all
+            # incompatible runtime services remain fail-closed.
+            pass
         stopped.wait()
     finally:
         control.stop()

@@ -9,6 +9,7 @@ import win32service
 import win32serviceutil
 
 from .control import HostControlServer
+from .compatibility import RuntimeCompatibilityError
 from .host import prepare_host
 from .metadata import load_product_metadata
 from .paths import resolve_packaged_paths
@@ -37,8 +38,13 @@ class MacSoftAgentHostService(win32serviceutil.ServiceFramework):
         self.host.acquire()
         self.control = HostControlServer(self.host)
         try:
-            self.host.start_all()
             self.control.start()
+            try:
+                self.host.start_all()
+            except RuntimeCompatibilityError:
+                # The Windows service remains available for authenticated
+                # diagnostics, but no incompatible runtime child is started.
+                pass
             win32event.WaitForSingleObject(self.stop_event, win32event.INFINITE)
         finally:
             if self.control:

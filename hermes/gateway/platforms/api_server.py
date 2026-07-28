@@ -61,6 +61,7 @@ from gateway.platforms.base import (
     validate_media_delivery_path,
 )
 from agent.redact import redact_sensitive_text
+from macsoft_runtime_declaration import load_macsoft_runtime_declaration
 
 logger = logging.getLogger(__name__)
 
@@ -1369,8 +1370,19 @@ class APIServerAdapter(BasePlatformAdapter):
 
     async def _handle_health(self, request: "web.Request") -> "web.Response":
         """GET /health — simple health check."""
+        try:
+            runtime_declaration = load_macsoft_runtime_declaration()
+            runtime_status = "ok"
+        except (OSError, ValueError, json.JSONDecodeError):
+            runtime_declaration = {"status": "invalid"}
+            runtime_status = "error"
         return web.json_response(
-            {"status": "ok", "platform": "hermes-agent", "version": _hermes_version()}
+            {
+                "status": runtime_status,
+                "platform": "hermes-agent",
+                "version": _hermes_version(),
+                "macsoft_runtime": runtime_declaration,
+            }
         )
 
     async def _handle_health_detailed(self, request: "web.Request") -> "web.Response":

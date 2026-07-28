@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from macsoft_runtime.compatibility import assess_pre_start_compatibility
 from macsoft_runtime.metadata import load_product_metadata
 from macsoft_runtime.paths import resolve_development_paths, resolve_packaged_paths
 
@@ -16,14 +17,21 @@ class ProductMetadataAndPathsTests(unittest.TestCase):
         self.assertEqual(metadata.product, "MacSoft Agent")
         self.assertEqual(metadata.product_version, "0.1.0")
         self.assertEqual(len(metadata.runtime_base_commit), 40)
+        self.assertEqual(metadata.runtime_contract_version, 1)
+        self.assertEqual(metadata.runtime_metadata_schema_version, 1)
         self.assertIsNone(metadata.update_manifest_url)
 
     def test_development_paths_stay_under_project_root(self) -> None:
         root = Path(__file__).resolve().parents[2]
         paths = resolve_development_paths(root)
+        metadata = load_product_metadata(root)
         self.assertEqual(paths.runtime_root, root / "runtime")
         self.assertEqual(paths.server_data_root, root / "server")
         self.assertFalse(paths.is_packaged)
+        self.assertEqual(
+            assess_pre_start_compatibility(paths, metadata)["status"],
+            "accepted",
+        )
 
     def test_packaged_paths_separate_program_and_mutable_data(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -44,6 +52,17 @@ class ProductMetadataAndPathsTests(unittest.TestCase):
             source["update_manifest_url"] = "http://updates.example.test/manifest.json"
             (root / "product.json").write_text(json.dumps(source), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "HTTPS"):
+                load_product_metadata(root)
+
+    def test_runtime_compatibility_metadata_is_strict(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = json.loads(
+                (Path(__file__).resolve().parents[2] / "product.json").read_text("utf-8")
+            )
+            source["runtime_base_commit"] = "not-a-commit"
+            (root / "product.json").write_text(json.dumps(source), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "Git SHA"):
                 load_product_metadata(root)
 
 

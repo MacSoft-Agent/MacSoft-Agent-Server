@@ -1,7 +1,14 @@
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$ProgramRoot
+)
+
 $ErrorActionPreference = 'SilentlyContinue'
 
 $deadline = [DateTime]::UtcNow.AddSeconds(150)
 $lastState = 'Waiting for MacSoft Agent Host.'
+$product = Get-Content -LiteralPath (Join-Path $ProgramRoot 'product.json') -Raw |
+    ConvertFrom-Json
 
 while ([DateTime]::UtcNow -lt $deadline) {
     $service = Get-Service -Name 'MacSoftAgentHost' -ErrorAction SilentlyContinue
@@ -17,7 +24,19 @@ while ([DateTime]::UtcNow -lt $deadline) {
 
     try {
         $ai = Invoke-RestMethod -Uri 'http://127.0.0.1:8642/health' -Method Get -TimeoutSec 3
-        $aiHealthy = $ai.status -eq 'ok'
+        $runtime = $ai.macsoft_runtime
+        $aiHealthy = [bool](
+            $ai.status -eq 'ok' -and
+            $ai.platform -eq 'hermes-agent' -and
+            $runtime.runtime -eq 'hermes-agent' -and
+            $runtime.runtime_base_version -eq $product.runtime_base_version -and
+            $runtime.runtime_base_commit -eq $product.runtime_base_commit -and
+            $runtime.runtime_contract_version -eq $product.runtime_contract_version -and
+            $runtime.runtime_metadata_schema_version -eq $product.runtime_metadata_schema_version
+        )
+        if (-not $aiHealthy) {
+            $lastState = 'AI Service runtime compatibility handshake failed.'
+        }
     } catch {
         $lastState = 'AI Service health is not ready.'
     }

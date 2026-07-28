@@ -10,6 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 INSTALLER = ROOT / "packaging" / "installer" / "MacSoft-Agent.nsi"
 MAINTENANCE_SCRIPT = ROOT / "packaging" / "installer" / "maintenance.ps1"
+VERIFY_HEALTH_SCRIPT = ROOT / "packaging" / "installer" / "verify-health.ps1"
 STAGING_SOURCE = ROOT / "product_runtime" / "macsoft_runtime" / "staging.py"
 
 
@@ -18,6 +19,7 @@ class PackagingContractTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.installer = INSTALLER.read_text(encoding="utf-8-sig")
         cls.maintenance = MAINTENANCE_SCRIPT.read_text(encoding="utf-8-sig")
+        cls.verify_health = VERIFY_HEALTH_SCRIPT.read_text(encoding="utf-8-sig")
         cls.install_section = cls.installer.split(
             'Section "Install MacSoft Agent" SEC_MAIN', 1
         )[1].split("SectionEnd", 1)[0]
@@ -254,6 +256,17 @@ class PackagingContractTests(unittest.TestCase):
         self.assertNotIn("C:\\MacSoft-Agent", combined)
         self.assertIn('ProgramRoot "$INSTDIR"', self.installer)
         self.assertIn('DataRoot "$APPDATA\\MacSoft Agent"', self.installer)
+
+    def test_installer_health_requires_exact_runtime_compatibility(self) -> None:
+        self.assertIn('-ProgramRoot "$INSTDIR"', self.installer)
+        self.assertIn("$product.runtime_base_version", self.verify_health)
+        self.assertIn("$product.runtime_base_commit", self.verify_health)
+        self.assertIn("$product.runtime_contract_version", self.verify_health)
+        self.assertIn("$product.runtime_metadata_schema_version", self.verify_health)
+        self.assertIn(
+            "AI Service runtime compatibility handshake failed.",
+            self.verify_health,
+        )
 
 
 if __name__ == "__main__":

@@ -11,6 +11,8 @@ export interface MacSoftProductMetadata {
   protected_resource_version: number
   runtime_base_commit: string
   runtime_base_version: string
+  runtime_contract_version: number
+  runtime_metadata_schema_version: number
   update_manifest_url: null | string
 }
 

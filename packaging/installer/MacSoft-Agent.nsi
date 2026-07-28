@@ -169,7 +169,7 @@ Section "Install MacSoft Agent" SEC_MAIN
   !insertmacro RunChecked '"$SYSDIR\sc.exe" start ${SERVICE_NAME}' "MacSoft Agent Host service could not be started."
 
   File /oname=$PLUGINSDIR\verify-health.ps1 "${__FILEDIR__}\verify-health.ps1"
-  !insertmacro RunChecked '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\verify-health.ps1"' "MacSoft Agent services did not become healthy within the installation timeout."
+  !insertmacro RunChecked '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\verify-health.ps1" -ProgramRoot "$INSTDIR"' "MacSoft Agent services did not become healthy within the installation timeout."
 
   CreateDirectory "$SMPROGRAMS\MacSoft Agent"
   CreateShortcut "$SMPROGRAMS\MacSoft Agent\MacSoft Agent.lnk" "$INSTDIR\desktop\MacSoft Agent.exe" "" "$INSTDIR\desktop\MacSoft Agent.exe" 0

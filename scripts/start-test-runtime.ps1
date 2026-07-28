@@ -144,9 +144,16 @@ try {
                 $control = Get-Content -LiteralPath $ControlPath -Raw | ConvertFrom-Json
                 $headers = @{ Authorization = "Bearer $($control.token)" }
                 $status = Invoke-RestMethod -Uri 'http://127.0.0.1:8766/v1/status' -Headers $headers -TimeoutSec 2
+                if ($status.runtime_compatibility.status -eq 'rejected') {
+                    $reason = [string]$status.runtime_compatibility.message
+                    throw "Hermes runtime compatibility check failed: $reason"
+                }
                 $services = @($status.services.PSObject.Properties.Value)
                 $ready = $status.ok -eq $true -and $services.Count -eq 3 -and @($services | Where-Object { $_.status -ne 'running' }).Count -eq 0
             } catch {
+                if ($_.Exception.Message -like 'Hermes runtime compatibility check failed:*') {
+                    throw
+                }
                 $ready = $false
             }
         }

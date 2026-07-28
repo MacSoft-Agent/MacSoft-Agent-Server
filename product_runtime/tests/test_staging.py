@@ -4,10 +4,26 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from macsoft_runtime.staging import _ignore_site_packages, audit_staging
+from macsoft_runtime.compatibility import expected_runtime_metadata, load_runtime_metadata
+from macsoft_runtime.metadata import load_product_metadata
+from macsoft_runtime.staging import _ignore_ai, _ignore_site_packages, audit_staging
 
 
 class StagingAuditTests(unittest.TestCase):
+    def test_runtime_declaration_is_included_in_ai_service_payload(self) -> None:
+        ignored = _ignore_ai(
+            "C:/source/hermes",
+            ["macsoft-runtime.json", "node_modules", ".git"],
+        )
+        self.assertNotIn("macsoft-runtime.json", ignored)
+        self.assertIn("node_modules", ignored)
+        self.assertIn(".git", ignored)
+
+        root = Path(__file__).resolve().parents[2]
+        metadata = load_product_metadata(root)
+        detected = load_runtime_metadata(root / "hermes" / "macsoft-runtime.json")
+        self.assertEqual(detected, expected_runtime_metadata(metadata))
+
     def test_clean_templates_do_not_contain_development_state(self) -> None:
         root = Path(__file__).resolve().parents[2]
         with tempfile.TemporaryDirectory() as temp:

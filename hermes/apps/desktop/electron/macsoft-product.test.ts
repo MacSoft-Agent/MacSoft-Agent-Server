@@ -29,6 +29,8 @@ test('authoritative metadata is loaded from the product root', () => {
   const metadata = loadMacSoftProductMetadata(paths)
   assert.equal(metadata.product, 'MacSoft Agent')
   assert.equal(metadata.product_version, '0.1.0')
+  assert.equal(metadata.runtime_contract_version, 1)
+  assert.equal(metadata.runtime_metadata_schema_version, 1)
   assert.equal(metadata.update_manifest_url, null)
 })
 

@@ -8448,6 +8448,8 @@ function resolveMacSoftProductMetadata() {
       build_id: 'metadata-unavailable',
       runtime_base_version: 'unavailable',
       runtime_base_commit: 'unavailable',
+      runtime_contract_version: 0,
+      runtime_metadata_schema_version: 0,
       update_manifest_url: null
     }
   }

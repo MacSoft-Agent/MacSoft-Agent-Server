@@ -2,10 +2,11 @@
 
 ## Status
 
-Design review
+Implementation review
 
-Batch 1 investigation is complete. Batch 2 implementation is not started and
-requires technical review of the linked evidence.
+Batch 1 investigation was merged through PR #2. Batch 2 is implemented on a
+separate branch and is awaiting independent technical review, CI, packaged
+Windows acceptance, and Product Owner acceptance.
 
 ## Owner
 
@@ -16,8 +17,8 @@ requires technical review of the linked evidence.
 ## Baseline
 
 - Repository: `https://github.com/MacSoft-Agent/MacSoft-Agent`
-- Branch: `docs/wp-003-hermes-compatibility-batch1`
-- Starting commit: `1816fbf53b17c22e9e1220c7da05dd47537ed1c5`
+- Branch: `feat/wp-003-hermes-compatibility-batch2`
+- Starting commit: `d5f4179d3745b6e75665e218c72a8187e9fe7e51`
 - Product: `0.1.0`, build `macsoft-agent-0.1.0-stable.20260722.1`
 - Hermes: `v2026.7.7.2`,
   `79f12748022817a7c4f3fee747e45e9e6979214a`
@@ -46,7 +47,32 @@ Confirmed:
 - Customer update checks are intentionally disabled and installer-managed.
 - Upstream comparison found 31 added, 75 modified, and 30 deleted paths.
 
-No customer-visible runtime behavior was changed in Batch 1.
+No customer-visible Thin Client or Server API contract was changed in either
+batch.
+
+## Batch 2 implementation
+
+1. `product.json` is the MacSoft-owned expected metadata authority.
+2. `hermes/macsoft-runtime.json` is the independently packaged,
+   Hermes-owned detected declaration.
+3. Host performs strict pre-start validation before initializing ProgramData or
+   starting child services.
+4. Hermes AI `/health` returns its own runtime declaration.
+5. Host performs a post-start live handshake and requires an exact match for
+   runtime identity, base version, base commit, contract version, and metadata
+   schema version.
+6. Missing, malformed, or mismatched metadata fails closed: config backend, AI
+   Service, and MacSoft Server do not remain running.
+7. The authenticated Host control endpoint remains available with sanitized
+   compatibility diagnostics.
+8. Development startup and installer health verification reject incompatible
+   runtimes.
+9. Staging rejects a source tree whose product expectation and Hermes
+   declaration differ.
+
+The rejection path does not run product-data initialization and does not
+rewrite credentials, databases, customer data, or Server/AI configuration.
+Built-In Update remains out of scope and is not started.
 
 ## Batch 1 deliverables
 
@@ -202,14 +228,14 @@ discarded or postponed; customers remain on the accepted baseline.
 
 ## Open technical risks and unresolved evidence
 
-1. The exact runtime fingerprint format should be selected in Batch 2 after
-   checking staging-manifest reuse. It must not add a second package manifest
-   with overlapping authority.
-2. The configuration backend should probably use the same runtime declaration
-   as AI Service, but its live handshake shape is not yet selected.
-3. Packaged Windows acceptance has not been run from the current baseline.
-4. The safest user-visible incompatibility location needs a small Desktop
-   design review; Host status is the diagnostic authority.
+1. The declaration proves that the packaged/runtime source identifies the
+   accepted baseline; it does not cryptographically authenticate files.
+2. Config backend has no second public handshake. It is launched from the same
+   validated Hermes program root and remains subordinate to the Host.
+3. Packaged Windows installer build and real clean/overlay installation
+   acceptance have not yet been run for Batch 2.
+4. Desktop has no dedicated compatibility screen. Existing authenticated Host
+   service-error presentation receives the sanitized diagnostic.
 5. Partial Server availability remains intentionally unsupported until a
    dependency analysis proves it safe.
 6. Built-In Update authenticity, rollback, and distribution remain WP-004 and
@@ -217,15 +243,10 @@ discarded or postponed; customers remain on the accepted baseline.
 
 ## Product Owner decisions required
 
-None for Batch 1 documentation.
-
-Before accepting Batch 2:
-
-- approve exact-match, fail-closed behavior;
-- approve blocking MacSoft Server when the required Hermes runtime is
-  incompatible;
-- accept that the compatibility declaration becomes a release-controlled
-  metadata contract.
+The technical review authorized exact-match, fail-closed Batch 2 implementation
+and blocking MacSoft Server when its required Hermes runtime is incompatible.
+Product Owner acceptance is still required after CI, independent review, and
+real packaged Windows acceptance.
 
 ## Acceptance criteria for Batch 1
 
@@ -274,8 +295,34 @@ caused by the Batch 1 diff. It remains an uncompleted verification item and
 must be rerun in an idle development environment before Batch 2 implementation
 is accepted.
 
-No real installed-product acceptance is required for documentation-only Batch
-1. It becomes mandatory in Batch 2.
+No real installed-product acceptance was required for documentation-only Batch
+1. It is mandatory before Batch 2 can become an accepted release baseline.
+
+## Batch 2 verification evidence
+
+Performed on 2026-07-28:
+
+- Product Runtime suite: 51 tests passed, including the final development-path
+  assertion.
+- Server suite: 92 tests passed.
+- Desktop UI suite: 1,211 tests passed across 153 files.
+- Desktop Electron suite: 373 passed, 4 platform-restricted tests skipped.
+- Desktop packaging scripts: 9 passed.
+- Desktop TypeScript typecheck passed.
+- Direct Hermes API health-handler smoke test returned the exact independent
+  runtime declaration.
+- Modified Python files passed AST parsing.
+- Modified PowerShell scripts passed parser validation.
+- Unified `scripts/verify-development.ps1` passed after rerunning outside the
+  sandbox that blocked `.vite-temp`.
+
+Not yet performed:
+
+- Hermes pytest suite, because the repository Hermes environment does not
+  contain pytest and Bash is unavailable on this Windows environment;
+- installer build, staging audit of a built payload, or real clean/overlay
+  installed-product acceptance;
+- external Thin Client manual acceptance.
 
 ## Related documents
 

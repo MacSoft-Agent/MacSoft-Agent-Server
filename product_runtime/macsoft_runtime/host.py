@@ -21,6 +21,13 @@ import psutil
 import yaml
 
 from .initializer import initialize_product_data
+from .compatibility import (
+    RuntimeCompatibilityError,
+    assess_live_compatibility,
+    assess_pre_start_compatibility,
+    compatibility_error_message,
+    expected_runtime_metadata,
+)
 from .metadata import ProductMetadata
 from .paths import ProductPaths
 
@@ -72,9 +79,26 @@ def _read_yaml(path: Path) -> dict[str, Any]:
     return value
 
 
-def build_service_specs(paths: ProductPaths, metadata: ProductMetadata) -> dict[str, ServiceSpec]:
-    runtime = _read_yaml(paths.runtime_config)
-    server = _read_yaml(paths.server_config)
+def _read_service_config(path: Path, *, allow_missing: bool) -> dict[str, Any]:
+    if allow_missing and not path.is_file():
+        return {}
+    return _read_yaml(path)
+
+
+def build_service_specs(
+    paths: ProductPaths,
+    metadata: ProductMetadata,
+    *,
+    allow_missing_config: bool = False,
+) -> dict[str, ServiceSpec]:
+    runtime = _read_service_config(
+        paths.runtime_config,
+        allow_missing=allow_missing_config,
+    )
+    server = _read_service_config(
+        paths.server_config,
+        allow_missing=allow_missing_config,
+    )
     api = runtime.get("platforms", {}).get("api_server", {}).get("extra", {})
     ai_port = int(api.get("port", 8642))
     ai_api_key = str(api.get("key", "")).strip()
@@ -122,7 +146,11 @@ def build_service_specs(paths: ProductPaths, metadata: ProductMetadata) -> dict[
                 "PYTHONPATH": str(paths.ai_program_root),
             },
             health_url=f"http://127.0.0.1:{ai_port}/health",
-            health_identity={"status": "ok", "platform": "hermes-agent"},
+            health_identity={
+                "status": "ok",
+                "platform": "hermes-agent",
+                "macsoft_runtime": expected_runtime_metadata(metadata),
+            },
             port=ai_port,
         ),
         "server": ServiceSpec(
@@ -227,15 +255,20 @@ def _port_is_open(port: int) -> bool:
         return client.connect_ex(("127.0.0.1", port)) == 0
 
 
-def _health_matches(spec: ServiceSpec, timeout: float = 1.5) -> bool:
+def _read_health(spec: ServiceSpec, timeout: float = 1.5) -> dict[str, Any] | None:
     try:
         with urllib.request.urlopen(spec.health_url, timeout=timeout) as response:
             if response.status != 200:
-                return False
+                return None
             body = json.loads(response.read().decode("utf-8"))
-        return isinstance(body, dict) and all(body.get(key) == value for key, value in spec.health_identity.items())
+        return body if isinstance(body, dict) else None
     except (OSError, ValueError, urllib.error.URLError):
-        return False
+        return None
+
+
+def _health_matches(spec: ServiceSpec, timeout: float = 1.5) -> bool:
+    body = _read_health(spec, timeout)
+    return body is not None and all(body.get(key) == value for key, value in spec.health_identity.items())
 
 
 class MacSoftAgentHost:
@@ -245,12 +278,26 @@ class MacSoftAgentHost:
         metadata: ProductMetadata,
         *,
         specs: dict[str, ServiceSpec] | None = None,
+        runtime_compatibility: dict[str, Any] | None = None,
         health_timeout: float = HEALTH_TIMEOUT_SECONDS,
         popen: Callable[..., subprocess.Popen] = subprocess.Popen,
     ) -> None:
         self.paths = paths
         self.metadata = metadata
-        self.specs = specs if specs is not None else build_service_specs(paths, metadata)
+        self.runtime_compatibility = (
+            runtime_compatibility
+            if runtime_compatibility is not None
+            else assess_pre_start_compatibility(paths, metadata)
+        )
+        self.specs = (
+            specs
+            if specs is not None
+            else build_service_specs(
+                paths,
+                metadata,
+                allow_missing_config=self.runtime_compatibility["status"] != "accepted",
+            )
+        )
         self.health_timeout = health_timeout
         self._popen = popen
         self.states = {name: ServiceState() for name in self.specs}
@@ -262,6 +309,16 @@ class MacSoftAgentHost:
         self._monitor: threading.Thread | None = None
         self._log_threads: list[threading.Thread] = []
         self._logger = self._create_logger()
+        if self.runtime_compatibility["status"] != "accepted":
+            self._mark_compatibility_rejected(self.runtime_compatibility)
+
+    def _mark_compatibility_rejected(self, result: dict[str, Any]) -> None:
+        message = compatibility_error_message(result)
+        for state in self.states.values():
+            if state.status != "running":
+                state.status = "error"
+                state.last_error = message
+                state.desired_running = False
 
     def _create_logger(self) -> logging.Logger:
         self.paths.logs_root.mkdir(parents=True, exist_ok=True)
@@ -314,6 +371,11 @@ class MacSoftAgentHost:
         with self._lock:
             if name not in self.specs:
                 raise ValueError("Unknown service.")
+            if self.runtime_compatibility["status"] != "accepted":
+                self._mark_compatibility_rejected(self.runtime_compatibility)
+                raise RuntimeCompatibilityError(
+                    compatibility_error_message(self.runtime_compatibility)
+                )
             if name == "ai_service" and self.states.get("config_backend", ServiceState()).status != "running":
                 self.start("config_backend")
             if name == "server" and self.states.get("ai_service", ServiceState()).status != "running":
@@ -386,7 +448,31 @@ class MacSoftAgentHost:
         while time.monotonic() < deadline:
             if process.poll() is not None:
                 break
-            if _health_matches(spec):
+            health_body = _read_health(spec)
+            if health_body is not None and name == "ai_service":
+                live_result = assess_live_compatibility(
+                    expected_runtime_metadata(self.metadata),
+                    health_body,
+                )
+                if live_result["status"] != "accepted":
+                    with self._lock:
+                        self.runtime_compatibility = live_result
+                        self._mark_compatibility_rejected(live_result)
+                    self._stop_owned_process(state)
+                    with self._lock:
+                        state.process = None
+                        state.pid = None
+                        state.process_create_time = None
+                    if name == "ai_service" and "config_backend" in self.states:
+                        self.stop("config_backend")
+                    raise RuntimeCompatibilityError(
+                        compatibility_error_message(live_result)
+                    )
+                with self._lock:
+                    self.runtime_compatibility = live_result
+            if health_body is not None and all(
+                health_body.get(key) == value for key, value in spec.health_identity.items()
+            ):
                 with self._lock:
                     state.status = "running"
                 self._logger.info("service_started name=%s pid=%s", name, process.pid)
@@ -486,6 +572,7 @@ class MacSoftAgentHost:
         return {
             "product": "MacSoft Agent",
             "version": self.metadata.product_version,
+            "runtime_compatibility": self.runtime_compatibility,
             "services": {name: self.service_status(name) for name in self.specs},
             "auto_start": self._read_auto_start(),
         }
@@ -565,5 +652,11 @@ class MacSoftAgentHost:
 
 
 def prepare_host(paths: ProductPaths, metadata: ProductMetadata) -> MacSoftAgentHost:
-    initialize_product_data(paths, metadata)
-    return MacSoftAgentHost(paths, metadata)
+    runtime_compatibility = assess_pre_start_compatibility(paths, metadata)
+    if runtime_compatibility["status"] == "accepted":
+        initialize_product_data(paths, metadata)
+    return MacSoftAgentHost(
+        paths,
+        metadata,
+        runtime_compatibility=runtime_compatibility,
+    )

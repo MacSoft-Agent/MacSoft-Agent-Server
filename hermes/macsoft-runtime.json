@@ -1,0 +1,7 @@
+{
+  "runtime": "hermes-agent",
+  "runtime_base_version": "v2026.7.7.2",
+  "runtime_base_commit": "79f12748022817a7c4f3fee747e45e9e6979214a",
+  "runtime_contract_version": 1,
+  "runtime_metadata_schema_version": 1
+}

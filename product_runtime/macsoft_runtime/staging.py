@@ -7,6 +7,11 @@ import shutil
 import sys
 from pathlib import Path
 
+from .compatibility import (
+    RUNTIME_DECLARATION_FILENAME,
+    expected_runtime_metadata,
+    load_runtime_metadata,
+)
 from .metadata import load_product_metadata
 
 
@@ -198,6 +203,13 @@ def build_staging(source_root: Path, desktop_directory: Path, output: Path) -> d
         raise FileExistsError(f"Staging output must be empty: {output}")
     output.mkdir(parents=True, exist_ok=True)
     metadata = load_product_metadata(source_root)
+    runtime_metadata = load_runtime_metadata(
+        source_root / "hermes" / RUNTIME_DECLARATION_FILENAME
+    )
+    if runtime_metadata != expected_runtime_metadata(metadata):
+        raise ValueError(
+            "Hermes runtime declaration does not match authoritative product.json."
+        )
     desktop_package = json.loads((source_root / "hermes" / "apps" / "desktop" / "package.json").read_text("utf-8"))
     if desktop_package.get("version") != metadata.product_version:
         raise ValueError("Desktop version does not match authoritative product.json.")

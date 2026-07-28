@@ -357,9 +357,10 @@ interrupt, cancels the task, and bounds its wait to five seconds.
 
 ### A7. Product metadata and writable-state contract
 
-`product.json` is the MacSoft product authority. It currently declares product
-version, build ID, channel, expected Hermes tag/commit, data schema, protected
-resource version, and update manifest URL.
+`product.json` is the MacSoft product authority. It declares product version,
+build ID, channel, expected Hermes tag/commit, runtime contract version,
+runtime metadata schema version, data schema, protected resource version, and
+update manifest URL.
 
 `product_runtime/macsoft_runtime/initializer.py::initialize_product_data`
 creates mutable templates once, synchronizes only the Host-owned local API key,
@@ -388,23 +389,25 @@ depends on the direct contracts above.
 No future Hermes upgrade is accepted solely because `/health` passes. These
 regression flows must remain green in source and installed modes.
 
-## Minimum compatibility metadata proposed for Batch 2
+## Compatibility metadata implemented in Batch 2
 
 The first compatibility implementation should use exact matching, not generic
 capability negotiation.
 
-**MacSoft product declaration**
+**MacSoft product declaration (`product.json`)**
 
-- MacSoft product/build ID.
-- Expected Hermes tag and commit.
-- Expected MacSoft-Hermes contract version.
-- Expected runtime metadata schema version.
+- `runtime_base_version`
+- `runtime_base_commit`
+- `runtime_contract_version`
+- `runtime_metadata_schema_version`
 
-**Hermes runtime declaration**
+**Hermes runtime declaration (`hermes/macsoft-runtime.json`)**
 
-- Detected Hermes tag/commit or build fingerprint.
-- Implemented MacSoft-Hermes contract version.
-- Runtime metadata schema version.
+- `runtime`
+- `runtime_base_version`
+- `runtime_base_commit`
+- `runtime_contract_version`
+- `runtime_metadata_schema_version`
 
 Expected and detected values must be loaded from different artifacts:
 
@@ -415,7 +418,7 @@ Expected and detected values must be loaded from different artifacts:
 The AI Service must not report expected values by rereading `product.json`.
 That would allow a replaced or mismatched runtime to confirm itself falsely.
 
-## Minimum handshake boundary proposed for Batch 2
+## Handshake boundary implemented in Batch 2
 
 1. Before starting Hermes, Host reads and validates the runtime declaration
    under the Hermes program root.

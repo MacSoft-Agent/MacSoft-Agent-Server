@@ -35,6 +35,7 @@ from gateway.platforms.api_server import (
     cors_middleware,
     security_headers_middleware,
 )
+from macsoft_runtime_declaration import load_macsoft_runtime_declaration
 
 
 # ---------------------------------------------------------------------------
@@ -694,6 +695,23 @@ class TestHealthEndpoint:
             data = await resp.json()
             assert data["status"] == "ok"
             assert data["platform"] == "hermes-agent"
+            assert data["macsoft_runtime"] == load_macsoft_runtime_declaration()
+
+    @pytest.mark.asyncio
+    async def test_invalid_runtime_declaration_fails_health_closed(self, adapter):
+        app = _create_app(adapter)
+        with patch(
+            "gateway.platforms.api_server.load_macsoft_runtime_declaration",
+            side_effect=ValueError("sensitive path must not escape"),
+        ):
+            async with TestClient(TestServer(app)) as cli:
+                resp = await cli.get("/health")
+                assert resp.status == 200
+                data = await resp.json()
+                assert data["status"] == "error"
+                assert data["platform"] == "hermes-agent"
+                assert data["macsoft_runtime"] == {"status": "invalid"}
+                assert "sensitive" not in json.dumps(data)
 
     @pytest.mark.asyncio
     async def test_health_reports_version(self, adapter):

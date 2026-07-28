@@ -22,6 +22,7 @@ from macsoft_runtime.host import (
     MacSoftAgentHost,
     ServiceSpec,
     build_service_specs,
+    prepare_host,
 )
 from macsoft_runtime.metadata import ProductMetadata
 from macsoft_runtime.paths import resolve_packaged_paths
@@ -33,6 +34,8 @@ METADATA = ProductMetadata(
     channel="stable",
     runtime_base_version="test",
     runtime_base_commit="0" * 40,
+    runtime_contract_version=1,
+    runtime_metadata_schema_version=1,
     build_date="2026-07-14",
     build_id="test",
     data_schema_version=1,
@@ -60,6 +63,19 @@ class Handler(BaseHTTPRequestHandler):
 HTTPServer(('127.0.0.1', int(sys.argv[1])), Handler).serve_forever()
 """
 
+RUNTIME_SERVICE_SCRIPT = """\
+import json
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import sys
+payload=json.loads(sys.argv[2])
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *args): pass
+    def do_GET(self):
+        body=json.dumps(payload).encode()
+        self.send_response(200); self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body)
+HTTPServer(('127.0.0.1', int(sys.argv[1])), Handler).serve_forever()
+"""
+
 
 class HostTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -70,7 +86,22 @@ class HostTests(unittest.TestCase):
         self.program.mkdir()
         self.script = self.base / "service.py"
         self.script.write_text(SERVICE_SCRIPT, encoding="utf-8")
+        self.runtime_script = self.base / "runtime_service.py"
+        self.runtime_script.write_text(RUNTIME_SERVICE_SCRIPT, encoding="utf-8")
         self.paths = resolve_packaged_paths(self.program, self.data)
+        self.paths.ai_program_root.mkdir(parents=True)
+        (self.paths.ai_program_root / "macsoft-runtime.json").write_text(
+            json.dumps(
+                {
+                    "runtime": "hermes-agent",
+                    "runtime_base_version": METADATA.runtime_base_version,
+                    "runtime_base_commit": METADATA.runtime_base_commit,
+                    "runtime_contract_version": METADATA.runtime_contract_version,
+                    "runtime_metadata_schema_version": METADATA.runtime_metadata_schema_version,
+                }
+            ),
+            encoding="utf-8",
+        )
         self.paths.logs_root.mkdir(parents=True)
         self.processes: list[subprocess.Popen] = []
         self.hosts: list[MacSoftAgentHost] = []
@@ -102,6 +133,37 @@ class HostTests(unittest.TestCase):
             port=port,
         )
 
+    def runtime_spec(
+        self,
+        port: int,
+        detected: dict[str, object],
+        expected: dict[str, object] | None = None,
+    ) -> ServiceSpec:
+        return ServiceSpec(
+            name="ai_service",
+            command=(
+                sys.executable,
+                str(self.runtime_script),
+                str(port),
+                json.dumps(
+                    {
+                        "status": "ok",
+                        "platform": "hermes-agent",
+                        "macsoft_runtime": detected,
+                    }
+                ),
+            ),
+            cwd=self.base,
+            environment={},
+            health_url=f"http://127.0.0.1:{port}/health",
+            health_identity={
+                "status": "ok",
+                "platform": "hermes-agent",
+                "macsoft_runtime": expected or detected,
+            },
+            port=port,
+        )
+
     def wait_for_http(self, port: int) -> None:
         deadline = time.monotonic() + 5
         url = f"http://127.0.0.1:{port}/health"
@@ -112,6 +174,11 @@ class HostTests(unittest.TestCase):
             except (OSError, urllib.error.URLError):
                 time.sleep(0.02)
         self.fail(f"Test service did not bind port {port}.")
+
+    def port_is_open(self, port: int) -> bool:
+        with socket.socket() as client:
+            client.settimeout(0.2)
+            return client.connect_ex(("127.0.0.1", port)) == 0
 
     def test_server_receives_the_ai_service_internal_key_from_runtime(self) -> None:
         self.paths.runtime_root.mkdir(parents=True)
@@ -128,6 +195,81 @@ class HostTests(unittest.TestCase):
         specs = build_service_specs(self.paths, METADATA)
 
         self.assertEqual(specs["server"].environment["MACSOFT_HERMES_API_KEY"], "runtime-owned-key")
+        self.assertEqual(
+            specs["ai_service"].health_identity["macsoft_runtime"],
+            {
+                "runtime": "hermes-agent",
+                "runtime_base_version": METADATA.runtime_base_version,
+                "runtime_base_commit": METADATA.runtime_base_commit,
+                "runtime_contract_version": METADATA.runtime_contract_version,
+                "runtime_metadata_schema_version": METADATA.runtime_metadata_schema_version,
+            },
+        )
+
+    def test_incompatible_runtime_fails_before_start_and_remains_diagnostic(self) -> None:
+        (self.paths.ai_program_root / "macsoft-runtime.json").unlink()
+        port = free_port()
+        host = self.host(specs={"test": self.spec("test", port)}, health_timeout=1)
+
+        with self.assertRaisesRegex(RuntimeError, "compatibility check failed"):
+            host.start("test")
+
+        status = host.status()
+        self.assertEqual(status["runtime_compatibility"]["status"], "rejected")
+        self.assertEqual(
+            status["runtime_compatibility"]["error_code"],
+            "runtime_declaration_invalid",
+        )
+        self.assertEqual(status["services"]["test"]["status"], "error")
+        self.assertFalse(status["services"]["test"]["owned"])
+        self.assertFalse(self.port_is_open(port))
+
+    def test_prepare_host_does_not_initialize_customer_state_when_rejected(self) -> None:
+        (self.paths.ai_program_root / "macsoft-runtime.json").unlink()
+
+        host = prepare_host(self.paths, METADATA)
+        self.hosts.append(host)
+
+        self.assertEqual(host.runtime_compatibility["status"], "rejected")
+        self.assertFalse(self.paths.runtime_config.exists())
+        self.assertFalse(self.paths.server_config.exists())
+        self.assertFalse(self.paths.server_database.exists())
+
+    def test_live_runtime_mismatch_stops_ai_service_and_blocks_server(self) -> None:
+        config_port = free_port()
+        ai_port = free_port()
+        expected = {
+            "runtime": "hermes-agent",
+            "runtime_base_version": METADATA.runtime_base_version,
+            "runtime_base_commit": METADATA.runtime_base_commit,
+            "runtime_contract_version": METADATA.runtime_contract_version,
+            "runtime_metadata_schema_version": METADATA.runtime_metadata_schema_version,
+        }
+        detected = dict(expected)
+        detected["runtime_contract_version"] = 2
+        ai_spec = self.runtime_spec(ai_port, detected, expected)
+        host = self.host(
+            specs={
+                "config_backend": self.spec("config_backend", config_port),
+                "ai_service": ai_spec,
+                "server": self.spec("server", free_port()),
+            },
+            health_timeout=2,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "runtime_contract_version"):
+            host.start("ai_service")
+
+        status = host.status()
+        self.assertEqual(status["runtime_compatibility"]["phase"], "post_start")
+        self.assertEqual(status["runtime_compatibility"]["status"], "rejected")
+        self.assertEqual(
+            status["runtime_compatibility"]["mismatched_fields"],
+            ["runtime_contract_version"],
+        )
+        self.assertFalse(status["services"]["ai_service"]["owned"])
+        self.assertEqual(status["services"]["config_backend"]["status"], "stopped")
+        self.assertNotEqual(status["services"]["server"]["status"], "running")
 
     def test_owned_process_passes_health_and_stops_safely(self) -> None:
         port = free_port()
@@ -245,6 +387,24 @@ class HostTests(unittest.TestCase):
             self.assertTrue(body["ok"])
             self.assertEqual(body["product"], "MacSoft Agent")
             self.assertEqual(control._server.server_address[0], "127.0.0.1")
+        finally:
+            control.stop()
+
+    def test_control_interface_remains_available_for_compatibility_failure(self) -> None:
+        (self.paths.ai_program_root / "macsoft-runtime.json").unlink()
+        host = self.host(specs={"ai_service": self.spec("ai_service", free_port())})
+        control = HostControlServer(host, free_port())
+        control.start()
+        try:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{control.port}/v1/status",
+                headers={"Authorization": f"Bearer {control.token}"},
+            )
+            with urllib.request.urlopen(request, timeout=2) as response:
+                body = json.loads(response.read())
+            self.assertTrue(body["ok"])
+            self.assertEqual(body["runtime_compatibility"]["status"], "rejected")
+            self.assertEqual(body["services"]["ai_service"]["status"], "error")
         finally:
             control.stop()
 

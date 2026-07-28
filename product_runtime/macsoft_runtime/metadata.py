@@ -21,6 +21,7 @@ class ProductMetadata:
     data_schema_version: int
     protected_resource_version: int
     update_manifest_url: str | None
+    update_manifest_public_key: str | None
 
 
 def _required_text(data: dict[str, Any], name: str) -> str:
@@ -50,6 +51,14 @@ def load_product_metadata(program_root: Path | str) -> ProductMetadata:
             raise ValueError("update_manifest_url must be null or an HTTPS URL.")
         manifest_url = manifest_url.strip()
 
+    manifest_public_key = data.get("update_manifest_public_key")
+    if manifest_public_key is not None:
+        if not isinstance(manifest_public_key, str) or not manifest_public_key.strip():
+            raise ValueError(
+                "update_manifest_public_key must be null or a non-empty base64 SPKI public key."
+            )
+        manifest_public_key = manifest_public_key.strip()
+
     runtime_base_commit = _required_text(data, "runtime_base_commit")
     if not re.fullmatch(r"[0-9a-f]{40}", runtime_base_commit):
         raise ValueError("runtime_base_commit must be a 40-character lowercase Git SHA.")
@@ -70,4 +79,5 @@ def load_product_metadata(program_root: Path | str) -> ProductMetadata:
         data_schema_version=int(data["data_schema_version"]),
         protected_resource_version=int(data["protected_resource_version"]),
         update_manifest_url=manifest_url,
+        update_manifest_public_key=manifest_public_key,
     )

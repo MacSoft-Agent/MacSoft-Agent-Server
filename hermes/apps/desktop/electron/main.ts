@@ -96,12 +96,18 @@ import { createLinkTitleWindow, guardLinkTitleSession, readLinkTitleWindowTitle 
 import { MacSoftDesktopChatClient } from './macsoft-desktop-chat-client'
 import { MacSoftDesktopAdminChatClient } from './macsoft-desktop-admin-chat-client'
 import { MacSoftHostClient } from './macsoft-host-client'
+import { verifyMacSoftInstallerAuthenticode } from './macsoft-update-authenticode'
 import { loadMacSoftProductMetadata, resolveMacSoftProductPaths, resolvePackagedRuntimeHome } from './macsoft-product'
 import {
   initializePackagedProductData,
   type MacSoftProductInitializationResult
 } from './macsoft-product-initializer'
 import { customerUpdateApply, customerUpdateBranch, customerUpdateCheck } from './macsoft-update-policy'
+import { writeVerifiedMacSoftInstaller } from './macsoft-update-download'
+import {
+  MAX_UPDATE_MANIFEST_BYTES,
+  type TrustedMacSoftRelease
+} from './macsoft-update-manifest'
 import { serializeJsonBody, setJsonRequestHeaders } from './oauth-net-request'
 import { ServerAutoCountConfigService } from './server-autocount-config'
 import {
@@ -8427,8 +8433,140 @@ ipcMain.handle('hermes:terminal:dispose', (_event, id) => disposeTerminalSession
 
 // Customer builds have no source/Git update entry point. With no configured
 // MacSoft feed this handler performs no network request and never falls back.
-ipcMain.handle('hermes:updates:check', async () => customerUpdateCheck(resolveMacSoftProductMetadata()))
-ipcMain.handle('hermes:updates:apply', async () => customerUpdateApply())
+async function fetchMacSoftUpdateManifest(url: string): Promise<string> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 15_000)
+  try {
+    const response = await electronNet.fetch(url, {
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+      method: 'GET',
+      signal: controller.signal
+    })
+    if (!response.ok) throw new Error(`Update manifest request failed with HTTP ${response.status}.`)
+    const finalUrl = new URL(response.url)
+    if (finalUrl.protocol !== 'https:' || finalUrl.username || finalUrl.password) {
+      throw new Error('Update manifest redirected to an untrusted URL.')
+    }
+    const declaredLength = Number(response.headers.get('content-length') || 0)
+    if (declaredLength > MAX_UPDATE_MANIFEST_BYTES) {
+      throw new Error('Update manifest exceeds the supported size.')
+    }
+    const text = await response.text()
+    if (Buffer.byteLength(text, 'utf8') > MAX_UPDATE_MANIFEST_BYTES) {
+      throw new Error('Update manifest exceeds the supported size.')
+    }
+    return text
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+let trustedMacSoftRelease: TrustedMacSoftRelease | null = null
+let macSoftUpdateApplying = false
+
+async function checkMacSoftCustomerUpdate() {
+  return customerUpdateCheck(resolveMacSoftProductMetadata(), {
+    fetchManifest: fetchMacSoftUpdateManifest,
+    onTrustedRelease: release => {
+      trustedMacSoftRelease = release
+    },
+    packaged: IS_PACKAGED
+  })
+}
+
+async function downloadTrustedMacSoftInstaller(release: TrustedMacSoftRelease) {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 10 * 60_000)
+  try {
+    const response = await electronNet.fetch(release.installer.url, {
+      cache: 'no-store',
+      headers: { Accept: 'application/octet-stream' },
+      method: 'GET',
+      signal: controller.signal
+    })
+    if (!response.ok || !response.body) {
+      throw new Error(`Update installer request failed with HTTP ${response.status}.`)
+    }
+    const finalUrl = new URL(response.url)
+    if (finalUrl.protocol !== 'https:' || finalUrl.username || finalUrl.password) {
+      throw new Error('Update installer redirected to an untrusted URL.')
+    }
+    const contentLengthHeader = response.headers.get('content-length')
+    const contentLength = contentLengthHeader === null ? undefined : Number(contentLengthHeader)
+    if (
+      contentLength !== undefined &&
+      (!Number.isSafeInteger(contentLength) || contentLength < 0)
+    ) {
+      throw new Error('Update installer returned an invalid content length.')
+    }
+    return await writeVerifiedMacSoftInstaller(
+      { body: response.body, contentLength },
+      release,
+      path.join(app.getPath('temp'), 'MacSoft Agent', 'updates')
+    )
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+ipcMain.handle('hermes:updates:check', async () => checkMacSoftCustomerUpdate())
+ipcMain.handle('hermes:updates:apply', async () => {
+  if (!IS_PACKAGED) return customerUpdateApply()
+  if (macSoftUpdateApplying) {
+    return { ok: false, error: 'update-busy', message: 'A MacSoft Agent update is already in progress.' }
+  }
+  macSoftUpdateApplying = true
+  try {
+    emitUpdateProgress({ stage: 'fetch', message: 'Checking the trusted update release…', percent: 5 })
+    await checkMacSoftCustomerUpdate()
+    const release = trustedMacSoftRelease
+    if (!release) {
+      return {
+        ok: false,
+        error: 'trusted-update-required',
+        message: 'No trusted MacSoft Agent update is available for this build.'
+      }
+    }
+    emitUpdateProgress({ stage: 'fetch', message: 'Downloading the verified installer…', percent: 15 })
+    const installer = await downloadTrustedMacSoftInstaller(release)
+    emitUpdateProgress({ stage: 'update', message: 'Verifying the Windows installer signature…', percent: 85 })
+    try {
+      verifyMacSoftInstallerAuthenticode(
+        installer.path,
+        path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+      )
+    } catch (error) {
+      fs.rmSync(installer.path, { force: true })
+      throw error
+    }
+    emitUpdateProgress({ stage: 'restart', message: 'Opening the trusted installer…', percent: 95 })
+    const launchError = await shell.openPath(installer.path)
+    if (launchError) throw new Error('Windows could not open the trusted update installer.')
+    setTimeout(() => app.quit(), 500)
+    return {
+      ok: true,
+      handedOff: true,
+      message: 'The trusted MacSoft Agent installer is ready. Approve the Windows prompt to continue.'
+    }
+  } catch (error) {
+    emitUpdateProgress({
+      stage: 'error',
+      message: error instanceof Error ? error.message : 'MacSoft Agent could not prepare the update.',
+      percent: null
+    })
+    return {
+      ok: false,
+      error:
+        error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+          ? error.code
+          : 'update-apply-failed',
+      message: error instanceof Error ? error.message : 'MacSoft Agent could not prepare the update.'
+    }
+  } finally {
+    macSoftUpdateApplying = false
+  }
+})
 ipcMain.handle('hermes:updates:branch:get', async () => customerUpdateBranch())
 ipcMain.handle('hermes:updates:branch:set', async () => customerUpdateBranch())
 
@@ -8450,7 +8588,8 @@ function resolveMacSoftProductMetadata() {
       runtime_base_commit: 'unavailable',
       runtime_contract_version: 0,
       runtime_metadata_schema_version: 0,
-      update_manifest_url: null
+      update_manifest_url: null,
+      update_manifest_public_key: null
     }
   }
 }

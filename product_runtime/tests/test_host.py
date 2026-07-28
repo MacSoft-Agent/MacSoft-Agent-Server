@@ -41,6 +41,7 @@ METADATA = ProductMetadata(
     data_schema_version=1,
     protected_resource_version=1,
     update_manifest_url=None,
+    update_manifest_public_key=None,
 )
 
 

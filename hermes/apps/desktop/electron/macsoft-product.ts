@@ -14,6 +14,7 @@ export interface MacSoftProductMetadata {
   runtime_contract_version: number
   runtime_metadata_schema_version: number
   update_manifest_url: null | string
+  update_manifest_public_key: null | string
 }
 
 export interface MacSoftProductPaths {

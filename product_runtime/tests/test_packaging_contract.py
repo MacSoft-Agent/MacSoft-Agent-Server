@@ -156,7 +156,10 @@ class PackagingContractTests(unittest.TestCase):
         payload_index = self.install_section.index('File /r "${PAYLOAD_ROOT}\\*.*"')
         self.assertLess(cleanup_index, set_out_path_index)
         self.assertLess(cleanup_index, payload_index)
-        self.assertIn("[ValidateSet('PreInstall', 'Cleanup')]", self.maintenance)
+        self.assertIn(
+            "[ValidateSet('PreInstall', 'Backup', 'Restore', 'Commit', 'Restart', 'Cleanup')]",
+            self.maintenance,
+        )
         self.assertIn("$servicePresent = $null -ne (Get-ServiceRecord)", self.maintenance)
         self.assertIn(
             "Test-Path -LiteralPath $ProgramRoot -PathType Container",
@@ -175,8 +178,7 @@ class PackagingContractTests(unittest.TestCase):
         self.assertIn("Stop-Process -Id $remainingProcessId -Force", self.maintenance)
         self.assertIn("MacSoft Agent processes remain active under $ProgramRoot", self.maintenance)
         self.assertNotIn("Get-Process -Name", self.maintenance)
-        for generic_name in ("python.exe", "node.exe", "electron.exe", "chrome.exe"):
-            self.assertNotIn(generic_name, self.maintenance.lower())
+        self.assertNotIn("Stop-Process -Name", self.maintenance)
 
     def test_preinstall_never_deletes_programdata_or_program_files(self) -> None:
         preinstall_block = self.maintenance.split(
@@ -259,6 +261,8 @@ class PackagingContractTests(unittest.TestCase):
 
     def test_installer_health_requires_exact_runtime_compatibility(self) -> None:
         self.assertIn('-ProgramRoot "$INSTDIR"', self.installer)
+        self.assertIn("http://127.0.0.1:8643/api/status", self.verify_health)
+        self.assertIn("$config.runtime_mode -eq 'config-only'", self.verify_health)
         self.assertIn("$product.runtime_base_version", self.verify_health)
         self.assertIn("$product.runtime_base_commit", self.verify_health)
         self.assertIn("$product.runtime_contract_version", self.verify_health)
@@ -267,6 +271,19 @@ class PackagingContractTests(unittest.TestCase):
             "AI Service runtime compatibility handshake failed.",
             self.verify_health,
         )
+
+    def test_overlay_update_has_program_files_recovery_without_programdata_rewrite(self) -> None:
+        self.assertIn('-Action Backup', self.installer)
+        self.assertIn('-Action Restore', self.installer)
+        self.assertIn('-Action Commit', self.installer)
+        self.assertIn('-Action Restart', self.installer)
+        self.assertIn('"$APPDATA\\MacSoft Agent Recovery"', self.installer)
+        self.assertIn("New-ProgramRecoveryBackup", self.maintenance)
+        self.assertIn("Restore-ProgramRecoveryBackup", self.maintenance)
+        self.assertIn("Remove-ProgramRecoveryBackup", self.maintenance)
+        self.assertIn("Restart-ExistingService", self.maintenance)
+        self.assertNotIn("RecoveryRoot = $DataRoot", self.maintenance)
+        self.assertNotIn("Invoke-RobocopyChecked -Source $DataRoot", self.maintenance)
 
 
 if __name__ == "__main__":

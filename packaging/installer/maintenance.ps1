@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('PreInstall', 'Cleanup')]
+    [ValidateSet('PreInstall', 'Backup', 'Restore', 'Commit', 'Restart', 'Cleanup')]
     [string]$Action,
 
     [Parameter(Mandatory = $true)]
@@ -8,6 +8,8 @@ param(
 
     [Parameter(Mandatory = $true)]
     [string]$DataRoot,
+
+    [string]$RecoveryRoot,
 
     [ValidateSet(0, 1)]
     [int]$PurgeData = 0
@@ -152,13 +154,154 @@ function Stop-OwnedServiceTree {
         throw "The $serviceName service did not stop within 30 seconds."
     }
 
-    foreach ($processId in $ownedChildren) {
-        $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
+    foreach ($ownedChildProcessId in $ownedChildren) {
+        $process = Get-Process -Id $ownedChildProcessId -ErrorAction SilentlyContinue
         if ($process) {
-            Stop-Process -Id $processId -Force -ErrorAction Stop
+            Stop-Process -Id $ownedChildProcessId -Force -ErrorAction Stop
             $process.WaitForExit(5000)
         }
     }
+}
+
+function Get-NormalizedPath {
+    param([string]$Path)
+
+    $trimCharacters = [char[]]@(
+        [IO.Path]::DirectorySeparatorChar,
+        [IO.Path]::AltDirectorySeparatorChar
+    )
+    return [IO.Path]::GetFullPath($Path).TrimEnd($trimCharacters)
+}
+
+function Assert-RecoveryRoot {
+    if ([string]::IsNullOrWhiteSpace($RecoveryRoot)) {
+        throw 'RecoveryRoot is required for this maintenance action.'
+    }
+
+    $normalizedDataRoot = Get-NormalizedPath -Path $DataRoot
+    $programDataRoot = Split-Path -Parent $normalizedDataRoot
+    $expectedRecoveryRoot = Get-NormalizedPath -Path (Join-Path $programDataRoot 'MacSoft Agent Recovery')
+    $normalizedRecoveryRoot = Get-NormalizedPath -Path $RecoveryRoot
+    $normalizedProgramRoot = Get-NormalizedPath -Path $ProgramRoot
+    if (
+        -not $normalizedRecoveryRoot.Equals($expectedRecoveryRoot, [StringComparison]::OrdinalIgnoreCase) -or
+        $normalizedRecoveryRoot.Equals($normalizedDataRoot, [StringComparison]::OrdinalIgnoreCase) -or
+        $normalizedRecoveryRoot.Equals($normalizedProgramRoot, [StringComparison]::OrdinalIgnoreCase)
+    ) {
+        throw "RecoveryRoot must be the dedicated MacSoft Agent recovery directory: $expectedRecoveryRoot"
+    }
+    return $normalizedRecoveryRoot
+}
+
+function Invoke-RobocopyChecked {
+    param(
+        [string]$Source,
+        [string]$Destination
+    )
+
+    New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+    Invoke-Native -FilePath "$env:SystemRoot\System32\robocopy.exe" -Arguments @(
+        $Source,
+        $Destination,
+        '/MIR',
+        '/COPY:DAT',
+        '/DCOPY:DAT',
+        '/R:2',
+        '/W:1',
+        '/XJ',
+        '/NP',
+        '/NFL',
+        '/NDL'
+    ) -AllowedExitCodes @(0, 1, 2, 3, 4, 5, 6, 7) | Out-Null
+}
+
+function New-ProgramRecoveryBackup {
+    $normalizedRecoveryRoot = Assert-RecoveryRoot
+    if (-not (Test-Path -LiteralPath $ProgramRoot -PathType Container)) {
+        throw 'The installed Program Files directory is missing; an update recovery backup cannot be created.'
+    }
+
+    $programBytes = [int64]((
+        Get-ChildItem -LiteralPath $ProgramRoot -Force -File -Recurse -ErrorAction Stop |
+            Measure-Object -Property Length -Sum
+    ).Sum)
+    $drive = [IO.DriveInfo]::new([IO.Path]::GetPathRoot($normalizedRecoveryRoot))
+    $requiredBytes = $programBytes + 64MB
+    if ($drive.AvailableFreeSpace -lt $requiredBytes) {
+        throw "Insufficient free space for update recovery. Required=$requiredBytes Available=$($drive.AvailableFreeSpace)"
+    }
+
+    if (Test-Path -LiteralPath $normalizedRecoveryRoot) {
+        Remove-Item -LiteralPath $normalizedRecoveryRoot -Recurse -Force -ErrorAction Stop
+    }
+    New-Item -ItemType Directory -Path $normalizedRecoveryRoot -Force | Out-Null
+    $backupProgramRoot = Join-Path $normalizedRecoveryRoot 'ProgramRoot'
+    Invoke-RobocopyChecked -Source $ProgramRoot -Destination $backupProgramRoot
+    [ordered]@{
+        schema_version = 1
+        created_at = [DateTime]::UtcNow.ToString('o')
+        program_root = Get-NormalizedPath -Path $ProgramRoot
+        program_bytes = $programBytes
+    } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $normalizedRecoveryRoot 'recovery.json') -Encoding utf8
+    Write-Output "Program Files recovery backup created at $normalizedRecoveryRoot."
+}
+
+function Restore-ProgramRecoveryBackup {
+    $normalizedRecoveryRoot = Assert-RecoveryRoot
+    $backupProgramRoot = Join-Path $normalizedRecoveryRoot 'ProgramRoot'
+    $recoveryMetadata = Join-Path $normalizedRecoveryRoot 'recovery.json'
+    if (
+        -not (Test-Path -LiteralPath $backupProgramRoot -PathType Container) -or
+        -not (Test-Path -LiteralPath $recoveryMetadata -PathType Leaf)
+    ) {
+        throw 'The update recovery backup is incomplete.'
+    }
+
+    Stop-OwnedServiceTree
+    Stop-InstalledProgramProcesses
+    if (Test-Path -LiteralPath $ProgramRoot) {
+        Remove-Item -LiteralPath $ProgramRoot -Recurse -Force -ErrorAction Stop
+    }
+    Invoke-RobocopyChecked -Source $backupProgramRoot -Destination $ProgramRoot
+
+    $restoredPython = Join-Path $ProgramRoot 'python\python.exe'
+    if (-not (Test-Path -LiteralPath $restoredPython -PathType Leaf)) {
+        throw 'The restored product does not contain its managed Python runtime.'
+    }
+    Invoke-Native -FilePath $restoredPython -Arguments @(
+        '-B',
+        '-m',
+        'macsoft_runtime.service',
+        '--username',
+        'NT AUTHORITY\LocalService',
+        '--startup',
+        'auto',
+        'update'
+    ) | Out-Null
+    Invoke-Native -FilePath "$env:SystemRoot\System32\sc.exe" -Arguments @(
+        'start',
+        $serviceName
+    ) -AllowedExitCodes @(0, 1056) | Out-Null
+    Write-Output 'The previous Program Files installation was restored and restarted.'
+}
+
+function Remove-ProgramRecoveryBackup {
+    $normalizedRecoveryRoot = Assert-RecoveryRoot
+    if (Test-Path -LiteralPath $normalizedRecoveryRoot) {
+        Remove-Item -LiteralPath $normalizedRecoveryRoot -Recurse -Force -ErrorAction Stop
+    }
+    Write-Output 'Update recovery backup removed.'
+}
+
+function Restart-ExistingService {
+    if (-not (Get-ServiceRecord)) {
+        return
+    }
+    Invoke-Native -FilePath "$env:SystemRoot\System32\sc.exe" -Arguments @(
+        'start',
+        $serviceName
+    ) -AllowedExitCodes @(0, 1056) | Out-Null
+    Write-Output 'The existing MacSoft Agent Host service was restarted.'
 }
 
 function Remove-ServiceChecked {
@@ -241,6 +384,22 @@ if ($Action -eq 'PreInstall') {
     Stop-OwnedServiceTree
     Stop-InstalledProgramProcesses
     Write-Output 'Pre-install cleanup completed.'
+}
+
+if ($Action -eq 'Backup') {
+    New-ProgramRecoveryBackup
+}
+
+if ($Action -eq 'Restore') {
+    Restore-ProgramRecoveryBackup
+}
+
+if ($Action -eq 'Commit') {
+    Remove-ProgramRecoveryBackup
+}
+
+if ($Action -eq 'Restart') {
+    Restart-ExistingService
 }
 
 if ($Action -eq 'Cleanup') {

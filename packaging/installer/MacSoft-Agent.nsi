@@ -62,6 +62,9 @@ Var CommandExit
 Var CommandOutput
 Var PurgeCheckbox
 Var PurgeData
+Var UpgradeMode
+Var RecoveryReady
+Var RecoveryRoot
 
 !macro RunChecked Command FailureMessage
   nsExec::ExecToStack `${Command}`
@@ -81,6 +84,9 @@ Function .onInit
   ${EndIf}
   SetRegView 64
   SetShellVarContext all
+  StrCpy $UpgradeMode 0
+  StrCpy $RecoveryReady 0
+  StrCpy $RecoveryRoot "$APPDATA\MacSoft Agent Recovery"
 FunctionEnd
 
 Function un.onInit
@@ -133,8 +139,17 @@ Section "Install MacSoft Agent" SEC_MAIN
   InitPluginsDir
   File /oname=$PLUGINSDIR\maintenance.ps1 "${__FILEDIR__}\maintenance.ps1"
 
+  IfFileExists "$INSTDIR\product.json" 0 +2
+    StrCpy $UpgradeMode 1
+
   DetailPrint "Stopping the existing MacSoft Agent installation before payload replacement."
   !insertmacro RunChecked '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\maintenance.ps1" -Action PreInstall -ProgramRoot "$INSTDIR" -DataRoot "$APPDATA\MacSoft Agent" -PurgeData 0' "MacSoft Agent could not safely stop the existing installation. Close MacSoft Server and try again."
+
+  ${If} $UpgradeMode == 1
+    DetailPrint "Creating a recovery backup of the installed Program Files payload."
+    !insertmacro RunChecked '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\maintenance.ps1" -Action Backup -ProgramRoot "$INSTDIR" -DataRoot "$APPDATA\MacSoft Agent" -RecoveryRoot "$RecoveryRoot" -PurgeData 0' "MacSoft Agent could not create a safe update recovery backup. The existing installation was not replaced."
+    StrCpy $RecoveryReady 1
+  ${EndIf}
 
   SetOutPath "$INSTDIR"
   DetailPrint "Installing the verified MacSoft Agent payload."
@@ -185,10 +200,43 @@ Section "Install MacSoft Agent" SEC_MAIN
   WriteRegStr HKLM "${UNINSTALL_KEY}" "UninstallString" '"$INSTDIR\Uninstall.exe"'
   WriteRegDWORD HKLM "${UNINSTALL_KEY}" "NoModify" 1
   WriteRegDWORD HKLM "${UNINSTALL_KEY}" "NoRepair" 1
+
+  ${If} $RecoveryReady == 1
+    nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\maintenance.ps1" -Action Commit -ProgramRoot "$INSTDIR" -DataRoot "$APPDATA\MacSoft Agent" -RecoveryRoot "$RecoveryRoot" -PurgeData 0'
+    Pop $CommandExit
+    Pop $CommandOutput
+    DetailPrint "$CommandOutput"
+    ${If} $CommandExit != 0
+      DetailPrint "The update succeeded, but its recovery backup could not be removed. Exit code: $CommandExit"
+    ${EndIf}
+  ${EndIf}
 SectionEnd
 
 Function .onInstFailed
   DetailPrint "Rolling back the incomplete MacSoft Agent installation."
+  ${If} $UpgradeMode == 1
+    ${If} $RecoveryReady == 1
+      nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\maintenance.ps1" -Action Restore -ProgramRoot "$INSTDIR" -DataRoot "$APPDATA\MacSoft Agent" -RecoveryRoot "$RecoveryRoot" -PurgeData 0'
+      Pop $CommandExit
+      Pop $CommandOutput
+      DetailPrint "$CommandOutput"
+      ${If} $CommandExit == 0
+        MessageBox MB_ICONEXCLAMATION "The update failed. MacSoft Agent restored the previous installed program. ProgramData and customer data were preserved."
+      ${Else}
+        MessageBox MB_ICONSTOP "The update failed and automatic program recovery did not complete.$\r$\nExit code: $CommandExit$\r$\n$\r$\nThe recovery backup was preserved at:$\r$\n$RecoveryRoot"
+      ${EndIf}
+    ${Else}
+      DetailPrint "The existing installation was not replaced because a recovery backup was not completed."
+      nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\maintenance.ps1" -Action Restart -ProgramRoot "$INSTDIR" -DataRoot "$APPDATA\MacSoft Agent" -PurgeData 0'
+      Pop $CommandExit
+      Pop $CommandOutput
+      DetailPrint "$CommandOutput"
+      ${If} $CommandExit != 0
+        DetailPrint "The existing Host service could not be restarted automatically. Exit code: $CommandExit"
+      ${EndIf}
+    ${EndIf}
+    Return
+  ${EndIf}
   IfFileExists "$PLUGINSDIR\maintenance.ps1" 0 cleanup_done
   nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\maintenance.ps1" -Action Cleanup -ProgramRoot "$INSTDIR" -DataRoot "$APPDATA\MacSoft Agent" -PurgeData 0'
   Pop $CommandExit

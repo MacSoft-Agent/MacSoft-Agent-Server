@@ -4,6 +4,10 @@ New contributors should begin with the root
 [`CONTRIBUTING.md`](../CONTRIBUTING.md), then use this map for deeper product
 context.
 
+For a new clone or replacement development machine, follow
+[`development/FRESH_CLONE_SETUP.md`](development/FRESH_CLONE_SETUP.md) before
+debugging source or configuration.
+
 This is the navigation entry point for developers, reviewers, and Codex. Current
 code, schemas, tests, lock files, and `product.json` remain the primary
 authorities.

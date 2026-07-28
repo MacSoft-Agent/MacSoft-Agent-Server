@@ -28,11 +28,15 @@ Clone the repository into any normal development path. Do not copy
 runtime output from another machine.
 
 ```powershell
-git -c core.longpaths=true clone https://github.com/NatsunagiYu/MacSoft-Agent.git
+git -c core.longpaths=true clone https://github.com/MacSoft-Agent/MacSoft-Agent.git
 cd MacSoft-Agent
 git config core.longpaths true
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\bootstrap-development.ps1
 ```
+
+For the complete new-machine procedure, local configuration boundary, startup
+checks, and troubleshooting, follow
+[Fresh Clone Development Setup](docs/development/FRESH_CLONE_SETUP.md).
 
 The bootstrap script creates `hermes\venv` from the committed `uv.lock` and
 installs the root Node workspaces from `hermes\package-lock.json`. Both
@@ -94,6 +98,13 @@ git switch -c fix/short-description
 
 Do not make broad direct changes on `main`. Release branches should exist only
 for active release work, not as a permanent GitFlow layer.
+
+The public repository can be cloned without repository write access. Pushing a
+branch to `MacSoft-Agent/MacSoft-Agent` still requires a GitHub account with
+write permission. Contributors without write permission should work from a
+fork and open a Pull Request from that fork. In either case, make changes on a
+task branch and submit a Pull Request to `main`; do not push feature or
+documentation work directly to `main`.
 
 ## Scope and approval
 

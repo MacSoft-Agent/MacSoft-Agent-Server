@@ -439,6 +439,7 @@ export interface DesktopUpdateCommit {
 export interface DesktopUpdateStatus {
   supported: boolean
   updateAvailable?: boolean
+  manifestConfigured?: boolean
   branch?: string
   currentBranch?: string
   reason?: string
@@ -450,6 +451,11 @@ export interface DesktopUpdateStatus {
   commits?: DesktopUpdateCommit[]
   dirty?: boolean
   fetchedAt?: number
+  currentVersion?: string
+  currentBuildId?: string
+  targetVersion?: string
+  targetBuildId?: string
+  publishedAt?: string
 }
 
 export type DesktopUpdateDirtyStrategy = 'abort' | 'stash' | 'force'

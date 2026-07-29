@@ -3,7 +3,12 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from macsoft.artifacts.renderer import ChartRenderError, load_render_input, render_chart_png
+from macsoft.artifacts.renderer import (
+    ChartRenderError,
+    load_render_input,
+    render_chart_chromium,
+    render_chart_png,
+)
 from macsoft.artifacts.repository import (
     claim_render_job,
     finalize_render,
@@ -22,13 +27,14 @@ class ChartRenderWorker:
         self.worker_id = worker_id
         self.storage = storage
 
-    def process_one(self) -> bool:
+    def process_one(self, *, job_id: str | None = None) -> bool:
         conn = connect_db(self.config)
         try:
             job = claim_render_job(
                 conn,
                 worker_id=self.worker_id,
                 lease_seconds=self.config.chart_artifacts.lease_seconds,
+                job_id=job_id,
             )
         finally:
             conn.close()
@@ -40,10 +46,20 @@ class ChartRenderWorker:
         # collide with the valid Worker's output.
         staging = self.storage.staging_dir(job.generation_id, job.lease_token)
         png_path = staging / "chart.png"
+        pdf_path = staging / "chart.pdf"
         published = None
+        published_pdf = None
         try:
             render_input = load_render_input(job.render_input_json)
-            render_chart_png(render_input, png_path)
+            if self.config.chart_artifacts.renderer_backend == "chromium":
+                render_chart_chromium(
+                    render_input,
+                    png_path,
+                    pdf_target=pdf_path if "pdf" in job.requested_formats else None,
+                    chromium_path=self.config.chart_artifacts.chromium_path,
+                )
+            else:
+                render_chart_png(render_input, png_path)
             conn = connect_db(self.config)
             try:
                 if not owns_lease(
@@ -58,6 +74,11 @@ class ChartRenderWorker:
 
             storage_key = f"{job.generation_id}/{job.lease_token}/chart.png"
             published = self.storage.publish(png_path, storage_key=storage_key)
+            if pdf_path.is_file():
+                published_pdf = self.storage.publish(
+                    pdf_path,
+                    storage_key=f"{job.generation_id}/{job.lease_token}/chart.pdf",
+                )
             conn = connect_db(self.config)
             try:
                 title = str(render_input.get("title") or "Demo Chart")
@@ -78,6 +99,17 @@ class ChartRenderWorker:
                         "sha256": published.sha256,
                         "storage_key": published.storage_key,
                     },
+                    pdf_file=(
+                        {
+                            "filename": "invoice-chart.pdf",
+                            "content_type": "application/pdf",
+                            "size_bytes": published_pdf.size_bytes,
+                            "sha256": published_pdf.sha256,
+                            "storage_key": published_pdf.storage_key,
+                        }
+                        if published_pdf is not None
+                        else None
+                    ),
                 )
             finally:
                 conn.close()
@@ -95,6 +127,8 @@ class ChartRenderWorker:
                 )
                 if published is not None:
                     self.storage.remove_if_unreferenced(conn, storage_key=published.storage_key)
+                if published_pdf is not None:
+                    self.storage.remove_if_unreferenced(conn, storage_key=published_pdf.storage_key)
             finally:
                 conn.close()
             return True

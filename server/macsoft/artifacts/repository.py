@@ -164,6 +164,7 @@ def claim_render_job(
     *,
     worker_id: str,
     lease_seconds: int,
+    job_id: str | None = None,
 ) -> ClaimedRenderJob | None:
     now = utc_now_iso()
     conn.execute("BEGIN IMMEDIATE")
@@ -180,13 +181,14 @@ def claim_render_job(
                     jobs.status = 'queued'
                  OR (jobs.status = 'rendering' AND jobs.lease_expires_at < ?)
             )
+              AND (? IS NULL OR jobs.job_id = ?)
               AND jobs.attempt_count < jobs.max_attempts
               AND generations.status NOT IN ('ready', 'partial', 'failed', 'deleted')
               AND generations.render_input_expires_at > ?
             ORDER BY jobs.created_at ASC
             LIMIT 1
             """,
-            (now, now),
+            (now, job_id, job_id, now),
         ).fetchone()
         if row is None:
             conn.commit()

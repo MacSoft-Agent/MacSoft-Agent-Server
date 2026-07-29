@@ -21,6 +21,7 @@ runtime:
 autocount:
   enabled: false
   catalog_path: "./docs/autocount-api-catalog.json"
+  plugin_config_path: "../runtime/plugins/macsoft-autocount/config.json"
 
 # Server Foundation only. Keep disabled in production until the Hermes,
 # AutoCount, Connector, financial-rule, and Client gates are approved.
@@ -32,3 +33,5 @@ chart_artifacts:
   lease_seconds: 30
   render_input_ttl_minutes: 60
   retention_days: 30
+  renderer_backend: "foundation" # Use "chromium" after installed-product acceptance.
+  chromium_path: ""

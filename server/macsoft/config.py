@@ -42,6 +42,7 @@ class RuntimeSettings:
 class AutoCountSettings:
     enabled: bool
     catalog_path: str
+    plugin_config_path: str
 
 
 @dataclass(frozen=True)
@@ -53,6 +54,8 @@ class ChartArtifactSettings:
     lease_seconds: int
     render_input_ttl_minutes: int
     retention_days: int
+    renderer_backend: str
+    chromium_path: str
 
 
 @dataclass(frozen=True)
@@ -97,6 +100,9 @@ def load_config(config_path: str | None = None) -> AppConfig:
     chart_environment = str(chart_data.get("environment", "production")).strip().lower()
     if chart_environment not in {"production", "development", "test"}:
         raise ValueError("chart_artifacts.environment must be production, development, or test")
+    chart_renderer_backend = str(chart_data.get("renderer_backend", "foundation")).strip().lower()
+    if chart_renderer_backend not in {"foundation", "chromium"}:
+        raise ValueError("chart_artifacts.renderer_backend must be foundation or chromium")
 
     return AppConfig(
         config_path=str(path),
@@ -141,6 +147,12 @@ def load_config(config_path: str | None = None) -> AppConfig:
                     "./docs/autocount-api-catalog.json",
                 )
             ),
+            plugin_config_path=str(
+                autocount_data.get(
+                    "plugin_config_path",
+                    "../runtime/plugins/macsoft-autocount/config.json",
+                )
+            ),
         ),
         chart_artifacts=ChartArtifactSettings(
             enabled=bool(chart_data.get("enabled", False)),
@@ -153,5 +165,7 @@ def load_config(config_path: str | None = None) -> AppConfig:
                 min(int(chart_data.get("render_input_ttl_minutes", 60)), 24 * 60),
             ),
             retention_days=max(1, min(int(chart_data.get("retention_days", 30)), 3650)),
+            renderer_backend=chart_renderer_backend,
+            chromium_path=str(chart_data.get("chromium_path", "")).strip(),
         ),
     )

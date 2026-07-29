@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from collections.abc import Iterator
 
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -30,6 +31,8 @@ from macsoft.chat.result_formatter import (
     map_user_readable_error,
     user_requested_json,
 )
+from macsoft.artifacts.invoice_chart import InvoiceChartError, is_invoice_chart_request
+from macsoft.artifacts.invoice_service import generate_invoice_count_artifact
 from macsoft.db import connect_db
 from macsoft.files.content import AttachmentContentError, build_hermes_user_content
 from macsoft.files.storage import UploadValidationError, require_owned_files
@@ -265,6 +268,134 @@ def chat_stream(
                 model=None,
             )
 
+            assistant_message_id = new_id("msg_assistant")
+            chart_settings = getattr(config, "chart_artifacts", None)
+            if bool(getattr(chart_settings, "enabled", False)) and is_invoice_chart_request(body.message):
+                activity_enabled = supports_activity_v1(x_macsoft_client_capabilities)
+
+                def invoice_chart_event_stream() -> Iterator[str]:
+                    try:
+                        yield sse_event(
+                            "message_start",
+                            {
+                                "message_id": assistant_message_id,
+                                "session_id": body.session_id,
+                                "model": "server-autocount-chart",
+                            },
+                        )
+                        mapper = ActivityMapper(
+                            message_id=assistant_message_id,
+                            enabled=activity_enabled,
+                        )
+                        started = activity_sse(
+                            mapper,
+                            activity_id="autocount_chart",
+                            kind=ActivityKind.EXTERNAL_REQUEST,
+                            status=ActivityStatus.STARTED,
+                            title="Reading AutoCount sales invoices",
+                            detail="Preparing a bounded invoice-count dataset.",
+                        )
+                        if started is not None:
+                            yield started
+                        try:
+                            with ThreadPoolExecutor(max_workers=1, thread_name_prefix="invoice-chart") as executor:
+                                future = executor.submit(
+                                    generate_invoice_count_artifact,
+                                    config,
+                                    request_id=str(user_message["message_id"]),
+                                    session_id=body.session_id,
+                                    assistant_message_id=assistant_message_id,
+                                    owner_user_id=user_id,
+                                    owner_device_id=device_id,
+                                )
+                                while True:
+                                    try:
+                                        artifact_payload = future.result(timeout=5)
+                                        break
+                                    except FutureTimeoutError:
+                                        waiting = activity_sse(
+                                            mapper,
+                                            activity_id="autocount_chart",
+                                            kind=ActivityKind.EXTERNAL_REQUEST,
+                                            status=ActivityStatus.UPDATED,
+                                            title="Waiting for AutoCount connector",
+                                            detail="The read-only invoice query is still running.",
+                                        )
+                                        if waiting is not None:
+                                            yield waiting
+                            summary = str(artifact_payload["artifact"]["summary"])
+                            completed = activity_sse(
+                                mapper,
+                                activity_id="autocount_chart",
+                                kind=ActivityKind.FINALIZE,
+                                status=ActivityStatus.COMPLETED,
+                                title="Invoice chart generated",
+                            )
+                            if completed is not None:
+                                yield completed
+                            yield sse_event("token_delta", {"text": summary})
+                            yield sse_event("artifact", artifact_payload)
+                            yield sse_event(
+                                "message_done",
+                                {
+                                    "ok": True,
+                                    "message_id": assistant_message_id,
+                                    "session_id": body.session_id,
+                                    "user_message_id": user_message["message_id"],
+                                    "model": "server-autocount-chart",
+                                },
+                            )
+                        except (InvoiceChartError, RuntimeError) as error:
+                            code = str(error) or "invoice_chart_failed"
+                            readable = {
+                                "autocount_disabled": "AutoCount chart access is not enabled on this Server.",
+                                "autocount_connector_offline": "The AutoCount connector is offline.",
+                                "invoice_dataset_empty": "AutoCount returned no usable invoice dates for this chart.",
+                            }.get(code, "The invoice chart could not be generated from AutoCount.")
+                            failure_conn = connect_db(config)
+                            try:
+                                existing = failure_conn.execute(
+                                    "SELECT 1 FROM messages WHERE message_id = ?",
+                                    (assistant_message_id,),
+                                ).fetchone()
+                                if existing is None:
+                                    save_message(
+                                        failure_conn,
+                                        session_id=body.session_id,
+                                        user_id=user_id,
+                                        owner_device_id=device_id,
+                                        role="assistant",
+                                        content=readable,
+                                        status="failed",
+                                        model="server-autocount-chart",
+                                        message_id=assistant_message_id,
+                                    )
+                            finally:
+                                failure_conn.close()
+                            yield sse_event("token_delta", {"text": readable})
+                            yield sse_event(
+                                "message_done",
+                                {
+                                    "ok": False,
+                                    "message_id": assistant_message_id,
+                                    "session_id": body.session_id,
+                                    "user_message_id": user_message["message_id"],
+                                    "model": "server-autocount-chart",
+                                    "error": {"code": code, "message": readable},
+                                },
+                            )
+                    finally:
+                        registry.release(body.session_id)
+
+                response = StreamingResponse(
+                    invoice_chart_event_stream(),
+                    media_type="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+                    background=BackgroundTask(registry.release, body.session_id),
+                )
+                reservation_owned_by_response = True
+                return response
+
             context_window = list_ai_context_messages_for_session(
                 conn,
                 session_id=body.session_id,
@@ -305,7 +436,6 @@ def chat_stream(
                 },
             )
 
-            assistant_message_id = new_id("msg_assistant")
             activity_enabled = supports_activity_v1(x_macsoft_client_capabilities)
 
             def request_final_reply() -> str:

@@ -8,6 +8,10 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from macsoft.artifacts.invoice_chart import (
+    build_invoice_count_render_input,
+    is_invoice_chart_request,
+)
 from macsoft.artifacts.renderer import load_render_input, render_chart_png
 from macsoft.artifacts.repository import (
     claim_render_job,
@@ -128,6 +132,27 @@ class ChartArtifactFoundationTests(unittest.TestCase):
             },
             "metadata": {"source": {"type": "mock"}},
         }
+
+    def test_invoice_chart_intent_requires_both_invoice_and_chart_terms(self) -> None:
+        self.assertTrue(is_invoice_chart_request("Generate an invoice chart"))
+        self.assertTrue(is_invoice_chart_request("我要销售发票趋势图"))
+        self.assertFalse(is_invoice_chart_request("Show the latest invoices"))
+        self.assertFalse(is_invoice_chart_request("Generate a cashflow chart"))
+
+    def test_invoice_count_dataset_uses_dates_without_claiming_financial_amounts(self) -> None:
+        render_input = build_invoice_count_render_input(
+            [
+                {"DocDate": "2026-06-01T00:00:00", "DocNo": "A"},
+                {"DocDate": "2026-06-20T00:00:00", "DocNo": "B"},
+                {"DocDate": "2026-07-03T00:00:00", "DocNo": "C"},
+            ]
+        )
+        self.assertEqual(
+            render_input["dataset"]["points"],
+            [{"key": "2026-06", "value": 2}, {"key": "2026-07", "value": 1}],
+        )
+        self.assertEqual(render_input["metric"]["name"], "invoice_count")
+        self.assertFalse(render_input["metadata"]["financial_amount"])
 
     def create_job(self, requested_formats: tuple[str, ...] = ("png",)) -> dict[str, str]:
         conn = connect_db(self.config)

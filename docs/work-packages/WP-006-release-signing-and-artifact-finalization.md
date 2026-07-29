@@ -2,8 +2,10 @@
 
 ## Status
 
-Implementation complete on the WP-006 branch; independent review, merge, real
-certificate verification, and production trust provisioning remain gated.
+The initial implementation is merged. A bounded follow-up adds independent
+RFC 3161 token, message-imprint, and SHA-256 digest-policy verification before
+final artifact evidence may be produced. Real-certificate verification and
+production trust provisioning remain gated.
 
 ## Objective
 
@@ -53,8 +55,12 @@ After the external command returns, the pipeline independently requires:
 1. `Get-AuthenticodeSignature` status `Valid`;
 2. a signer certificate;
 3. a timestamp certificate;
-4. successful `signtool verify /pa /all /v`;
-5. two matching post-verification byte-count and SHA-256 observations.
+4. a structurally unambiguous RFC 3161 unsigned attribute in the final PE;
+5. successful Windows `CryptVerifyTimeStampSignature` validation of that token
+   against the Authenticode signer's signature bytes;
+6. RFC 3161 message-imprint digest algorithm SHA-256;
+7. successful `signtool verify /pa /all /v`;
+8. two matching post-verification byte-count and SHA-256 observations.
 
 Only then may `release/build-report.json` be written. The report records public
 certificate subjects/thumbprints, timestamp presence, artifact class, final
@@ -103,6 +109,10 @@ Production finalization stops without a new build report when:
   fails;
 - Authenticode status is not `Valid`;
 - signer or timestamp evidence is absent;
+- only a legacy Authenticode countersignature is present;
+- multiple primary, embedded, or nested Authenticode signatures are present;
+- RFC 3161 evidence is malformed, ambiguous, unverifiable, or does not use a
+  SHA-256 message imprint;
 - native signature verification fails;
 - final bytes or SHA-256 cannot be produced or change during finalization.
 
@@ -121,6 +131,9 @@ artifact.
   - native-verifier failure;
   - post-sign byte/hash evidence;
   - rejection of repository-local signing commands.
+- `scripts/test-rfc3161-timestamp-verification.ps1` exercises accepted RFC 3161
+  evidence plus missing, legacy-only, ambiguous, malformed, native-verifier
+  failure, and non-SHA-256 paths without requiring production signing material.
 - `product_runtime/tests/test_packaging_contract.py` preserves the durable
   packaging contract.
 - `scripts/verify-development.ps1` runs the focused finalization tests before

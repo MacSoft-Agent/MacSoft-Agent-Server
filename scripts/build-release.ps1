@@ -140,6 +140,8 @@ $report = [ordered]@{
     production_ready = $artifact.production_ready
     authenticode_status = $artifact.authenticode_status
     timestamped = $artifact.timestamped
+    rfc3161_verified = $artifact.rfc3161_verified
+    timestamp_digest_algorithm = $artifact.timestamp_digest_algorithm
     signer_subject = $artifact.signer_subject
     signer_thumbprint = $artifact.signer_thumbprint
     timestamp_subject = $artifact.timestamp_subject
@@ -154,7 +156,10 @@ try {
     if (
         [int64]$writtenReport.installer_bytes -ne [int64]$artifact.installer_bytes -or
         [string]$writtenReport.installer_sha256 -ne [string]$artifact.installer_sha256 -or
-        [bool]$writtenReport.production_ready -ne [bool]$artifact.production_ready
+        [bool]$writtenReport.production_ready -ne [bool]$artifact.production_ready -or
+        [bool]$writtenReport.rfc3161_verified -ne [bool]$artifact.rfc3161_verified -or
+        [string]$writtenReport.timestamp_digest_algorithm -ne
+            [string]$artifact.timestamp_digest_algorithm
     ) {
         throw 'The final build report does not match the finalized installer evidence.'
     }

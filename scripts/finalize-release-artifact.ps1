@@ -112,6 +112,18 @@ function Get-StableArtifactEvidence {
     }
 }
 
+function Assert-ApprovedRfc3161Evidence {
+    param($Evidence)
+
+    if (
+        $null -eq $Evidence -or
+        $Evidence.rfc3161_verified -ne $true -or
+        [string]$Evidence.message_imprint_digest -ne 'sha256'
+    ) {
+        throw 'The final installer does not contain approved RFC 3161 timestamp evidence.'
+    }
+}
+
 function Complete-ReleaseArtifact {
     param(
         [Parameter(Mandatory = $true)]
@@ -142,6 +154,12 @@ function Complete-ReleaseArtifact {
                 throw "signtool verification failed with exit code $LASTEXITCODE."
             }
             $null = $verificationOutput
+        },
+
+        [scriptblock]$Rfc3161Verifier = {
+            param($Installer)
+            & (Join-Path $PSScriptRoot 'verify-rfc3161-timestamp.ps1') `
+                -InstallerPath $Installer
         }
     )
 
@@ -175,6 +193,9 @@ function Complete-ReleaseArtifact {
             throw 'The final installer does not contain a trusted timestamp.'
         }
 
+        $rfc3161Evidence = & $Rfc3161Verifier $artifact
+        Assert-ApprovedRfc3161Evidence -Evidence $rfc3161Evidence
+
         $resolvedSignTool = Resolve-ReleaseSignTool -RequestedPath $RequestedSignTool
         & $NativeVerifier $resolvedSignTool $artifact
 
@@ -187,6 +208,8 @@ function Complete-ReleaseArtifact {
         ) {
             throw 'The final installer signature or timestamp changed during finalization.'
         }
+        $finalRfc3161Evidence = & $Rfc3161Verifier $artifact
+        Assert-ApprovedRfc3161Evidence -Evidence $finalRfc3161Evidence
         $finalEvidence = Get-StableArtifactEvidence -ArtifactPath $artifact
         if (
             $firstEvidence.bytes -ne $finalEvidence.bytes -or
@@ -200,6 +223,8 @@ function Complete-ReleaseArtifact {
             production_ready = $true
             authenticode_status = 'Valid'
             timestamped = $true
+            rfc3161_verified = $true
+            timestamp_digest_algorithm = 'sha256'
             signer_subject = [string]$finalSignature.SignerCertificate.Subject
             signer_thumbprint = ([string]$finalSignature.SignerCertificate.Thumbprint).ToLowerInvariant()
             timestamp_subject = [string]$finalSignature.TimeStamperCertificate.Subject
@@ -225,6 +250,8 @@ function Complete-ReleaseArtifact {
         production_ready = $false
         authenticode_status = [string]$unsignedSignature.Status
         timestamped = $false
+        rfc3161_verified = $false
+        timestamp_digest_algorithm = $null
         signer_subject = $null
         signer_thumbprint = $null
         timestamp_subject = $null

@@ -93,6 +93,30 @@ test('declared or actual size mismatch is rejected and partial file is removed',
   }
 })
 
+test('oversized download cancels the underlying web stream', async () => {
+  const root = path.join(os.tmpdir(), `macsoft-update-download-cancel-${process.pid}-${Date.now()}`)
+  const bytes = Buffer.from('trusted-installer')
+  let cancelled = false
+  const body = new ReadableStream<Uint8Array>({
+    cancel() {
+      cancelled = true
+    },
+    start(controller) {
+      controller.enqueue(Buffer.concat([bytes, Buffer.from('extra')]))
+    }
+  })
+  try {
+    await assert.rejects(
+      writeVerifiedMacSoftInstaller({ body }, releaseFor(bytes), root),
+      (error: unknown) =>
+        error instanceof MacSoftUpdateDownloadError && error.code === 'installer-size-mismatch'
+    )
+    assert.equal(cancelled, true)
+  } finally {
+    await rm(root, { force: true, recursive: true })
+  }
+})
+
 test('SHA-256 mismatch is rejected and installer is not published', async () => {
   const root = path.join(os.tmpdir(), `macsoft-update-download-hash-${process.pid}-${Date.now()}`)
   const bytes = Buffer.from('trusted-installer')

@@ -92,7 +92,7 @@ public identifiers or attestations only.
 | Validity period | Pending |
 | Timestamp service | Pending |
 | Signing role | Pending |
-| Signature/timestamp verification procedure | Pending |
+| Signature/timestamp verification procedure | Implemented in WP-006; real certificate acceptance pending |
 | Test/production separation | Pending |
 
 Codex and ordinary developer workspaces must never receive or retain the

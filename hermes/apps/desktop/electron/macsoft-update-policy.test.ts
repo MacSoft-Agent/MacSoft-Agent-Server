@@ -2,8 +2,8 @@ import assert from 'node:assert/strict'
 import { generateKeyPairSync, sign } from 'node:crypto'
 import test from 'node:test'
 
-import { customerUpdateApply, customerUpdateBranch, customerUpdateCheck } from './macsoft-update-policy'
 import type { TrustedMacSoftRelease } from './macsoft-update-manifest'
+import { customerUpdateApply, customerUpdateBranch, customerUpdateCheck } from './macsoft-update-policy'
 
 const baseMetadata = {
   product: 'MacSoft Agent' as const,
@@ -21,6 +21,34 @@ test('customer update policy stays fail-closed when no trusted feed exists', asy
   assert.equal(status.manifestConfigured, false)
   assert.deepEqual(customerUpdateBranch(), { branch: 'installer-managed' })
   assert.equal(customerUpdateApply().ok, false)
+})
+
+test('configured activation build fails closed while the stable manifest is unavailable', async () => {
+  let trustedRelease: TrustedMacSoftRelease | null = {
+    buildId: 'stale',
+    bytes: 1,
+    publishedAt: '2026-07-29T00:00:00.000Z',
+    sha256: 'a'.repeat(64),
+    url: 'https://updates.example.test/stale.exe',
+    version: '9.9.9'
+  }
+  const status = await customerUpdateCheck(
+    {
+      ...baseMetadata,
+      update_manifest_url: 'https://updates.example.test/manifest.json',
+      update_manifest_public_key: 'ZmFrZQ=='
+    },
+    {
+      packaged: true,
+      fetchManifest: async () => { throw new Error('404') },
+      onTrustedRelease: release => { trustedRelease = release }
+    }
+  )
+  assert.equal(status.supported, false)
+  assert.equal(status.updateAvailable, false)
+  assert.equal(status.error, 'update-check-failed')
+  assert.equal(status.manifestConfigured, true)
+  assert.equal(trustedRelease, null)
 })
 
 test('configured source is not contacted outside a packaged build', async () => {

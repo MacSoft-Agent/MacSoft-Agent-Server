@@ -22,6 +22,18 @@ This is a development collaboration baseline, not a production release
 approval. The annotated tag records the exact accepted commit without requiring
 this document to contain its own commit hash.
 
+## 0.1.1 update activation candidate
+
+The current source candidate advances the product and Desktop version to
+`0.1.1` with Build ID `macsoft-agent-0.1.1-stable.20260729.1`. It configures
+the long-lived stable manifest locator and one Ed25519 public verification key.
+
+The Hermes baseline, compatibility contract, data schema and protected-resource
+version remain unchanged. The stable manifest may remain unavailable until the
+accepted `0.1.2` update candidate is ready; `0.1.1` fails closed in that state.
+No installer has been published and the real installed `0.1.1 -> 0.1.2`
+acceptance remains open.
+
 ## Program history and owner decisions
 
 - Stage 1 current-state backup was explicitly skipped by the Product Owner.

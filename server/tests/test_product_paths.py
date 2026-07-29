@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -33,8 +34,9 @@ class ProductPathTests(unittest.TestCase):
 
     def test_product_version_comes_from_authoritative_metadata(self) -> None:
         root = Path(__file__).resolve().parents[2]
+        expected = json.loads((root / "product.json").read_text("utf-8"))["product_version"]
         with patch.dict("os.environ", {"MACSOFT_PRODUCT_METADATA": str(root / "product.json")}):
-            self.assertEqual(product_version(), "0.1.0")
+            self.assertEqual(product_version(), expected)
 
     def test_host_owned_hermes_api_key_overrides_preserved_yaml(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

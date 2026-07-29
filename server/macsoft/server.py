@@ -13,6 +13,7 @@ from macsoft.gateway.routes_chat import router as chat_router
 from macsoft.gateway.routes_admin import router as admin_router
 from macsoft.gateway.routes_client import router as client_router
 from macsoft.gateway.routes_files import router as files_router
+from macsoft.gateway.routes_artifacts import router as artifacts_router
 from macsoft.gateway.routes_health import router as health_router
 from macsoft.gateway.routes_sessions import router as sessions_router
 from macsoft.gateway.routes_skills import router as skills_router
@@ -66,6 +67,7 @@ def create_app() -> FastAPI:
     app.include_router(sessions_router)
     app.include_router(skills_router)
     app.include_router(files_router)
+    app.include_router(artifacts_router)
     app.include_router(chat_router)
     app.include_router(admin_router)
 

@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass
 from typing import Any
@@ -44,7 +45,7 @@ def save_message(
     owner_device_id: str,
     role: str,
     content: str,
-    status: str = "saved",
+    status: str = "completed",
     model: str | None = None,
     message_id: str | None = None,
 ) -> dict[str, Any]:
@@ -94,11 +95,12 @@ def save_message(
         raise ValueError("session_not_found")
     conn.commit()
 
-    touch_session(
-        conn,
-        session_id=session_id,
-        preview=content,
-    )
+    if status != "generating":
+        touch_session(
+            conn,
+            session_id=session_id,
+            preview=content,
+        )
 
     row = conn.execute(
         """
@@ -120,6 +122,88 @@ def save_message(
     if row is None:
         raise RuntimeError("Failed to save message.")
 
+    return _row_to_message(row)
+
+
+def create_pending_assistant_message(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    user_id: str,
+    owner_device_id: str,
+    message_id: str,
+    model: str | None = None,
+) -> dict[str, Any]:
+    """Create a pending assistant row without changing visible session metadata."""
+
+    return save_message(
+        conn,
+        session_id=session_id,
+        user_id=user_id,
+        owner_device_id=owner_device_id,
+        role="assistant",
+        content="",
+        status="generating",
+        model=model,
+        message_id=message_id,
+    )
+
+
+def complete_pending_assistant_message(
+    conn: sqlite3.Connection,
+    *,
+    message_id: str,
+    session_id: str,
+    user_id: str,
+    owner_device_id: str,
+    content: str,
+    failed: bool = False,
+) -> dict[str, Any]:
+    status = "failed" if failed else "completed"
+    cursor = conn.execute(
+        """
+        UPDATE messages
+        SET content = ?, status = ?
+        WHERE message_id = ?
+          AND session_id = ?
+          AND user_id = ?
+          AND role = 'assistant'
+          AND status = 'generating'
+          AND EXISTS (
+              SELECT 1
+              FROM sessions
+              WHERE sessions.session_id = messages.session_id
+                AND sessions.user_id = ?
+                AND sessions.owner_device_id = ?
+                AND sessions.status = 'active'
+                AND sessions.deleted_at IS NULL
+          )
+        """,
+        (
+            content,
+            status,
+            message_id,
+            session_id,
+            user_id,
+            user_id,
+            owner_device_id,
+        ),
+    )
+    if cursor.rowcount != 1:
+        conn.rollback()
+        raise ValueError("pending_message_not_found")
+    conn.commit()
+    touch_session(conn, session_id=session_id, preview=content)
+    row = conn.execute(
+        """
+        SELECT message_id, session_id, user_id, role, content, status, model, created_at
+        FROM messages
+        WHERE message_id = ?
+        """,
+        (message_id,),
+    ).fetchone()
+    if row is None:
+        raise RuntimeError("Failed to complete pending message.")
     return _row_to_message(row)
 
 
@@ -150,12 +234,78 @@ def list_messages_for_session(
           AND sessions.owner_device_id = ?
           AND sessions.status = 'active'
           AND sessions.deleted_at IS NULL
+          AND messages.status IN ('completed', 'failed')
         ORDER BY messages.created_at ASC
         """,
         (session_id, user_id, user_id, owner_device_id),
     ).fetchall()
 
-    return [_row_to_message(row) for row in rows]
+    messages = [_row_to_message(row) for row in rows]
+    if not messages:
+        return messages
+
+    artifacts_by_message: dict[str, list[dict[str, Any]]] = {}
+    artifact_rows = conn.execute(
+        """
+        SELECT
+            artifacts.artifact_id,
+            artifacts.assistant_message_id,
+            artifacts.kind,
+            artifacts.status,
+            artifacts.revision,
+            artifacts.title,
+            artifacts.summary,
+            artifacts.metadata_json,
+            artifacts.expired_at
+        FROM artifacts
+        INNER JOIN sessions ON sessions.session_id = artifacts.session_id
+        WHERE artifacts.session_id = ?
+          AND artifacts.owner_user_id = ?
+          AND artifacts.owner_device_id = ?
+          AND artifacts.deleted_at IS NULL
+          AND sessions.deleted_at IS NULL
+        ORDER BY artifacts.created_at ASC
+        """,
+        (session_id, user_id, owner_device_id),
+    ).fetchall()
+    for artifact_row in artifact_rows:
+        artifact_id = str(artifact_row["artifact_id"])
+        revision = int(artifact_row["revision"])
+        file_rows = conn.execute(
+            """
+            SELECT file_id, format, role, filename, content_type, size_bytes
+            FROM artifact_files
+            WHERE artifact_id = ?
+              AND revision = ?
+              AND status = 'available'
+              AND deleted_at IS NULL
+            ORDER BY CASE format WHEN 'png' THEN 0 ELSE 1 END
+            """,
+            (artifact_id, revision),
+        ).fetchall()
+        files = [dict(file_row) for file_row in file_rows]
+        preview = next((item for item in files if item["role"] == "preview"), None)
+        downloads = [item for item in files if item["role"] == "download" or item["format"] == "png"]
+        artifact = {
+            "artifact_id": artifact_id,
+            "kind": artifact_row["kind"],
+            "status": artifact_row["status"],
+            "revision": revision,
+            "title": artifact_row["title"],
+            "summary": artifact_row["summary"],
+            "preview": preview,
+            "downloads": downloads,
+            "metadata": json.loads(str(artifact_row["metadata_json"])),
+            "expired_at": artifact_row["expired_at"],
+        }
+        if artifact_row["status"] == "expired":
+            artifact["preview"] = None
+            artifact["downloads"] = []
+        artifacts_by_message.setdefault(str(artifact_row["assistant_message_id"]), []).append(artifact)
+
+    for message in messages:
+        message["artifacts"] = artifacts_by_message.get(str(message["message_id"]), [])
+    return messages
 
 
 def estimate_message_tokens(content: str) -> int:
@@ -210,8 +360,9 @@ def list_ai_context_messages_for_session(
           AND sessions.owner_device_id = ?
           AND sessions.status = 'active'
           AND sessions.deleted_at IS NULL
-          AND messages.role IN ('user', 'assistant')
-          AND TRIM(messages.content) <> ''
+              AND messages.role IN ('user', 'assistant')
+              AND messages.status = 'completed'
+              AND TRIM(messages.content) <> ''
         ORDER BY messages.rowid DESC
         LIMIT ?
         """,

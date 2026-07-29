@@ -21,3 +21,14 @@ runtime:
 autocount:
   enabled: false
   catalog_path: "./docs/autocount-api-catalog.json"
+
+# Server Foundation only. Keep disabled in production until the Hermes,
+# AutoCount, Connector, financial-rule, and Client gates are approved.
+chart_artifacts:
+  enabled: false
+  environment: "production"
+  storage_path: "./data/chart-artifacts"
+  worker_max_attempts: 3
+  lease_seconds: 30
+  render_input_ttl_minutes: 60
+  retention_days: 30

@@ -45,6 +45,17 @@ class AutoCountSettings:
 
 
 @dataclass(frozen=True)
+class ChartArtifactSettings:
+    enabled: bool
+    environment: str
+    storage_path: str
+    worker_max_attempts: int
+    lease_seconds: int
+    render_input_ttl_minutes: int
+    retention_days: int
+
+
+@dataclass(frozen=True)
 class AppConfig:
     config_path: str
     server: ServerSettings
@@ -53,6 +64,7 @@ class AppConfig:
     models: ModelSettings
     runtime: RuntimeSettings
     autocount: AutoCountSettings
+    chart_artifacts: ChartArtifactSettings
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -81,6 +93,10 @@ def load_config(config_path: str | None = None) -> AppConfig:
     models_data = data.get("models", {})
     runtime_data = data.get("runtime", {})
     autocount_data = data.get("autocount", {})
+    chart_data = data.get("chart_artifacts", {})
+    chart_environment = str(chart_data.get("environment", "production")).strip().lower()
+    if chart_environment not in {"production", "development", "test"}:
+        raise ValueError("chart_artifacts.environment must be production, development, or test")
 
     return AppConfig(
         config_path=str(path),
@@ -125,5 +141,17 @@ def load_config(config_path: str | None = None) -> AppConfig:
                     "./docs/autocount-api-catalog.json",
                 )
             ),
+        ),
+        chart_artifacts=ChartArtifactSettings(
+            enabled=bool(chart_data.get("enabled", False)),
+            environment=chart_environment,
+            storage_path=str(chart_data.get("storage_path", "./data/chart-artifacts")),
+            worker_max_attempts=max(1, min(int(chart_data.get("worker_max_attempts", 3)), 10)),
+            lease_seconds=max(10, min(int(chart_data.get("lease_seconds", 30)), 300)),
+            render_input_ttl_minutes=max(
+                1,
+                min(int(chart_data.get("render_input_ttl_minutes", 60)), 24 * 60),
+            ),
+            retention_days=max(1, min(int(chart_data.get("retention_days", 30)), 3650)),
         ),
     )

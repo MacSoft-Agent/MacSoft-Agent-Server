@@ -316,6 +316,7 @@ class SessionMigrationTests(unittest.TestCase):
                 conn.close()
 
             init_db(SimpleNamespace(database=SimpleNamespace(path=str(db_path))))
+            init_db(SimpleNamespace(database=SimpleNamespace(path=str(db_path))))
 
             conn = sqlite3.connect(db_path)
             try:
@@ -324,8 +325,32 @@ class SessionMigrationTests(unittest.TestCase):
                 self.assertIn("owner_device_id", columns)
                 self.assertEqual(conn.execute("SELECT COUNT(*) FROM sessions WHERE session_id='legacy_session'").fetchone()[0], 1)
                 self.assertEqual(conn.execute("SELECT COUNT(*) FROM messages WHERE message_id='legacy_message'").fetchone()[0], 1)
+                self.assertEqual(
+                    conn.execute("SELECT status FROM messages WHERE message_id='legacy_message'").fetchone()[0],
+                    "completed",
+                )
                 self.assertIsNone(conn.execute("SELECT deleted_at FROM sessions WHERE session_id='legacy_session'").fetchone()[0])
                 self.assertIsNone(conn.execute("SELECT owner_device_id FROM sessions WHERE session_id='legacy_session'").fetchone()[0])
+                conn.execute(
+                    "INSERT INTO messages (message_id, session_id, user_id, role, content, model, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    ("default_status", "legacy_session", "legacy_user", "assistant", "Default", None, now),
+                )
+                self.assertEqual(
+                    conn.execute("SELECT status FROM messages WHERE message_id='default_status'").fetchone()[0],
+                    "completed",
+                )
+                with self.assertRaises(sqlite3.IntegrityError):
+                    conn.execute(
+                        "INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        ("invalid_status", "legacy_session", "legacy_user", "assistant", "Invalid", "saved", None, now),
+                    )
+                ordered = [
+                    row[0]
+                    for row in conn.execute(
+                        "SELECT message_id FROM messages WHERE session_id='legacy_session' ORDER BY created_at ASC, rowid ASC"
+                    )
+                ]
+                self.assertEqual(ordered[:2], ["legacy_message", "default_status"])
             finally:
                 conn.close()
 

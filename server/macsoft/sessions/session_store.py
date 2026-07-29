@@ -199,19 +199,63 @@ def soft_delete_session(
     owner_device_id: str,
 ) -> SessionDeleteResult:
     deleted_at = utc_now_iso()
-    cursor = conn.execute(
-        """
-        UPDATE sessions
-        SET deleted_at = ?,
-            updated_at = ?
-        WHERE session_id = ?
-          AND user_id = ?
-          AND owner_device_id = ?
-          AND deleted_at IS NULL
-        """,
-        (deleted_at, deleted_at, session_id, user_id, owner_device_id),
-    )
-    conn.commit()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        cursor = conn.execute(
+            """
+            UPDATE sessions
+            SET deleted_at = ?, updated_at = ?
+            WHERE session_id = ? AND user_id = ? AND owner_device_id = ?
+              AND deleted_at IS NULL
+            """,
+            (deleted_at, deleted_at, session_id, user_id, owner_device_id),
+        )
+        artifact_tables_ready = all(
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                (table,),
+            ).fetchone()
+            is not None
+            for table in ("artifact_generations", "render_jobs", "artifacts", "artifact_files")
+        )
+        if cursor.rowcount == 1 and artifact_tables_ready:
+            conn.execute(
+                """
+                UPDATE render_jobs SET status = 'cancelled', updated_at = ?,
+                    completed_at = ?, last_error_code = 'session_deleted',
+                    last_error_message = 'Session was deleted before rendering began.'
+                WHERE generation_id IN (
+                    SELECT generation_id FROM artifact_generations WHERE session_id = ?
+                ) AND status = 'queued'
+                """,
+                (deleted_at, deleted_at, session_id),
+            )
+            conn.execute(
+                """
+                UPDATE artifact_generations SET status = 'deleted', deleted_at = ?, updated_at = ?
+                WHERE session_id = ? AND status NOT IN ('deleted')
+                """,
+                (deleted_at, deleted_at, session_id),
+            )
+            conn.execute(
+                """
+                UPDATE artifacts SET status = 'deleted', deleted_at = ?, updated_at = ?
+                WHERE session_id = ? AND status <> 'deleted'
+                """,
+                (deleted_at, deleted_at, session_id),
+            )
+            conn.execute(
+                """
+                UPDATE artifact_files SET status = 'deleted', deleted_at = ?
+                WHERE artifact_id IN (SELECT artifact_id FROM artifacts WHERE session_id = ?)
+                  AND status <> 'deleted'
+                """,
+                (deleted_at, session_id),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
 
     if cursor.rowcount == 1:
         return SessionDeleteResult(deleted=True, deleted_at=deleted_at)

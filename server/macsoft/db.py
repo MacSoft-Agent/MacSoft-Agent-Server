@@ -261,7 +261,8 @@ def init_db(config: AppConfig) -> None:
                 user_id TEXT NOT NULL,
                 role TEXT NOT NULL,
                 content TEXT NOT NULL,
-                status TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'completed'
+                    CHECK (status IN ('generating', 'completed', 'failed')),
                 model TEXT,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY(session_id) REFERENCES sessions(session_id),
@@ -301,12 +302,131 @@ def init_db(config: AppConfig) -> None:
                 created_at TEXT NOT NULL,
                 FOREIGN KEY(session_id) REFERENCES admin_sessions(session_id)
             );
+
+            CREATE TABLE IF NOT EXISTS artifact_generations (
+                generation_id TEXT PRIMARY KEY,
+                request_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                assistant_message_id TEXT NOT NULL,
+                owner_user_id TEXT NOT NULL,
+                owner_device_id TEXT NOT NULL,
+                kind TEXT NOT NULL CHECK (kind IN ('chart')),
+                attempt_no INTEGER NOT NULL DEFAULT 1 CHECK (attempt_no >= 1),
+                supersedes_generation_id TEXT,
+                is_latest INTEGER NOT NULL DEFAULT 1 CHECK (is_latest IN (0, 1)),
+                status TEXT NOT NULL CHECK (
+                    status IN (
+                        'pending', 'data_ready', 'queued', 'rendering',
+                        'ready', 'partial', 'failed', 'deleted'
+                    )
+                ),
+                source_type TEXT NOT NULL CHECK (source_type IN ('mock', 'autocount')),
+                render_input_json TEXT,
+                render_input_expires_at TEXT,
+                error_code TEXT,
+                error_message TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                completed_at TEXT,
+                deleted_at TEXT,
+                UNIQUE(owner_device_id, session_id, request_id, kind, attempt_no),
+                FOREIGN KEY(session_id) REFERENCES sessions(session_id),
+                FOREIGN KEY(assistant_message_id) REFERENCES messages(message_id),
+                FOREIGN KEY(owner_user_id) REFERENCES users(user_id),
+                FOREIGN KEY(owner_device_id) REFERENCES devices(device_id),
+                FOREIGN KEY(supersedes_generation_id)
+                    REFERENCES artifact_generations(generation_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS render_jobs (
+                job_id TEXT PRIMARY KEY,
+                generation_id TEXT NOT NULL,
+                requested_formats_json TEXT NOT NULL,
+                status TEXT NOT NULL CHECK (
+                    status IN (
+                        'queued', 'rendering', 'completed',
+                        'completed_with_warning', 'failed', 'cancelled'
+                    )
+                ),
+                attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+                max_attempts INTEGER NOT NULL DEFAULT 3 CHECK (max_attempts >= 1),
+                worker_id TEXT,
+                last_worker_id TEXT,
+                lease_token TEXT,
+                lease_expires_at TEXT,
+                heartbeat_at TEXT,
+                last_error_code TEXT,
+                last_error_message TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                completed_at TEXT,
+                FOREIGN KEY(generation_id) REFERENCES artifact_generations(generation_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS artifacts (
+                artifact_id TEXT PRIMARY KEY,
+                generation_id TEXT NOT NULL UNIQUE,
+                session_id TEXT NOT NULL,
+                assistant_message_id TEXT NOT NULL,
+                owner_user_id TEXT NOT NULL,
+                owner_device_id TEXT NOT NULL,
+                kind TEXT NOT NULL CHECK (kind IN ('chart')),
+                status TEXT NOT NULL CHECK (
+                    status IN ('ready', 'partial', 'unavailable', 'expired', 'deleted')
+                ),
+                revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+                title TEXT NOT NULL,
+                summary TEXT NOT NULL DEFAULT '',
+                metadata_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                expired_at TEXT,
+                deleted_at TEXT,
+                FOREIGN KEY(generation_id) REFERENCES artifact_generations(generation_id),
+                FOREIGN KEY(session_id) REFERENCES sessions(session_id),
+                FOREIGN KEY(assistant_message_id) REFERENCES messages(message_id),
+                FOREIGN KEY(owner_user_id) REFERENCES users(user_id),
+                FOREIGN KEY(owner_device_id) REFERENCES devices(device_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS artifact_files (
+                file_id TEXT PRIMARY KEY,
+                artifact_id TEXT NOT NULL,
+                revision INTEGER NOT NULL CHECK (revision >= 1),
+                format TEXT NOT NULL CHECK (format IN ('png', 'pdf')),
+                role TEXT NOT NULL CHECK (role IN ('preview', 'download')),
+                filename TEXT NOT NULL,
+                content_type TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL CHECK (size_bytes >= 0),
+                sha256 TEXT NOT NULL,
+                storage_key TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'available'
+                    CHECK (status IN ('available', 'missing', 'deleted')),
+                created_at TEXT NOT NULL,
+                deleted_at TEXT,
+                UNIQUE(artifact_id, revision, format),
+                FOREIGN KEY(artifact_id) REFERENCES artifacts(artifact_id)
+            );
             """
         )
 
         session_columns = _table_columns(conn, "sessions")
         if "deleted_at" not in session_columns:
             conn.execute("ALTER TABLE sessions ADD COLUMN deleted_at TEXT")
+
+        message_columns = _table_columns(conn, "messages")
+        if "status" not in message_columns:
+            conn.execute(
+                "ALTER TABLE messages ADD COLUMN status TEXT NOT NULL DEFAULT 'completed'"
+            )
+        conn.execute(
+            """
+            UPDATE messages
+            SET status = 'completed'
+            WHERE status IS NULL
+               OR status NOT IN ('generating', 'completed', 'failed')
+            """
+        )
 
         conn.executescript(
             """
@@ -316,6 +436,9 @@ def init_db(config: AppConfig) -> None:
             CREATE INDEX IF NOT EXISTS idx_messages_session_user
             ON messages(session_id, user_id, created_at ASC);
 
+            CREATE INDEX IF NOT EXISTS idx_messages_session_status_created
+            ON messages(session_id, status, created_at ASC);
+
             CREATE INDEX IF NOT EXISTS idx_uploaded_files_owner
             ON uploaded_files(owner_user_id, owner_device_id, created_at DESC);
 
@@ -324,6 +447,58 @@ def init_db(config: AppConfig) -> None:
 
             CREATE INDEX IF NOT EXISTS idx_admin_messages_session
             ON admin_messages(session_id, created_at ASC);
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_generation_latest
+            ON artifact_generations (
+                owner_device_id, session_id, request_id, kind
+            )
+            WHERE is_latest = 1;
+
+            CREATE INDEX IF NOT EXISTS idx_artifact_generations_status
+            ON artifact_generations(status, updated_at);
+
+            CREATE INDEX IF NOT EXISTS idx_render_jobs_claim
+            ON render_jobs(status, lease_expires_at, created_at);
+
+            CREATE INDEX IF NOT EXISTS idx_artifacts_message
+            ON artifacts(assistant_message_id, status, revision);
+
+            CREATE INDEX IF NOT EXISTS idx_artifacts_owner
+            ON artifacts(owner_user_id, owner_device_id, session_id, status);
+
+            CREATE INDEX IF NOT EXISTS idx_artifact_files_storage
+            ON artifact_files(storage_key, status);
+            """
+        )
+
+        # Existing databases cannot gain a CHECK constraint through ALTER TABLE.
+        # Triggers provide the same write-time invariant after legacy values are
+        # normalized above. Fresh databases also retain the table-level CHECK.
+        conn.executescript(
+            """
+            CREATE TRIGGER IF NOT EXISTS trg_messages_status_insert
+            BEFORE INSERT ON messages
+            WHEN NEW.status IS NOT NULL
+             AND NEW.status NOT IN ('generating', 'completed', 'failed')
+            BEGIN
+                SELECT RAISE(ABORT, 'invalid_message_status');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS trg_messages_status_insert_default
+            AFTER INSERT ON messages
+            WHEN NEW.status IS NULL
+            BEGIN
+                UPDATE messages SET status = 'completed'
+                WHERE message_id = NEW.message_id;
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS trg_messages_status_update
+            BEFORE UPDATE OF status ON messages
+            WHEN NEW.status IS NULL
+              OR NEW.status NOT IN ('generating', 'completed', 'failed')
+            BEGIN
+                SELECT RAISE(ABORT, 'invalid_message_status');
+            END;
             """
         )
 

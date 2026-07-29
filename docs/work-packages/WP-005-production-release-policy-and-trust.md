@@ -2,7 +2,9 @@
 
 ## Status
 
-Planning direction approved; documentation diff review pending
+- Independent technical review: passed
+- Product Owner decision: policy accepted for merge
+- Release state: implementation, trust provisioning, and production release remain gated
 
 ## Owner
 
@@ -249,8 +251,9 @@ Package. Installed acceptance remains mandatory in WP-007/WP-008.
 
 ## Final status
 
-Pending documentation PR review and Product Owner merge approval. Completion
-does not authorize production release or automatically begin WP-006.
+Approved for merge. WP-005 completes when this documentation PR is merged.
+The merge does not authorize Release Distribution Setup, production key
+generation or provisioning, WP-006, or customer production release.
 
 ## Related commits and documents
 

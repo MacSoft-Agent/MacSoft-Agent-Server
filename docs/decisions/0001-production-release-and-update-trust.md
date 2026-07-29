@@ -1,6 +1,6 @@
 # 0001 - Production release and update trust
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-07-29
 - Owners/reviewers: Product Owner, independent technical reviewer, security reviewer
 - Related Work Package: `WP-005-production-release-policy-and-trust.md`

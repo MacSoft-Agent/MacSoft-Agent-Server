@@ -1,6 +1,6 @@
 # MacSoft Agent project status
 
-Status date: 2026-07-27
+Status date: 2026-07-29
 
 This is the current coordination record. It does not replace code, schemas,
 tests, contracts, or architecture documents.
@@ -9,7 +9,7 @@ tests, contracts, or architecture documents.
 
 | Item | Value |
 | --- | --- |
-| Program stage | Credential remediation and GitHub collaboration bootstrap complete |
+| Program stage | Release policy approved; production trust and installed acceptance remain gated |
 | Branch | `main` |
 | Commit | Resolve `baseline-0.1.0-collaboration-safe-20260727` |
 | Annotated tag | `baseline-0.1.0-collaboration-safe-20260727` |
@@ -47,10 +47,17 @@ this document to contain its own commit hash.
   recorded in repository evidence.
 - GitHub Actions run `30247652261` passed Repository hygiene, Windows
   contributor baseline, and Linux Electron contracts on the cleaned history.
-- Customer updates are currently installer-managed. A built-in update service
-  has not been approved or implemented.
 - Stage 4 documented and assessed release readiness without fixing release
   issues or creating a Release Candidate.
+- WP-003 added exact, fail-closed Hermes compatibility metadata and handshake
+  enforcement without changing the Thin Client contract.
+- WP-004 implemented a signed, installer-managed update path in the existing
+  Settings -> About surface. It remains disabled because `product.json` has no
+  production manifest URL or public key, and real installed acceptance is open.
+- WP-005 approved the production release and trust policy: private source,
+  separate public release-only distribution, stable-only V1, manual 0.1.1
+  activation, first real 0.1.1 -> 0.1.2 update, immutable artifacts, protected
+  signing keys, and no irreversible V1 data migration.
 
 ## Verified evidence carried from Stage 2
 
@@ -89,7 +96,10 @@ this document to contain its own commit hash.
   against this baseline.
 - AutoCount safeguards are covered by focused tests, but production-like
   read/write, confirmation, and unknown-outcome acceptance is not recorded.
-- Built-in update discovery/apply/rollback is intentionally unavailable.
+- Built-in update source is implemented but production-disabled. The release
+  distribution location, signing pipeline, production trust provisioning,
+  0.1.1 activation package, 0.1.2 update candidate, and installed-product
+  acceptance have not completed their gates.
 - Installer signing, trusted distribution, and update authenticity evidence is
   not present in the repository.
 - The pinned Hermes upgrade process is documented but no newer upstream
@@ -105,7 +115,11 @@ green. GitHub branch protection and secret-scanning availability are recorded
 separately because private-repository plan or token restrictions may prevent
 enabling them through the API.
 
-The next bounded release-readiness work is clean reproducible packaging,
-followed by real installed-product and external Thin Client acceptance.
-Hermes compatibility work and a built-in update feature remain separate
-Product Owner-approved Work Packages and must not begin automatically.
+The next approved sequence is: owner-authorized release-distribution setup,
+WP-006 signing and artifact-finalization implementation, the Production Trust
+Provisioning Gate, WP-007 0.1.1 trust bootstrap, WP-008 0.1.2 installed update
+acceptance, and WP-009 pilot promotion and production publication.
+
+No later gate is implied complete by this status. Production remains blocked
+until the signed installed-product, Thin Client, applicable AutoCount, and
+dependency-security acceptance evidence is reviewed and accepted.

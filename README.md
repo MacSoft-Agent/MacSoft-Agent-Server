@@ -95,14 +95,18 @@ manually copying source or dependencies:
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -File .\scripts\build-release.ps1 `
-  -ExpectedCommit <accepted-40-character-commit>
+  -ExpectedCommit <accepted-40-character-commit> `
+  -ArtifactMode InternalTestUnsigned
 ```
 
 The release script also requires `uv`, `npm`, available NSIS
 `makensis.exe`, no listeners on ports `8766`, `8643`, `8642`, `8787`, or
 `5174`, and a completely clean packaging working tree. See
 [Development and release worktrees](docs/development/DEVELOPMENT_AND_RELEASE_WORKTREES.md)
-before building.
+before building. `InternalTestUnsigned` output is explicitly non-production.
+Production builds additionally require the reviewed external signing boundary
+documented in
+[WP-006](docs/work-packages/WP-006-release-signing-and-artifact-finalization.md).
 
 Generated `staging/`, `release/`, `backup/`, and `work/` directories are local
 artifacts and are ignored by Git.

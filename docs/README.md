@@ -75,6 +75,9 @@ not a general backlog.
   verification evidence, and remaining installed-product gates
 - `work-packages/WP-005-production-release-policy-and-trust.md` - approved
   production release policy, trust decisions, roles, sequencing, and gates
+- `work-packages/WP-006-release-signing-and-artifact-finalization.md` -
+  Authenticode signing boundary, fail-closed verification, and post-sign
+  artifact evidence
 
 ## Decisions
 

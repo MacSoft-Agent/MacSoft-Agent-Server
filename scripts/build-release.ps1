@@ -4,11 +4,25 @@ param(
     [ValidatePattern('^[0-9a-fA-F]{40}$')]
     [string]$ExpectedCommit,
 
-    [string]$NsisPath
+    [string]$NsisPath,
+
+    [Parameter(Mandatory = $true)]
+    [ValidateSet('Production', 'InternalTestUnsigned')]
+    [string]$ArtifactMode,
+
+    [string]$SigningCommandPath,
+
+    [string]$SignToolPath
 )
 
 $ErrorActionPreference = 'Stop'
 $ProjectRoot = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
+if ($ArtifactMode -eq 'Production' -and -not $SigningCommandPath) {
+    throw 'Production release builds require an external signing command.'
+}
+if ($ArtifactMode -eq 'InternalTestUnsigned' -and $SigningCommandPath) {
+    throw 'InternalTestUnsigned builds do not accept a signing command.'
+}
 if ((Split-Path -Leaf $ProjectRoot) -ne 'MacSoft-Agent-Packaging') {
     throw 'Release builds are allowed only from the MacSoft-Agent-Packaging clone.'
 }
@@ -84,6 +98,10 @@ if ($LASTEXITCODE -ne 0) {
 
 $releaseDirectory = Join-Path $ProjectRoot 'release'
 $installerPath = Join-Path $releaseDirectory "MacSoft-Agent-Setup-$($Product.product_version).exe"
+$reportPath = Join-Path $releaseDirectory 'build-report.json'
+if (Test-Path -LiteralPath $reportPath) {
+    Remove-Item -LiteralPath $reportPath -Force
+}
 $installerArguments = @{
     PayloadRoot = $stagingPath
     OutputPath = $installerPath
@@ -92,6 +110,18 @@ if ($NsisPath) {
     $installerArguments.NsisPath = $NsisPath
 }
 $installer = & (Join-Path $ProjectRoot 'packaging\build-installer.ps1') @installerArguments
+
+$finalizationArguments = @{
+    InstallerPath = $installerPath
+    ArtifactMode = $ArtifactMode
+}
+if ($SigningCommandPath) {
+    $finalizationArguments.SigningCommandPath = $SigningCommandPath
+}
+if ($SignToolPath) {
+    $finalizationArguments.SignToolPath = $SignToolPath
+}
+$artifact = & (Join-Path $PSScriptRoot 'finalize-release-artifact.ps1') @finalizationArguments
 
 $manifestPath = Join-Path $stagingPath 'staging-manifest.json'
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
@@ -106,9 +136,31 @@ $report = [ordered]@{
     staging_files = @($manifest.files).Count
     staging_manifest_sha256 = (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
     installer = $installerPath
-    installer_bytes = (Get-Item -LiteralPath $installerPath).Length
-    installer_sha256 = (Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    artifact_class = $artifact.artifact_class
+    production_ready = $artifact.production_ready
+    authenticode_status = $artifact.authenticode_status
+    timestamped = $artifact.timestamped
+    signer_subject = $artifact.signer_subject
+    signer_thumbprint = $artifact.signer_thumbprint
+    timestamp_subject = $artifact.timestamp_subject
+    timestamp_thumbprint = $artifact.timestamp_thumbprint
+    installer_bytes = $artifact.installer_bytes
+    installer_sha256 = $artifact.installer_sha256
 }
-$reportPath = Join-Path $releaseDirectory 'build-report.json'
-$report | ConvertTo-Json | Set-Content -LiteralPath $reportPath -Encoding utf8
+$reportTemporaryPath = "$reportPath.$([Guid]::NewGuid().ToString('N')).tmp"
+try {
+    $report | ConvertTo-Json | Set-Content -LiteralPath $reportTemporaryPath -Encoding utf8
+    $writtenReport = Get-Content -LiteralPath $reportTemporaryPath -Raw | ConvertFrom-Json
+    if (
+        [int64]$writtenReport.installer_bytes -ne [int64]$artifact.installer_bytes -or
+        [string]$writtenReport.installer_sha256 -ne [string]$artifact.installer_sha256 -or
+        [bool]$writtenReport.production_ready -ne [bool]$artifact.production_ready
+    ) {
+        throw 'The final build report does not match the finalized installer evidence.'
+    }
+    Move-Item -LiteralPath $reportTemporaryPath -Destination $reportPath
+}
+finally {
+    Remove-Item -LiteralPath $reportTemporaryPath -Force -ErrorAction SilentlyContinue
+}
 $report

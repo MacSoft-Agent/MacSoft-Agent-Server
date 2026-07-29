@@ -44,12 +44,14 @@ function New-TestCmsEvidence {
     param(
         [int]$Rfc3161Count = 1,
         [int]$LegacyCount = 0,
+        [int]$NestedSignatureCount = 0,
         [int]$ValueCount = 1
     )
 
     [pscustomobject]@{
         rfc3161_attribute_count = $Rfc3161Count
         legacy_attribute_count = $LegacyCount
+        nested_signature_attribute_count = $NestedSignatureCount
         rfc3161_value_count = $ValueCount
         timestamp_content_info = [byte[]]@(0x30, 0x00)
         signed_data = [byte[]]@(0x01, 0x02, 0x03)
@@ -92,6 +94,16 @@ Assert-Throws -Pattern 'ambiguous legacy and RFC 3161' -Action {
     Get-Rfc3161TimestampEvidence `
         -Path 'test-only.exe' `
         -CmsEvidenceReader { param($Path) New-TestCmsEvidence -LegacyCount 1 } `
+        -NativeVerifier $sha256NativeVerifier
+}
+
+Assert-Throws -Pattern 'unsupported nested Authenticode signature' -Action {
+    Get-Rfc3161TimestampEvidence `
+        -Path 'test-only.exe' `
+        -CmsEvidenceReader {
+            param($Path)
+            New-TestCmsEvidence -NestedSignatureCount 1
+        } `
         -NativeVerifier $sha256NativeVerifier
 }
 

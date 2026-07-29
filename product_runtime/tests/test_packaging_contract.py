@@ -157,6 +157,7 @@ class PackagingContractTests(unittest.TestCase):
         self.assertIn("CryptVerifyTimeStampSignature", rfc3161_verifier)
         self.assertIn("1.3.6.1.4.1.311.3.3.1", rfc3161_verifier)
         self.assertIn("1.2.840.113549.1.9.6", rfc3161_verifier)
+        self.assertIn("1.3.6.1.4.1.311.2.4.1", rfc3161_verifier)
         self.assertIn("2.16.840.1.101.3.4.2.1", rfc3161_verifier)
         self.assertIn("GetSignature()", rfc3161_verifier)
         development_verifier = (ROOT / "scripts" / "verify-development.ps1").read_text(encoding="utf-8-sig")

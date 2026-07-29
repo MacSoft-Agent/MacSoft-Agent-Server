@@ -7,6 +7,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $Rfc3161CounterSignatureOid = '1.3.6.1.4.1.311.3.3.1'
 $LegacyCounterSignatureOid = '1.2.840.113549.1.9.6'
+$NestedAuthenticodeSignatureOid = '1.3.6.1.4.1.311.2.4.1'
 $Sha256Oid = '2.16.840.1.101.3.4.2.1'
 
 function Get-EmbeddedAuthenticodeSignature {
@@ -266,10 +267,15 @@ function Read-AuthenticodeTimestampAttributes {
         $signer.UnsignedAttributes |
             Where-Object { $_.Oid.Value -eq $LegacyCounterSignatureOid }
     )
+    $nestedSignatureAttributes = @(
+        $signer.UnsignedAttributes |
+            Where-Object { $_.Oid.Value -eq $NestedAuthenticodeSignatureOid }
+    )
 
     [pscustomobject]@{
         rfc3161_attribute_count = $rfc3161Attributes.Count
         legacy_attribute_count = $legacyAttributes.Count
+        nested_signature_attribute_count = $nestedSignatureAttributes.Count
         rfc3161_value_count = if ($rfc3161Attributes.Count -eq 1) {
             $rfc3161Attributes[0].Values.Count
         }
@@ -309,6 +315,9 @@ function Get-Rfc3161TimestampEvidence {
     $cmsEvidence = & $CmsEvidenceReader $Path
     if ($null -eq $cmsEvidence) {
         throw 'The installer RFC 3161 timestamp evidence could not be read.'
+    }
+    if ([int]$cmsEvidence.nested_signature_attribute_count -gt 0) {
+        throw 'The installer contains an unsupported nested Authenticode signature.'
     }
     if ([int]$cmsEvidence.rfc3161_attribute_count -eq 0) {
         if ([int]$cmsEvidence.legacy_attribute_count -gt 0) {

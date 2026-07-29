@@ -110,6 +110,7 @@ Production finalization stops without a new build report when:
 - Authenticode status is not `Valid`;
 - signer or timestamp evidence is absent;
 - only a legacy Authenticode countersignature is present;
+- multiple primary, embedded, or nested Authenticode signatures are present;
 - RFC 3161 evidence is malformed, ambiguous, unverifiable, or does not use a
   SHA-256 message imprint;
 - native signature verification fails;

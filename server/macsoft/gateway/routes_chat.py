@@ -419,6 +419,14 @@ def chat_stream(
                                 if internal_event.get("type") == "text_delta":
                                     raw_parts.append(str(internal_event.get("text") or ""))
                                     continue
+                                if internal_event.get("type") == "chart_payload":
+                                    chart_payload = internal_event.get("payload")
+                                    if isinstance(chart_payload, dict):
+                                        chart_event = dict(chart_payload)
+                                        chart_event["message_id"] = assistant_message_id
+                                        chart_event["session_id"] = body.session_id
+                                        yield sse_event("chart_payload", chart_event)
+                                    continue
                                 try:
                                     mapped_activity = activity_mapper.observed_tool_event(
                                         internal_event,

@@ -164,7 +164,7 @@ def stream_hermes_reply_events(
     api_key: str,
     messages: list[dict[str, Any]],
     timeout_seconds: int,
-) -> Iterator[dict[str, str]]:
+) -> Iterator[dict[str, Any]]:
     """Yield controlled text and Tool lifecycle events from one Agent run."""
 
     request = _api_request(
@@ -199,6 +199,10 @@ def stream_hermes_reply_events(
             status = payload.get("status")
             if isinstance(tool, str) and status in {"running", "completed"}:
                 yield {"type": "tool", "tool": tool, "status": status}
+            return
+        if current_event == "hermes.chart.payload":
+            if payload.get("schema_version") == 1 and isinstance(payload.get("chart"), dict):
+                yield {"type": "chart_payload", "payload": payload}
             return
         choices = payload.get("choices")
         if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):

@@ -136,3 +136,84 @@ AUTOCOUNT_EXECUTE_COMMAND = {
         "additionalProperties": False,
     },
 }
+
+AUTOCOUNT_QUERY_DATA = {
+    "name": "autocount_query_data",
+    "description": (
+        "Run one official read-only or report AutoCount command and return a bounded "
+        "tabular result and result_ref. Analyze the returned real columns and rows to "
+        "choose a chart, then use result_ref for charting; the Server retains the "
+        "authoritative copy and never accepts model-supplied chart rows. "
+        "Do not use this tool for write, edit, delete, or other mutating commands."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "command_type": {
+                "type": "string",
+                "description": "Exact official AutoCount read or report command type.",
+            },
+            "payload": {
+                "type": "object",
+                "description": "Payload built exactly from the live official command schema.",
+                "additionalProperties": True,
+            },
+            "timeout_seconds": {
+                "type": "integer",
+                "minimum": 5,
+                "maximum": 600,
+                "description": "Optional total wait time for the final result.",
+            },
+        },
+        "required": ["command_type", "payload"],
+        "additionalProperties": False,
+    },
+}
+
+AUTOCOUNT_CREATE_CHART = {
+    "name": "autocount_create_chart",
+    "description": (
+        "Create a renderer-independent chart payload from a server-side AutoCount "
+        "query result_ref. Choose a supported chart type and map only fields that "
+        "exist in the query result. Encodings depend on chart type: line/area/scatter "
+        "use x and y; bar uses category and value; pie/donut use category and value; "
+        "gauge uses value, min, and max; calendar_heatmap uses date and value; table "
+        "uses the query columns and rows. Do not return frontend or ECharts code."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "result_ref": {
+                "type": "string",
+                "description": "Opaque result_ref returned by autocount_query_data.",
+            },
+            "type": {
+                "type": "string",
+                "enum": [
+                    "line",
+                    "area",
+                    "bar",
+                    "horizontal_bar",
+                    "pie",
+                    "donut",
+                    "gauge",
+                    "calendar_heatmap",
+                    "scatter",
+                    "table",
+                ],
+                "description": "Supported renderer-independent chart type.",
+            },
+            "title": {
+                "type": "string",
+                "description": "Optional customer-readable chart title.",
+            },
+            "encodings": {
+                "type": "object",
+                "description": "Chart-type-specific field mapping.",
+                "additionalProperties": {"type": "string"},
+            },
+        },
+        "required": ["result_ref", "type", "encodings"],
+        "additionalProperties": False,
+    },
+}

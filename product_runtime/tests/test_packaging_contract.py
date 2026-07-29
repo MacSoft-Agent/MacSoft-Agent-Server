@@ -119,6 +119,38 @@ class PackagingContractTests(unittest.TestCase):
             product["protected_resource_version"], protected["version"]
         )
 
+    def test_autocount_chart_skill_is_protected_and_renderer_independent(self) -> None:
+        plugin_root = (
+            ROOT
+            / "packaging"
+            / "templates"
+            / "protected"
+            / "runtime"
+            / "plugins"
+            / "macsoft-autocount"
+        )
+        chart_skill = (
+            plugin_root / "skills" / "autocount-charting" / "SKILL.md"
+        ).read_text(encoding="utf-8")
+        manifest = json.loads(
+            (ROOT / "packaging" / "templates" / "protected-resources.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        protected_sources = {item["source"] for item in manifest["resources"]}
+
+        self.assertIn("autocount_query_data", chart_skill)
+        self.assertIn("autocount_create_chart", chart_skill)
+        self.assertIn("renderer-independent", chart_skill)
+        self.assertIn("`line` | `x`, `y`", chart_skill)
+        self.assertIn("`pie` | `category`, `value`", chart_skill)
+        self.assertIn("`table` | query `data.columns` and `data.rows`", chart_skill)
+        self.assertNotIn("option =", chart_skill.lower())
+        self.assertIn(
+            "protected/runtime/plugins/macsoft-autocount/skills/autocount-charting/SKILL.md",
+            protected_sources,
+        )
+
     def test_release_build_is_clean_commit_gated_and_version_driven(self) -> None:
         release = (ROOT / "scripts" / "build-release.ps1").read_text(encoding="utf-8-sig")
         finalizer = (ROOT / "scripts" / "finalize-release-artifact.ps1").read_text(encoding="utf-8-sig")

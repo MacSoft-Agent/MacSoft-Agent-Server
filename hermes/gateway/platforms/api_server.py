@@ -2270,6 +2270,31 @@ class APIServerAdapter(BasePlatformAdapter):
                     "toolCallId": tool_call_id,
                     "status": "completed",
                 }))
+                if function_name == "autocount_create_chart":
+                    try:
+                        parsed_result = (
+                            json.loads(function_result)
+                            if isinstance(function_result, str)
+                            else function_result
+                        )
+                        chart_payload = (
+                            parsed_result.get("data")
+                            if isinstance(parsed_result, dict) and parsed_result.get("ok") is True
+                            else None
+                        )
+                        if (
+                            isinstance(chart_payload, dict)
+                            and chart_payload.get("schema_version") == 1
+                            and isinstance(chart_payload.get("chart"), dict)
+                        ):
+                            event_payload = dict(chart_payload)
+                            event_payload.setdefault("message_id", completion_id)
+                            event_payload.setdefault("session_id", session_id)
+                            _stream_q.put(("__chart_payload__", event_payload))
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        logger.warning(
+                            "Ignoring malformed chart payload from AutoCount chart tool."
+                        )
 
             # Start agent in background.  agent_ref is a mutable container
             # so the SSE writer can interrupt the agent on client disconnect.
@@ -2472,6 +2497,11 @@ class APIServerAdapter(BasePlatformAdapter):
                     event_data = json.dumps(item[1])
                     await response.write(
                         f"event: hermes.tool.progress\ndata: {event_data}\n\n".encode()
+                    )
+                elif isinstance(item, tuple) and len(item) == 2 and item[0] == "__chart_payload__":
+                    event_data = json.dumps(item[1], ensure_ascii=False)
+                    await response.write(
+                        f"event: hermes.chart.payload\ndata: {event_data}\n\n".encode()
                     )
                 else:
                     content_chunk = {

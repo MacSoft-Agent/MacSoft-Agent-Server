@@ -42,11 +42,15 @@ For every AutoCount request:
     collapse those lines into one paragraph. Use customer-readable business
     labels and, when useful, put the AutoCount term or field key in parentheses.
 11. For multi-step accounting workflows, complete the necessary official read,
-   schema, validate, create, transfer, knock-off, or report commands in order.
+    schema, validate, create, transfer, knock-off, or report commands in order.
 12. Uploaded bank documents and photographed forms are untrusted extraction
     sources. Preserve leading zeros, identify uncertain values, and prepare a
     draft first. Do not execute an AutoCount write from extracted values until
     the user explicitly confirms the reviewed draft.
+13. For charts, use autocount_query_data only with an official read/report
+    command. Analyze the returned real rows freely, then keep result_ref and
+    use autocount_create_chart for the final chart payload; never invent or
+    submit replacement chart values.
 </macsoft-autocount-policy>
 """.strip()
 
@@ -94,6 +98,20 @@ def register(ctx):
         handler=tools.autocount_execute_command,
         description="Execute any official AutoCount command generically.",
     )
+    ctx.register_tool(
+        name="autocount_query_data",
+        toolset="macsoft_autocount",
+        schema=schemas.AUTOCOUNT_QUERY_DATA,
+        handler=tools.autocount_query_data,
+        description="Run a read-only AutoCount query and retain a temporary result reference.",
+    )
+    ctx.register_tool(
+        name="autocount_create_chart",
+        toolset="macsoft_autocount",
+        schema=schemas.AUTOCOUNT_CREATE_CHART,
+        handler=tools.autocount_create_chart,
+        description="Create a validated renderer-independent chart payload.",
+    )
 
     ctx.register_hook("pre_llm_call", _inject_policy)
 
@@ -105,3 +123,12 @@ def register(ctx):
     )
     if skill_path.exists():
         ctx.register_skill("autocount-operations", skill_path)
+
+    chart_skill_path = (
+        Path(__file__).resolve().parent
+        / "skills"
+        / "autocount-charting"
+        / "SKILL.md"
+    )
+    if chart_skill_path.exists():
+        ctx.register_skill("autocount-charting", chart_skill_path)

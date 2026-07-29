@@ -1489,6 +1489,66 @@ class TestChatCompletionsEndpoint:
             assert pairs[1] == ("completed", "call_terminal_1"), pairs
 
     @pytest.mark.asyncio
+    async def test_stream_emits_validated_autocount_chart_payload(self, adapter):
+        """The generic chart tool may emit one structured chart side event."""
+        import asyncio
+
+        app = _create_app(adapter)
+        with TestClient(TestServer(app)) as cli:
+            async def _mock_run_agent(**kwargs):
+                text_cb = kwargs.get("stream_delta_callback")
+                start_cb = kwargs.get("tool_start_callback")
+                complete_cb = kwargs.get("tool_complete_callback")
+                if start_cb:
+                    start_cb("call_chart_1", "autocount_create_chart", {})
+                if complete_cb:
+                    complete_cb(
+                        "call_chart_1",
+                        "autocount_create_chart",
+                        {},
+                        json.dumps(
+                            {
+                                "ok": True,
+                                "data": {
+                                    "schema_version": 1,
+                                    "chart_id": "chart_1",
+                                    "chart": {
+                                        "type": "bar",
+                                        "title": "Sales",
+                                        "encodings": {"category": "month", "value": "amount"},
+                                        "data": {"columns": [], "rows": []},
+                                        "summary": {"rows": 0, "columns": 0},
+                                    },
+                                },
+                            }
+                        ),
+                    )
+                if text_cb:
+                    await asyncio.sleep(0.05)
+                    text_cb("Chart ready.")
+                return (
+                    {"final_response": "Chart ready.", "messages": [], "api_calls": 1},
+                    {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+                )
+
+            with patch.object(adapter, "_run_agent", side_effect=_mock_run_agent):
+                resp = await cli.post(
+                    "/v1/chat/completions",
+                    json={
+                        "model": "test",
+                        "messages": [{"role": "user", "content": "Chart sales"}],
+                        "stream": True,
+                    },
+                )
+                assert resp.status == 200
+                body = await resp.text()
+
+        assert "event: hermes.chart.payload" in body
+        assert '"chart_id": "chart_1"' in body
+        assert '"type": "bar"' in body
+        assert "Chart ready." in body
+
+    @pytest.mark.asyncio
     async def test_stream_tool_lifecycle_skips_internal_and_orphan_completes(self, adapter):
         """Internal tools (``_thinking``-style) and ``completed`` events
         without a prior matching ``running`` must produce no lifecycle

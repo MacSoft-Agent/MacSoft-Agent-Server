@@ -10,6 +10,7 @@ import json
 import hashlib
 import difflib
 import re
+import secrets
 import threading
 import time
 import uuid
@@ -31,6 +32,15 @@ _INVALID_FINGERPRINT_LIMIT = 256
 _invalid_fingerprints: deque[str] = deque()
 _invalid_fingerprint_set: set[str] = set()
 _invalid_fingerprint_lock = threading.Lock()
+
+_QUERY_RESULT_TTL_SECONDS = 10 * 60
+_QUERY_RESULT_MAX_ENTRIES = 128
+_QUERY_RESULT_MAX_ROWS = 10_000
+_QUERY_RESULT_MAX_BYTES = 2_000_000
+_QUERY_RESULT_LOCK = threading.RLock()
+_query_results: dict[str, dict[str, Any]] = {}
+_READ_QUERY_MODES = {"read", "report", "query", "list"}
+_TABULAR_CONTAINER_KEYS = ("rows", "records", "items", "results", "data", "result")
 
 
 class AutoCountToolError(RuntimeError):
@@ -177,6 +187,18 @@ def _safe_failure_message(exc: Exception) -> str:
         return "AutoCount connector is offline. Command was not queued."
     if "timed out" in lowered or "cannot connect to autocount cloud" in lowered:
         return message
+    if lowered.startswith(
+        (
+            "chart ",
+            "result_ref ",
+            "autocount_query_data ",
+            "the official autocount result ",
+            "the autocount result ",
+            "the autocount query ",
+            "autocount row ",
+        )
+    ):
+        return message
     if lowered.endswith("is required.") or "must be a json object" in lowered:
         return message
     return "The AutoCount request could not be completed."
@@ -309,6 +331,371 @@ def _mark_invalid_payload(
         _invalid_fingerprints.append(fingerprint)
         _invalid_fingerprint_set.add(fingerprint)
     return False
+
+
+def _query_owner(kwargs: dict[str, Any]) -> tuple[str, str]:
+    """Return the Hermes execution scope used to isolate temporary results."""
+
+    task_id = str(kwargs.get("task_id") or "default")
+    session_id = str(kwargs.get("session_id") or "default")
+    return task_id, session_id
+
+
+def _purge_query_results(now: float | None = None) -> None:
+    current = time.monotonic() if now is None else now
+    expired = [
+        result_ref
+        for result_ref, stored in _query_results.items()
+        if current - float(stored["created_at"]) >= _QUERY_RESULT_TTL_SECONDS
+    ]
+    for result_ref in expired:
+        _query_results.pop(result_ref, None)
+
+
+def _store_query_result(owner: tuple[str, str], data: dict[str, Any]) -> str:
+    serialized = _json_text(data).encode("utf-8")
+    if len(serialized) > _QUERY_RESULT_MAX_BYTES:
+        raise AutoCountToolError(
+            "The AutoCount query result is too large to prepare as a chart."
+        )
+
+    result_ref = f"acqr_{secrets.token_urlsafe(18)}"
+    now = time.monotonic()
+    with _QUERY_RESULT_LOCK:
+        _purge_query_results(now)
+        while len(_query_results) >= _QUERY_RESULT_MAX_ENTRIES:
+            _query_results.pop(next(iter(_query_results)))
+        _query_results[result_ref] = {
+            "owner": owner,
+            "created_at": now,
+            "data": data,
+        }
+    return result_ref
+
+
+def _get_query_result(result_ref: str, owner: tuple[str, str]) -> dict[str, Any]:
+    if not result_ref or not re.fullmatch(r"acqr_[A-Za-z0-9_-]{12,64}", result_ref):
+        raise AutoCountToolError("result_ref is invalid or expired.")
+
+    with _QUERY_RESULT_LOCK:
+        _purge_query_results()
+        stored = _query_results.get(result_ref)
+        if stored is None or stored["owner"] != owner:
+            raise AutoCountToolError("result_ref is invalid or expired.")
+        return stored["data"]
+
+
+def _is_scalar(value: Any) -> bool:
+    return value is None or isinstance(value, (str, int, float, bool))
+
+
+def _row_list_from_value(value: Any) -> tuple[list[Any], list[str] | None] | None:
+    """Find a conventional row container without guessing arbitrary objects."""
+
+    if isinstance(value, list):
+        if not value:
+            return [], None
+        if all(isinstance(row, dict) for row in value):
+            return value, None
+        if all(isinstance(row, list) for row in value):
+            return value, None
+        return None
+
+    if not isinstance(value, dict):
+        return None
+
+    columns = value.get("columns")
+    column_names = (
+        [str(column) for column in columns]
+        if isinstance(columns, list) and all(isinstance(column, (str, int)) for column in columns)
+        else None
+    )
+
+    for key in _TABULAR_CONTAINER_KEYS:
+        candidate = value.get(key)
+        if isinstance(candidate, list):
+            rows = _row_list_from_value(candidate)
+            if rows is not None:
+                return rows[0], column_names or rows[1]
+
+    for nested in value.values():
+        found = _row_list_from_value(nested)
+        if found is not None:
+            return found
+    return None
+
+
+def _column_type(values: list[Any]) -> str:
+    non_null = [value for value in values if value is not None]
+    if not non_null:
+        return "null"
+    if all(isinstance(value, bool) for value in non_null):
+        return "boolean"
+    if all(isinstance(value, int) and not isinstance(value, bool) for value in non_null):
+        return "integer"
+    if all(isinstance(value, (int, float)) and not isinstance(value, bool) for value in non_null):
+        return "number"
+    if all(isinstance(value, str) for value in non_null):
+        if all(re.fullmatch(r"\d{4}-\d{2}-\d{2}", value) for value in non_null):
+            return "date"
+        if all(
+            re.fullmatch(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?", value)
+            for value in non_null
+        ):
+            return "datetime"
+        return "string"
+    return "mixed"
+
+
+def _column_semantic(name: str, value_type: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "", name.lower())
+    if value_type in {"date", "datetime"}:
+        return "time"
+    if value_type in {"integer", "number"}:
+        if normalized.endswith(("id", "code", "no", "number")):
+            return "dimension"
+        return "measure"
+    if value_type in {"string", "boolean"}:
+        return "dimension"
+    return "unknown"
+
+
+def _normalize_query_result(response: Any) -> dict[str, Any]:
+    found = _row_list_from_value(response)
+    if found is None:
+        raise AutoCountToolError(
+            "The official AutoCount result does not contain a supported tabular row set."
+        )
+
+    raw_rows, column_names = found
+    if len(raw_rows) > _QUERY_RESULT_MAX_ROWS:
+        raise AutoCountToolError(
+            f"The AutoCount query returned more than {_QUERY_RESULT_MAX_ROWS} rows."
+        )
+
+    rows: list[dict[str, Any]] = []
+    discovered_columns: list[str] = []
+    for index, raw_row in enumerate(raw_rows):
+        if isinstance(raw_row, dict):
+            row = {str(key): value for key, value in raw_row.items()}
+        elif isinstance(raw_row, list) and column_names is not None:
+            if len(raw_row) != len(column_names):
+                raise AutoCountToolError(
+                    f"AutoCount row {index + 1} does not match the returned columns."
+                )
+            row = dict(zip(column_names, raw_row))
+        else:
+            raise AutoCountToolError("The AutoCount result contains unsupported row values.")
+
+        if any(not _is_scalar(value) for value in row.values()):
+            raise AutoCountToolError(
+                "The AutoCount result contains nested values that cannot be charted safely."
+            )
+        for key in row:
+            if key not in discovered_columns:
+                discovered_columns.append(key)
+        rows.append(row)
+
+    columns = column_names or discovered_columns
+    columns = list(dict.fromkeys(columns))
+    descriptors = []
+    for name in columns:
+        value_type = _column_type([row.get(name) for row in rows])
+        descriptors.append(
+            {
+                "name": name,
+                "type": value_type,
+                "semantic": _column_semantic(name, value_type),
+            }
+        )
+
+    data = {"columns": descriptors, "rows": rows}
+    if len(_json_text(data).encode("utf-8")) > _QUERY_RESULT_MAX_BYTES:
+        raise AutoCountToolError(
+            "The AutoCount query result is too large to prepare as a chart."
+        )
+    return {
+        "data": data,
+        "shape": {"rows": len(rows), "columns": len(descriptors)},
+    }
+
+
+def autocount_query_data(
+    params: dict[str, Any],
+    **kwargs: Any,
+) -> str:
+    """Execute a read/report command and retain its normalized rows temporarily."""
+
+    command_type = str(params.get("command_type", "")).strip()
+    payload = params.get("payload", {})
+    try:
+        if not command_type:
+            raise AutoCountToolError("command_type is required.")
+        if not isinstance(payload, dict):
+            raise AutoCountToolError("payload must be a JSON object.")
+
+        command = _resolve_exact_command(command_type)
+        mode = str(command.get("mode", "")).strip().lower()
+        if mode not in _READ_QUERY_MODES or str(command.get("mutating", "")).lower() == "true":
+            raise AutoCountToolError(
+                "autocount_query_data accepts only official read or report commands."
+            )
+
+        execution = json.loads(autocount_execute_command(params, **kwargs))
+        if not isinstance(execution, dict):
+            raise AutoCountToolError("AutoCount returned an invalid query response.")
+        if not execution.get("ok"):
+            return _json_text(execution)
+
+        normalized = _normalize_query_result(execution.get("data", execution))
+        result_ref = _store_query_result(_query_owner(kwargs), normalized)
+        return _success(
+            {
+                "result_ref": result_ref,
+                "columns": normalized["data"]["columns"],
+                "rows": normalized["data"]["rows"],
+                "shape": normalized["shape"],
+            },
+            commandType=command_type,
+        )
+    except AutoCountCommandResolutionError as exc:
+        return _failure(exc, commandType=command_type or None, suggestions=exc.suggestions)
+    except Exception as exc:
+        return _failure(exc, commandType=command_type or None)
+
+
+_CHART_REQUIRED_ENCODINGS = {
+    "line": ("x", "y"),
+    "area": ("x", "y"),
+    "bar": ("category", "value"),
+    "horizontal_bar": ("category", "value"),
+    "pie": ("category", "value"),
+    "donut": ("category", "value"),
+    "gauge": ("value", "min", "max"),
+    "calendar_heatmap": ("date", "value"),
+    "scatter": ("x", "y"),
+    "table": (),
+}
+_CHART_ALLOWED_ENCODINGS = {
+    "line": {"x", "y", "series"},
+    "area": {"x", "y", "series"},
+    "bar": {"category", "value", "series"},
+    "horizontal_bar": {"category", "value", "series"},
+    "pie": {"category", "value"},
+    "donut": {"category", "value"},
+    "gauge": {"value", "min", "max", "target"},
+    "calendar_heatmap": {"date", "value"},
+    "scatter": {"x", "y", "series"},
+    "table": set(),
+}
+
+
+def _column_descriptor(data: dict[str, Any], field: str) -> dict[str, Any]:
+    for column in data.get("columns", []):
+        if isinstance(column, dict) and column.get("name") == field:
+            return column
+    raise AutoCountToolError(f"Chart field '{field}' is not present in the query result.")
+
+
+def _require_chart_field(
+    data: dict[str, Any],
+    field: str,
+    *,
+    semantic: str,
+    encoding_name: str,
+) -> None:
+    descriptor = _column_descriptor(data, field)
+    value_type = str(descriptor.get("type", ""))
+    if semantic == "numeric" and value_type not in {"integer", "number"}:
+        raise AutoCountToolError(
+            f"Chart encoding '{encoding_name}' must map to a numeric field."
+        )
+    if semantic == "date" and value_type not in {"date", "datetime"}:
+        raise AutoCountToolError(
+            f"Chart encoding '{encoding_name}' must map to a date or datetime field."
+        )
+    if semantic == "dimension" and value_type in {"null", "mixed"}:
+        raise AutoCountToolError(
+            f"Chart encoding '{encoding_name}' must map to a consistent field."
+        )
+
+
+def _validate_chart_encodings(
+    chart_type: str,
+    encodings: Any,
+    data: dict[str, Any],
+) -> dict[str, str]:
+    if not isinstance(encodings, dict):
+        raise AutoCountToolError("encodings must be a JSON object.")
+
+    normalized = {}
+    allowed = _CHART_ALLOWED_ENCODINGS[chart_type]
+    unknown = set(encodings) - allowed
+    if unknown:
+        raise AutoCountToolError(
+            "Unsupported chart encodings: " + ", ".join(sorted(map(str, unknown)))
+        )
+
+    for name, field in encodings.items():
+        if not isinstance(name, str) or not isinstance(field, str) or not field.strip():
+            raise AutoCountToolError("Chart encodings must map names to non-empty field names.")
+        normalized[name] = field.strip()
+
+    missing = [name for name in _CHART_REQUIRED_ENCODINGS[chart_type] if name not in normalized]
+    if missing:
+        raise AutoCountToolError(
+            f"Chart type '{chart_type}' requires encodings: " + ", ".join(missing)
+        )
+
+    numeric = {"y", "value", "min", "max", "target"}
+    date = {"date"}
+    for name, field in normalized.items():
+        _column_descriptor(data, field)
+        if name in numeric:
+            _require_chart_field(data, field, semantic="numeric", encoding_name=name)
+        elif name in date:
+            _require_chart_field(data, field, semantic="date", encoding_name=name)
+        else:
+            _require_chart_field(data, field, semantic="dimension", encoding_name=name)
+    return normalized
+
+
+def autocount_create_chart(
+    params: dict[str, Any],
+    **kwargs: Any,
+) -> str:
+    """Validate a chart mapping and return the renderer-independent payload."""
+
+    try:
+        result_ref = str(params.get("result_ref", "")).strip()
+        chart_type = str(params.get("type", "")).strip().lower()
+        if chart_type not in _CHART_REQUIRED_ENCODINGS:
+            raise AutoCountToolError("Chart type is not supported.")
+
+        stored = _get_query_result(result_ref, _query_owner(kwargs))
+        data = stored.get("data")
+        if not isinstance(data, dict):
+            raise AutoCountToolError("result_ref does not contain a valid query result.")
+        encodings = _validate_chart_encodings(chart_type, params.get("encodings"), data)
+
+        title = str(params.get("title", "")).strip()[:200]
+        payload = {
+            "schema_version": 1,
+            "chart_id": f"chart_{secrets.token_urlsafe(16)}",
+            "chart": {
+                "type": chart_type,
+                "title": title or f"AutoCount {chart_type.replace('_', ' ')}",
+                "encodings": encodings,
+                "data": data,
+                "summary": {
+                    "rows": int(stored.get("shape", {}).get("rows", len(data.get("rows", [])))),
+                    "columns": int(stored.get("shape", {}).get("columns", len(data.get("columns", [])))),
+                },
+            },
+        }
+        return _success(payload, resultRef=result_ref)
+    except Exception as exc:
+        return _failure(exc)
 
 
 def autocount_get_connector_status(

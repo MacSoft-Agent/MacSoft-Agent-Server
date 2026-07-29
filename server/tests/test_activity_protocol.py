@@ -214,6 +214,62 @@ class ChatProtocolTests(unittest.TestCase):
         self.assertNotIn("secret", serialized)
         self.assertEqual(events[-1][0], "message_done")
 
+    def test_chart_payload_is_additive_and_uses_server_message_identity(self) -> None:
+        chart_payload = {
+            "schema_version": 1,
+            "message_id": "hermes-internal-id",
+            "session_id": "wrong-session",
+            "chart_id": "chart_1",
+            "chart": {
+                "type": "bar",
+                "title": "Sales by month",
+                "encodings": {"category": "month", "value": "amount"},
+                "data": {
+                    "columns": [
+                        {"name": "month", "type": "string", "semantic": "dimension"},
+                        {"name": "amount", "type": "number", "semantic": "measure"},
+                    ],
+                    "rows": [{"month": "July", "amount": 12}],
+                },
+                "summary": {"rows": 1, "columns": 2},
+            },
+        }
+        internal_events = iter(
+            [
+                {"type": "chart_payload", "payload": chart_payload},
+                {"type": "text_delta", "text": "Chart ready."},
+            ]
+        )
+        with patch(
+            "macsoft.gateway.routes_chat.stream_hermes_reply_events",
+            return_value=internal_events,
+        ):
+            response = chat_stream(
+                self.request,
+                self.body,
+                authorization="Bearer device-token",
+                x_device_id="device_1",
+                x_macsoft_client_capabilities="activity-v1",
+            )
+            events = parse_sse(asyncio.run(consume(response)))
+
+        chart_index = next(index for index, (name, _) in enumerate(events) if name == "chart_payload")
+        token_index = next(index for index, (name, _) in enumerate(events) if name == "token_delta")
+        self.assertLess(chart_index, token_index)
+        chart_event = events[chart_index][1]
+        self.assertEqual(chart_event["message_id"], events[0][1]["message_id"])
+        self.assertEqual(chart_event["session_id"], "session_1")
+        self.assertEqual(chart_event["chart"]["type"], "bar")
+        self.assertEqual(events[-1][0], "message_done")
+        conn = sqlite3.connect(self.db_path)
+        try:
+            stored = conn.execute(
+                "SELECT content FROM messages WHERE role='assistant'"
+            ).fetchone()[0]
+            self.assertEqual(stored, "Chart ready.")
+        finally:
+            conn.close()
+
     def test_selected_client_skill_is_owner_scoped_and_request_specific(self) -> None:
         conn = sqlite3.connect(self.db_path)
         now = "2026-07-14T00:00:00+00:00"
@@ -568,6 +624,40 @@ class HermesClientStreamTests(unittest.TestCase):
             ],
         )
         self.assertNotIn("secret", json.dumps(events))
+
+    def test_internal_sse_parser_forwards_only_valid_chart_payload(self) -> None:
+        body = (
+            'event: hermes.chart.payload\n'
+            'data: {"schema_version":1,"message_id":"internal-id","session_id":"session_1","chart_id":"chart_1","chart":{"type":"bar","title":"Sales","encodings":{"category":"month","value":"amount"},"data":{"columns":[{"name":"month","type":"string","semantic":"dimension"},{"name":"amount","type":"number","semantic":"measure"}],"rows":[{"month":"July","amount":12}]},"summary":{"rows":1,"columns":2}}}\n\n'
+            'event: hermes.chart.payload\n'
+            'data: {"schema_version":2,"chart":{}}\n\n'
+            'data: {"choices":[{"delta":{"content":"Chart ready."}}]}\n\n'
+            'data: [DONE]\n\n'
+        )
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def __iter__(self):
+                return iter(body.encode("utf-8").splitlines(keepends=True))
+
+        with patch("macsoft.chat.hermes_client.urlopen", return_value=Response()):
+            events = list(
+                stream_hermes_reply_events(
+                    base_url="http://127.0.0.1:8642",
+                    api_key="internal-secret",
+                    messages=[{"role": "user", "content": "Chart sales"}],
+                    timeout_seconds=5,
+                )
+            )
+
+        self.assertEqual(events[0]["type"], "chart_payload")
+        self.assertEqual(events[0]["payload"]["chart"]["type"], "bar")
+        self.assertEqual(events[1], {"type": "text_delta", "text": "Chart ready."})
 
 
 if __name__ == "__main__":

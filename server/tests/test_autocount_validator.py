@@ -123,6 +123,7 @@ class AutoCountValidatorTests(unittest.TestCase):
     def setUp(self) -> None:
         tools._invalid_fingerprints.clear()
         tools._invalid_fingerprint_set.clear()
+        tools._query_results.clear()
 
     def test_exact_catalog_command_and_valid_descriptive_payload_are_accepted(self) -> None:
         payload = {
@@ -336,10 +337,172 @@ class AutoCountValidatorTests(unittest.TestCase):
         context = Context()
         plugin.register(context)
         self.assertEqual(context.tools.count("autocount_validate_command"), 1)
-        self.assertEqual(len(context.tools), 5)
-        self.assertEqual(context.skills, ["autocount-operations"])
+        self.assertEqual(context.tools.count("autocount_query_data"), 1)
+        self.assertEqual(context.tools.count("autocount_create_chart"), 1)
+        self.assertEqual(len(context.tools), 7)
+        self.assertEqual(
+            context.skills,
+            ["autocount-operations", "autocount-charting"],
+        )
         manifest = yaml.safe_load((PLUGIN_DIR / "plugin.yaml").read_text(encoding="utf-8"))
         self.assertEqual(set(manifest["provides_tools"]), set(context.tools))
+
+    def test_query_returns_metadata_only_and_chart_uses_scoped_rows(self) -> None:
+        execution = {
+            "ok": True,
+            "data": {
+                "rows": [
+                    {"day": "2026-07-14", "category": "A", "amount": 12.5},
+                    {"day": "2026-07-15", "category": "B", "amount": 7},
+                ]
+            },
+        }
+        owner = {"task_id": "task-a", "session_id": "session-a"}
+        with patch.object(
+            tools,
+            "_resolve_exact_command",
+            return_value={"type": "read-sales", "mode": "read"},
+        ), patch.object(
+            tools,
+            "autocount_execute_command",
+            return_value=json.dumps(execution),
+        ):
+            query = json.loads(
+                tools.autocount_query_data(
+                    {"command_type": "read-sales", "payload": {}},
+                    **owner,
+                )
+        )
+
+        self.assertTrue(query["ok"])
+        self.assertEqual(
+            query["data"]["rows"],
+            execution["data"]["rows"],
+        )
+        self.assertEqual(query["data"]["shape"], {"rows": 2, "columns": 3})
+        self.assertEqual(
+            {column["name"]: column["type"] for column in query["data"]["columns"]},
+            {"day": "date", "category": "string", "amount": "number"},
+        )
+
+        chart = json.loads(
+            tools.autocount_create_chart(
+                {
+                    "result_ref": query["data"]["result_ref"],
+                    "type": "line",
+                    "title": "Sales",
+                    "encodings": {"x": "day", "y": "amount"},
+                },
+                **owner,
+            )
+        )
+        self.assertTrue(chart["ok"])
+        self.assertEqual(chart["data"]["chart"]["type"], "line")
+        self.assertEqual(len(chart["data"]["chart"]["data"]["rows"]), 2)
+        self.assertNotIn(
+            "rows",
+            sys.modules[f"{PACKAGE_NAME}.schemas"].AUTOCOUNT_CREATE_CHART[
+                "parameters"
+            ]["properties"],
+        )
+
+        cross_scope = json.loads(
+            tools.autocount_create_chart(
+                {
+                    "result_ref": query["data"]["result_ref"],
+                    "type": "line",
+                    "encodings": {"x": "day", "y": "amount"},
+                },
+                task_id="task-b",
+                session_id="session-b",
+            )
+        )
+        self.assertFalse(cross_scope["ok"])
+        self.assertEqual(cross_scope["error"]["message"], "result_ref is invalid or expired.")
+
+    def test_chart_minimum_encodings_and_types_are_validated_per_chart_type(self) -> None:
+        stored = tools._store_query_result(
+            ("task", "session"),
+            tools._normalize_query_result(
+                {
+                    "rows": [
+                        {
+                            "category": "A",
+                            "value": 3,
+                            "date": "2026-07-14",
+                            "x": 1,
+                            "y": 2,
+                            "min": 0,
+                            "max": 10,
+                        },
+                    ]
+                }
+            ),
+        )
+
+        missing = json.loads(
+            tools.autocount_create_chart(
+                {
+                    "result_ref": stored,
+                    "type": "line",
+                    "encodings": {"x": "date"},
+                },
+                task_id="task",
+                session_id="session",
+            )
+        )
+        self.assertFalse(missing["ok"])
+        self.assertIn("requires encodings: y", missing["error"]["message"])
+
+        wrong_type = json.loads(
+            tools.autocount_create_chart(
+                {
+                    "result_ref": stored,
+                    "type": "pie",
+                    "encodings": {"category": "category", "value": "date"},
+                },
+                task_id="task",
+                session_id="session",
+            )
+        )
+        self.assertFalse(wrong_type["ok"])
+        self.assertIn("must map to a numeric field", wrong_type["error"]["message"])
+
+        table = json.loads(
+            tools.autocount_create_chart(
+                {"result_ref": stored, "type": "table", "encodings": {}},
+                task_id="task",
+                session_id="session",
+            )
+        )
+        self.assertTrue(table["ok"])
+
+        valid_minimums = {
+            "line": {"x": "date", "y": "value"},
+            "area": {"x": "date", "y": "value"},
+            "bar": {"category": "category", "value": "value"},
+            "horizontal_bar": {"category": "category", "value": "value"},
+            "pie": {"category": "category", "value": "value"},
+            "donut": {"category": "category", "value": "value"},
+            "gauge": {"value": "value", "min": "min", "max": "max"},
+            "calendar_heatmap": {"date": "date", "value": "value"},
+            "scatter": {"x": "x", "y": "y"},
+            "table": {},
+        }
+        for chart_type, encodings in valid_minimums.items():
+            with self.subTest(chart_type=chart_type):
+                result = json.loads(
+                    tools.autocount_create_chart(
+                        {
+                            "result_ref": stored,
+                            "type": chart_type,
+                            "encodings": encodings,
+                        },
+                        task_id="task",
+                        session_id="session",
+                    )
+                )
+                self.assertTrue(result["ok"], result)
 
 
 if __name__ == "__main__":

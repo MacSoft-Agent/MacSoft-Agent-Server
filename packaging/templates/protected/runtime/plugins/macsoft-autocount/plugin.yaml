@@ -7,5 +7,7 @@ provides_tools:
   - autocount_get_command_schema
   - autocount_validate_command
   - autocount_execute_command
+  - autocount_query_data
+  - autocount_create_chart
 provides_hooks:
   - pre_llm_call

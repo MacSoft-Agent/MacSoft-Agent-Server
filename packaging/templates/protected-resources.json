@@ -24,6 +24,10 @@
     {
       "source": "protected/runtime/plugins/macsoft-autocount/skills/autocount-operations/SKILL.md",
       "destination": "runtime/plugins/macsoft-autocount/skills/autocount-operations/SKILL.md"
+    },
+    {
+      "source": "protected/runtime/plugins/macsoft-autocount/skills/autocount-charting/SKILL.md",
+      "destination": "runtime/plugins/macsoft-autocount/skills/autocount-charting/SKILL.md"
     }
   ]
 }

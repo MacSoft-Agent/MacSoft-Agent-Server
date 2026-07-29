@@ -26,10 +26,15 @@ test('customer update policy stays fail-closed when no trusted feed exists', asy
 test('configured activation build fails closed while the stable manifest is unavailable', async () => {
   let trustedRelease: TrustedMacSoftRelease | null = {
     buildId: 'stale',
-    bytes: 1,
+    channel: 'stable',
+    installer: {
+      bytes: 1,
+      sha256: 'a'.repeat(64),
+      url: 'https://updates.example.test/stale.exe'
+    },
+    product: 'MacSoft Agent',
     publishedAt: '2026-07-29T00:00:00.000Z',
-    sha256: 'a'.repeat(64),
-    url: 'https://updates.example.test/stale.exe',
+    schemaVersion: 1,
     version: '9.9.9'
   }
   const status = await customerUpdateCheck(

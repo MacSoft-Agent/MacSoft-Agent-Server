@@ -98,6 +98,13 @@ try {
         }
     }
     $noOpVerifier = { param($Tool, $Path) }
+    $validRfc3161Verifier = {
+        param($Path)
+        [pscustomobject]@{
+            rfc3161_verified = $true
+            message_imprint_digest = 'sha256'
+        }
+    }
 
     $unsigned = Complete-ReleaseArtifact `
         -ArtifactPath $installer `
@@ -124,7 +131,8 @@ try {
             -RequestedSignTool $signTool `
             -SignerInvoker $failingSigner `
             -AuthenticodeProbe $validProbe `
-            -NativeVerifier $noOpVerifier
+            -NativeVerifier $noOpVerifier `
+            -Rfc3161Verifier $validRfc3161Verifier
     }
 
     $noOpSigner = { param($Command, $Path) }
@@ -136,7 +144,8 @@ try {
             -RequestedSignTool $signTool `
             -SignerInvoker $noOpSigner `
             -AuthenticodeProbe $invalidProbe `
-            -NativeVerifier $noOpVerifier
+            -NativeVerifier $noOpVerifier `
+            -Rfc3161Verifier $validRfc3161Verifier
     }
     Assert-Throws -Pattern 'trusted timestamp' -Action {
         Complete-ReleaseArtifact `
@@ -146,7 +155,75 @@ try {
             -RequestedSignTool $signTool `
             -SignerInvoker $noOpSigner `
             -AuthenticodeProbe $noTimestampProbe `
-            -NativeVerifier $noOpVerifier
+            -NativeVerifier $noOpVerifier `
+            -Rfc3161Verifier $validRfc3161Verifier
+    }
+
+    $missingRfc3161Verifier = {
+        param($Path)
+        throw 'The installer does not contain an RFC 3161 timestamp.'
+    }
+    Assert-Throws -Pattern 'does not contain an RFC 3161 timestamp' -Action {
+        Complete-ReleaseArtifact `
+            -ArtifactPath $installer `
+            -Mode Production `
+            -ExternalSigningCommand $signer `
+            -RequestedSignTool $signTool `
+            -SignerInvoker $noOpSigner `
+            -AuthenticodeProbe $validProbe `
+            -NativeVerifier $noOpVerifier `
+            -Rfc3161Verifier $missingRfc3161Verifier
+    }
+
+    $legacyTimestampVerifier = {
+        param($Path)
+        throw 'The installer contains only a legacy Authenticode timestamp.'
+    }
+    Assert-Throws -Pattern 'only a legacy Authenticode timestamp' -Action {
+        Complete-ReleaseArtifact `
+            -ArtifactPath $installer `
+            -Mode Production `
+            -ExternalSigningCommand $signer `
+            -RequestedSignTool $signTool `
+            -SignerInvoker $noOpSigner `
+            -AuthenticodeProbe $validProbe `
+            -NativeVerifier $noOpVerifier `
+            -Rfc3161Verifier $legacyTimestampVerifier
+    }
+
+    $malformedRfc3161Verifier = {
+        param($Path)
+        throw 'The installer RFC 3161 timestamp evidence is malformed or ambiguous.'
+    }
+    Assert-Throws -Pattern 'RFC 3161 timestamp evidence is malformed' -Action {
+        Complete-ReleaseArtifact `
+            -ArtifactPath $installer `
+            -Mode Production `
+            -ExternalSigningCommand $signer `
+            -RequestedSignTool $signTool `
+            -SignerInvoker $noOpSigner `
+            -AuthenticodeProbe $validProbe `
+            -NativeVerifier $noOpVerifier `
+            -Rfc3161Verifier $malformedRfc3161Verifier
+    }
+
+    $unapprovedDigestVerifier = {
+        param($Path)
+        [pscustomobject]@{
+            rfc3161_verified = $true
+            message_imprint_digest = 'sha1'
+        }
+    }
+    Assert-Throws -Pattern 'does not contain approved RFC 3161 timestamp evidence' -Action {
+        Complete-ReleaseArtifact `
+            -ArtifactPath $installer `
+            -Mode Production `
+            -ExternalSigningCommand $signer `
+            -RequestedSignTool $signTool `
+            -SignerInvoker $noOpSigner `
+            -AuthenticodeProbe $validProbe `
+            -NativeVerifier $noOpVerifier `
+            -Rfc3161Verifier $unapprovedDigestVerifier
     }
 
     $failingVerifier = { param($Tool, $Path) throw 'simulated native verification failure' }
@@ -158,7 +235,8 @@ try {
             -RequestedSignTool $signTool `
             -SignerInvoker $noOpSigner `
             -AuthenticodeProbe $validProbe `
-            -NativeVerifier $failingVerifier
+            -NativeVerifier $failingVerifier `
+            -Rfc3161Verifier $validRfc3161Verifier
     }
 
     $signingMutation = {
@@ -172,10 +250,13 @@ try {
         -RequestedSignTool $signTool `
         -SignerInvoker $signingMutation `
         -AuthenticodeProbe $validProbe `
-        -NativeVerifier $noOpVerifier
+        -NativeVerifier $noOpVerifier `
+        -Rfc3161Verifier $validRfc3161Verifier
     Assert-Condition ($signed.artifact_class -eq 'production-signed') 'Production artifact classification failed.'
     Assert-Condition $signed.production_ready 'A valid signed artifact should be production-ready.'
     Assert-Condition $signed.timestamped 'A production artifact must record a timestamp.'
+    Assert-Condition $signed.rfc3161_verified 'A production artifact must record verified RFC 3161 evidence.'
+    Assert-Condition ($signed.timestamp_digest_algorithm -eq 'sha256') 'A production artifact must record the approved timestamp digest.'
     Assert-Condition ($signed.installer_sha256 -eq (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()) 'The production hash was not calculated from post-sign bytes.'
     Assert-Condition ($signed.installer_bytes -eq (Get-Item -LiteralPath $installer).Length) 'The production byte count was not calculated from post-sign bytes.'
 
@@ -195,7 +276,8 @@ try {
             -RequestedSignTool $signTool `
             -SignerInvoker $noOpSigner `
             -AuthenticodeProbe $validProbe `
-            -NativeVerifier $noOpVerifier
+            -NativeVerifier $noOpVerifier `
+            -Rfc3161Verifier $validRfc3161Verifier
     }
 
     Write-Host 'Release artifact finalization tests passed.'

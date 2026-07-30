@@ -47,10 +47,12 @@ For every AutoCount request:
     sources. Preserve leading zeros, identify uncertain values, and prepare a
     draft first. Do not execute an AutoCount write from extracted values until
     the user explicitly confirms the reviewed draft.
-13. For charts, use autocount_query_data only with an official read/report
-    command. Analyze the returned real rows freely, then keep result_ref and
-    use autocount_create_chart for the final chart payload; never invent or
-    submit replacement chart values.
+13. For charts, use autocount_query_data only with an official structured
+    read/query/list command. Never use HTML, report, PDF, or artifact commands,
+    and never call autocount_execute_command directly to obtain chart data.
+    Analyze the returned real rows freely, then keep result_ref and use
+    autocount_create_chart for the final chart payload; never invent or submit
+    replacement chart values.
 </macsoft-autocount-policy>
 """.strip()
 

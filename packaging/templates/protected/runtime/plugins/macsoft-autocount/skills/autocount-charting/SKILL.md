@@ -10,11 +10,12 @@ authoritative rows and validates the final payload.
 
 ## Non-negotiable workflow
 
-1. Use `autocount_search_commands` when the official read/report command type is
-   uncertain.
+1. Use `autocount_search_commands` when the official structured read/query/list
+   command type is uncertain.
 2. Fetch and follow the current command schema with
    `autocount_get_command_schema`.
-3. Validate the read/report payload with `autocount_validate_command`.
+3. Validate the structured read/query/list payload with
+   `autocount_validate_command`.
 4. Call `autocount_query_data` and retain its opaque `result_ref`.
 5. Analyze the returned real rows and choose a chart type whose minimum
    encodings match the available fields.
@@ -25,7 +26,9 @@ authoritative rows and validates the final payload.
 
 Never use a write, edit, delete, or other mutating AutoCount command as the
 source of a chart. Never generate frontend code, ECharts options, SQL, Python,
-or browser automation for charting.
+or browser automation for charting. Never use HTML, report, PDF, or artifact
+commands as chart data sources, and never call `autocount_execute_command`
+directly to obtain chart data.
 
 ## Chart type minimum encodings
 

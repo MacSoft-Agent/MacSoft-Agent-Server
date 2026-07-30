@@ -420,6 +420,28 @@ class AutoCountValidatorTests(unittest.TestCase):
         self.assertFalse(cross_scope["ok"])
         self.assertEqual(cross_scope["error"]["message"], "result_ref is invalid or expired.")
 
+    def test_chart_query_rejects_report_commands_before_execution(self) -> None:
+        with patch.object(
+            tools,
+            "_resolve_exact_command",
+            return_value={"type": "sales-report-html", "mode": "report"},
+        ), patch.object(tools, "autocount_execute_command") as execute:
+            result = json.loads(
+                tools.autocount_query_data(
+                    {
+                        "command_type": "sales-report-html",
+                        "payload": {"document": "invoice"},
+                    },
+                    task_id="task-report",
+                    session_id="session-report",
+                )
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["type"], "AutoCountToolError")
+        self.assertIn("HTML and report commands", result["error"]["message"])
+        execute.assert_not_called()
+
     def test_chart_minimum_encodings_and_types_are_validated_per_chart_type(self) -> None:
         stored = tools._store_query_result(
             ("task", "session"),

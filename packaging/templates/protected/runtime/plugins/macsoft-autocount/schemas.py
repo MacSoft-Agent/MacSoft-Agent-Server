@@ -140,18 +140,21 @@ AUTOCOUNT_EXECUTE_COMMAND = {
 AUTOCOUNT_QUERY_DATA = {
     "name": "autocount_query_data",
     "description": (
-        "Run one official read-only or report AutoCount command and return a bounded "
+        "Run one official structured read, query, or list AutoCount command and return a bounded "
         "tabular result and result_ref. Analyze the returned real columns and rows to "
         "choose a chart, then use result_ref for charting; the Server retains the "
         "authoritative copy and never accepts model-supplied chart rows. "
-        "Do not use this tool for write, edit, delete, or other mutating commands."
+        "Do not use HTML, report, artifact, write, edit, delete, or other mutating commands."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "command_type": {
                 "type": "string",
-                "description": "Exact official AutoCount read or report command type.",
+                "description": (
+                    "Exact official structured AutoCount read, query, or list command type. "
+                    "HTML and report commands are not valid chart data sources."
+                ),
             },
             "payload": {
                 "type": "object",

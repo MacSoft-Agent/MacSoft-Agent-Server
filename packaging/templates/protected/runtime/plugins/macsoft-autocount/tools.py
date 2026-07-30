@@ -39,7 +39,7 @@ _QUERY_RESULT_MAX_ROWS = 10_000
 _QUERY_RESULT_MAX_BYTES = 2_000_000
 _QUERY_RESULT_LOCK = threading.RLock()
 _query_results: dict[str, dict[str, Any]] = {}
-_READ_QUERY_MODES = {"read", "report", "query", "list"}
+_STRUCTURED_QUERY_MODES = {"read", "query", "list"}
 _TABULAR_CONTAINER_KEYS = ("rows", "records", "items", "results", "data", "result")
 
 
@@ -524,7 +524,7 @@ def autocount_query_data(
     params: dict[str, Any],
     **kwargs: Any,
 ) -> str:
-    """Execute a read/report command and retain its normalized rows temporarily."""
+    """Execute a structured query command and retain its normalized rows temporarily."""
 
     command_type = str(params.get("command_type", "")).strip()
     payload = params.get("payload", {})
@@ -536,9 +536,15 @@ def autocount_query_data(
 
         command = _resolve_exact_command(command_type)
         mode = str(command.get("mode", "")).strip().lower()
-        if mode not in _READ_QUERY_MODES or str(command.get("mutating", "")).lower() == "true":
+        normalized_type = command_type.lower()
+        if (
+            mode not in _STRUCTURED_QUERY_MODES
+            or normalized_type.endswith("-html")
+            or str(command.get("mutating", "")).lower() == "true"
+        ):
             raise AutoCountToolError(
-                "autocount_query_data accepts only official read or report commands."
+                "autocount_query_data accepts only official structured read, query, "
+                "or list commands; HTML and report commands cannot be used as chart data."
             )
 
         execution = json.loads(autocount_execute_command(params, **kwargs))

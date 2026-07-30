@@ -20,7 +20,9 @@ declare global {
         createSession: (title?: string) => Promise<MacSoftAdminSession>
         getMessages: (sessionId: string) => Promise<MacSoftAdminMessage[]>
         deleteSession: (sessionId: string) => Promise<void>
-        startStream: (input: { sessionId: string; message: string }) => Promise<{ streamId: string }>
+        uploadFile: (input: { sessionId: string; filename: string; dataUrl: string }) => Promise<MacSoftAdminUploadedFile>
+        readFileDataUrl: (input: { sessionId: string; fileId: string }) => Promise<string>
+        startStream: (input: { sessionId: string; message: string; uploadedFileIds?: string[] }) => Promise<{ streamId: string }>
         stopStream: (input: { sessionId: string; streamId: string }) => Promise<{ ok: true }>
         onStreamEvent: (callback: (payload: MacSoftAdminStreamEvent) => void) => () => void
       }
@@ -304,6 +306,30 @@ export interface MacSoftAdminMessage {
   status: string
   model: string | null
   created_at: string
+  attachments?: MacSoftAdminMessageAttachment[]
+}
+
+export interface MacSoftAdminMessageAttachment {
+  file_id: string
+  filename: string
+  content_type: string
+  size_bytes: number
+  created_at: string
+}
+
+export interface MacSoftAdminUploadedFile {
+  file_id: string
+  fileId: string
+  session_id: string
+  sessionId: string
+  filename: string
+  content_type: string
+  contentType: string
+  size_bytes: number
+  sizeBytes: number
+  sha256: string
+  created_at: string
+  createdAt: string
 }
 
 export interface MacSoftAdminStreamEvent {

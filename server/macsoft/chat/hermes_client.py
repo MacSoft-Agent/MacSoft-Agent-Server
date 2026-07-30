@@ -280,9 +280,13 @@ def _start_hermes_run(
         str(message["content"]) for message in normalized[:user_index] if message["role"] == "system"
     )
     history = [message for message in normalized[:user_index] if message["role"] != "system"]
+    # The Hermes Runs API interprets a top-level list as a list of messages,
+    # while OpenAI-style multimodal content is also a list. Wrap the current
+    # turn in an explicit user message so image_url parts stay attached to the
+    # user input instead of being mistaken for a malformed message list.
     payload = {
         "model": "hermes-agent",
-        "input": normalized[user_index]["content"],
+        "input": [{"role": "user", "content": normalized[user_index]["content"]}],
         "conversation_history": history,
         "instructions": instructions,
         "session_id": session_id,

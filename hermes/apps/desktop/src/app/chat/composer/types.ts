@@ -42,6 +42,7 @@ export interface ChatBarProps {
   gateway?: HermesGateway | null
   queueSessionKey?: string | null
   queueWhileBusy?: boolean
+  restrictedAttachmentMenu?: boolean
   sessionId?: string | null
   cwd?: string | null
   onCancel: () => Promise<void> | void

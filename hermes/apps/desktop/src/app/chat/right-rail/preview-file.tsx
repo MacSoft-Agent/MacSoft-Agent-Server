@@ -602,7 +602,8 @@ export function LocalFilePreview({ reloadKey, target }: { reloadKey: number; tar
   // HTML files are rendered as source code, not in a webview - so they take
   // the same path as plain text files. `previewKind === 'binary'` arrives
   // when the file is forcibly previewed past the binary refusal screen.
-  const isText = target.previewKind === 'text' || target.previewKind === 'binary' || target.previewKind === 'html'
+  const isPdf = target.mimeType === 'application/pdf'
+  const isText = !isPdf && (target.previewKind === 'text' || target.previewKind === 'binary' || target.previewKind === 'html')
 
   const blockedByTarget = !isImage && !forcePreview && (target.binary || target.large)
 
@@ -616,7 +617,7 @@ export function LocalFilePreview({ reloadKey, target }: { reloadKey: number; tar
         return
       }
 
-      if (!isImage && !isText) {
+      if (!isImage && !isText && !isPdf) {
         setState({ loading: false })
 
         return
@@ -625,7 +626,7 @@ export function LocalFilePreview({ reloadKey, target }: { reloadKey: number; tar
       setState({ loading: true })
 
       try {
-        if (isImage) {
+        if (isImage || isPdf) {
           // Prefer bytes the caller already handed us (a pasted/dropped
           // screenshot) over re-reading a path that may be transient/unreadable.
           const dataUrl = target.dataUrl || (await readDesktopFileDataUrl(filePath))
@@ -637,7 +638,15 @@ export function LocalFilePreview({ reloadKey, target }: { reloadKey: number; tar
           return
         }
 
-        const result = await readTextPreview(filePath)
+        const result = target.dataUrl
+          ? {
+              binary: false,
+              byteSize: target.byteSize,
+              language: target.language,
+              text: await (await fetch(target.dataUrl)).text(),
+              truncated: false
+            }
+          : await readTextPreview(filePath)
 
         if (active) {
           const shouldBlock = !forcePreview && (result.binary || (result.byteSize ?? 0) > TEXT_PREVIEW_MAX_BYTES)
@@ -682,7 +691,7 @@ export function LocalFilePreview({ reloadKey, target }: { reloadKey: number; tar
     return () => {
       active = false
     }
-  }, [blockedByTarget, filePath, forcePreview, isImage, isText, reloadKey, selfReload, target.dataUrl, target.language])
+  }, [blockedByTarget, filePath, forcePreview, isImage, isPdf, isText, reloadKey, selfReload, target.dataUrl, target.language])
 
   // Editing is only offered for whole, readable text — never images, binaries,
   // or files we only loaded the first 512 KB of (saving would drop the tail).
@@ -902,6 +911,10 @@ export function LocalFilePreview({ reloadKey, target }: { reloadKey: number; tar
         />
       </div>
     )
+  }
+
+  if (isPdf && state.dataUrl) {
+    return <iframe className="h-full w-full border-0 bg-white" src={state.dataUrl} title={target.label} />
   }
 
   if (isText && state.text !== undefined) {

@@ -9,6 +9,7 @@ import {
   textPart
 } from '@/lib/chat-messages'
 import type { SessionInfo } from '@/types/hermes'
+import type { ComposerAttachment } from '@/store/composer'
 
 export interface MacSoftAdminActivity {
   title: string
@@ -78,6 +79,13 @@ export function messageFromServer(message: MacSoftAdminMessage): ChatMessage | n
     id: message.message_id || message.id,
     parts: [message.role === 'assistant' ? assistantTextPart(content) : textPart(content)],
     role: message.role,
+    adminAttachments: (message.attachments ?? []).map(file => ({
+      fileId: file.file_id,
+      sessionId: message.session_id,
+      filename: file.filename,
+      contentType: file.content_type,
+      sizeBytes: file.size_bytes
+    })),
     timestamp: Date.parse(message.created_at) || undefined
   }
 }
@@ -255,6 +263,23 @@ export function reconcileAdminMessages(local: ChatMessage[], persisted: ChatMess
 }
 
 export type MacSoftAdminChatController = ReturnType<typeof useMacSoftAdminChat>
+
+async function uploadAdminAttachments(sessionId: string, attachments: ComposerAttachment[]) {
+  const uploadable = attachments.filter(attachment => attachment.kind === 'image' || attachment.kind === 'file')
+  if (uploadable.length !== attachments.length) {
+    throw new Error('Admin chat supports image and file attachments only.')
+  }
+  return Promise.all(uploadable.map(async attachment => {
+    if (!attachment.path) throw new Error(`Admin attachment ${attachment.label} could not be read.`)
+    const dataUrl = await window.hermesDesktop.readFileDataUrl(attachment.path)
+    const uploaded = await window.hermesDesktop.macSoftAdminChat.uploadFile({
+      dataUrl,
+      filename: attachment.label,
+      sessionId
+    })
+    return uploaded
+  }))
+}
 
 export function useMacSoftAdminChat(enabled: boolean, serverReady: boolean) {
   const [state, dispatch] = useReducer(reduceMacSoftAdminChat, initialMacSoftAdminChatState)
@@ -458,7 +483,7 @@ export function useMacSoftAdminChat(enabled: boolean, serverReady: boolean) {
   }, [])
 
   const submit = useCallback(
-    async (value: string) => {
+    async (value: string, attachments: ComposerAttachment[] = []) => {
       const message = value.trim()
 
       if (!enabled || !serverReady || !message) {
@@ -511,7 +536,18 @@ export function useMacSoftAdminChat(enabled: boolean, serverReady: boolean) {
         updateSessionMessages(sessionId, current => [...current, userMessage, assistantMessage])
         syncSelectedView(sessionId)
 
-        const result = await window.hermesDesktop.macSoftAdminChat.startStream({ message, sessionId })
+        const uploadedFiles = await uploadAdminAttachments(sessionId, attachments)
+        updateSessionMessages(sessionId, current => current.map(item => item.id === userMessage.id ? {
+          ...item,
+          adminAttachments: uploadedFiles.map(file => ({
+            fileId: file.file_id,
+            sessionId: file.session_id,
+            filename: file.filename,
+            contentType: file.content_type,
+            sizeBytes: file.size_bytes
+          }))
+        } : item))
+        const result = await window.hermesDesktop.macSoftAdminChat.startStream({ message, sessionId, uploadedFileIds: uploadedFiles.map(file => file.file_id) })
 
         if (runsBySessionRef.current.get(sessionId) !== run) {
           return false

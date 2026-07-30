@@ -63,14 +63,46 @@ class UploadedFileRecord:
         )
 
 
+@dataclass(frozen=True)
+class AdminUploadedFileRecord:
+    file_id: str
+    session_id: str
+    original_name: str
+    stored_name: str
+    media_type: str
+    size_bytes: int
+    sha256: str
+    created_at: str
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> "AdminUploadedFileRecord":
+        return cls(
+            file_id=str(row["file_id"]),
+            session_id=str(row["session_id"]),
+            original_name=str(row["original_name"]),
+            stored_name=str(row["stored_name"]),
+            media_type=str(row["media_type"]),
+            size_bytes=int(row["size_bytes"]),
+            sha256=str(row["sha256"]),
+            created_at=str(row["created_at"]),
+        )
+
+
 def upload_root(config: AppConfig) -> Path:
     root = resolve_db_path(config).parent / "uploads"
     root.mkdir(parents=True, exist_ok=True)
     return root
 
 
-def stored_path(config: AppConfig, record: UploadedFileRecord) -> Path:
-    return upload_root(config) / record.stored_name
+def admin_upload_root(config: AppConfig) -> Path:
+    root = resolve_db_path(config).parent / "admin_uploads"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def stored_path(config: AppConfig, record: UploadedFileRecord | AdminUploadedFileRecord) -> Path:
+    root = admin_upload_root(config) if isinstance(record, AdminUploadedFileRecord) else upload_root(config)
+    return root / record.stored_name
 
 
 def _clean_filename(filename: str | None) -> str:
@@ -205,6 +237,62 @@ def create_uploaded_file(
     )
 
 
+def create_admin_uploaded_file(
+    conn: sqlite3.Connection,
+    config: AppConfig,
+    *,
+    session_id: str,
+    filename: str | None,
+    data: bytes,
+) -> AdminUploadedFileRecord:
+    original_name, media_type = validate_upload(data, filename)
+    file_id = new_id("admin_file")
+    stored_name = f"{file_id}{_EXTENSIONS[media_type]}"
+    target = admin_upload_root(config) / stored_name
+    temporary = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+    digest = hashlib.sha256(data).hexdigest()
+    created_at = utc_now_iso()
+
+    try:
+        with temporary.open("xb") as output:
+            output.write(data)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, target)
+        cursor = conn.execute(
+            """
+            INSERT INTO admin_uploaded_files (
+                file_id, session_id, original_name, stored_name, media_type,
+                size_bytes, sha256, created_at
+            )
+            SELECT ?, ?, ?, ?, ?, ?, ?, ?
+            WHERE EXISTS (
+                SELECT 1 FROM admin_sessions WHERE session_id = ? AND deleted_at IS NULL
+            )
+            """,
+            (file_id, session_id, original_name, stored_name, media_type, len(data), digest, created_at, session_id),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("Admin session was not found.")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        target.unlink(missing_ok=True)
+        temporary.unlink(missing_ok=True)
+        raise
+
+    return AdminUploadedFileRecord(
+        file_id=file_id,
+        session_id=session_id,
+        original_name=original_name,
+        stored_name=stored_name,
+        media_type=media_type,
+        size_bytes=len(data),
+        sha256=digest,
+        created_at=created_at,
+    )
+
+
 def require_owned_file(
     conn: sqlite3.Connection,
     *,
@@ -277,3 +365,72 @@ def delete_owned_file(
     )
     conn.commit()
     return record
+
+
+def require_admin_owned_file(
+    conn: sqlite3.Connection,
+    *,
+    file_id: str,
+    session_id: str,
+) -> AdminUploadedFileRecord:
+    row = conn.execute(
+        """
+        SELECT f.* FROM admin_uploaded_files f
+        INNER JOIN admin_sessions s ON s.session_id = f.session_id
+        WHERE f.file_id = ? AND f.session_id = ? AND s.deleted_at IS NULL
+        """,
+        (file_id, session_id),
+    ).fetchone()
+    if row is None:
+        raise ValueError("Admin uploaded file was not found for this session.")
+    return AdminUploadedFileRecord.from_row(row)
+
+
+def require_admin_owned_files(
+    conn: sqlite3.Connection,
+    *,
+    file_ids: list[str],
+    session_id: str,
+) -> list[AdminUploadedFileRecord]:
+    normalized = [str(file_id).strip() for file_id in file_ids]
+    if any(not file_id for file_id in normalized) or len(set(normalized)) != len(normalized):
+        raise UploadValidationError("invalid_file_ids", "Uploaded file IDs must be non-empty and unique.")
+    if len(normalized) > MAX_FILES_PER_MESSAGE:
+        raise UploadValidationError(
+            "too_many_files",
+            f"A message can include at most {MAX_FILES_PER_MESSAGE} uploaded files.",
+        )
+    records = [require_admin_owned_file(conn, file_id=file_id, session_id=session_id) for file_id in normalized]
+    if sum(record.size_bytes for record in records) > MAX_TOTAL_MESSAGE_BYTES:
+        raise UploadValidationError(
+            "attachments_too_large",
+            f"The combined files exceed the {MAX_TOTAL_MESSAGE_BYTES // (1024 * 1024)} MB message limit.",
+        )
+    return records
+
+
+def delete_admin_owned_file(
+    conn: sqlite3.Connection,
+    config: AppConfig,
+    *,
+    file_id: str,
+    session_id: str,
+) -> AdminUploadedFileRecord:
+    record = require_admin_owned_file(conn, file_id=file_id, session_id=session_id)
+    stored_path(config, record).unlink(missing_ok=True)
+    conn.execute("DELETE FROM admin_uploaded_files WHERE file_id = ? AND session_id = ?", (file_id, session_id))
+    conn.commit()
+    return record
+
+
+def delete_admin_session_files(conn: sqlite3.Connection, config: AppConfig, *, session_id: str) -> int:
+    rows = conn.execute(
+        "SELECT * FROM admin_uploaded_files WHERE session_id = ?",
+        (session_id,),
+    ).fetchall()
+    records = [AdminUploadedFileRecord.from_row(row) for row in rows]
+    for record in records:
+        stored_path(config, record).unlink(missing_ok=True)
+    conn.execute("DELETE FROM admin_uploaded_files WHERE session_id = ?", (session_id,))
+    conn.commit()
+    return len(records)

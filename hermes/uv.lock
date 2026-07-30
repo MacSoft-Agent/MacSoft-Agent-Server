@@ -1650,6 +1650,7 @@ honcho = [
     { name = "honcho-ai" },
 ]
 macsoft-server = [
+    { name = "aiohttp" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "httpx2" },
@@ -1762,6 +1763,7 @@ youtube = [
 requires-dist = [
     { name = "agent-client-protocol", marker = "extra == 'acp'", specifier = "==0.9.0" },
     { name = "aiohttp", marker = "extra == 'homeassistant'", specifier = "==3.14.1" },
+    { name = "aiohttp", marker = "extra == 'macsoft-server'", specifier = "==3.14.1" },
     { name = "aiohttp", marker = "extra == 'matrix'", specifier = "==3.14.1" },
     { name = "aiohttp", marker = "extra == 'messaging'", specifier = "==3.14.1" },
     { name = "aiohttp", marker = "extra == 'slack'", specifier = "==3.14.1" },

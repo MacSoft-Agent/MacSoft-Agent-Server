@@ -25,6 +25,21 @@ export interface AdminMessage {
   created_at: string
 }
 
+export interface AdminUploadedFile {
+  file_id: string
+  fileId: string
+  session_id: string
+  sessionId: string
+  filename: string
+  content_type: string
+  contentType: string
+  size_bytes: number
+  sizeBytes: number
+  sha256: string
+  created_at: string
+  createdAt: string
+}
+
 export class MacSoftDesktopAdminChatClient {
   private adminAccessToken: string | null = null
 
@@ -74,8 +89,28 @@ export class MacSoftDesktopAdminChatClient {
     await this.requestJson(`/api/admin/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' })
   }
 
-  async startAdminChatStream(sessionId: string, message: string, signal?: AbortSignal): Promise<Response> {
-    return this.requestStream('/api/admin/chat/stream', { session_id: sessionId, message, uploaded_file_ids: [] }, signal)
+  async uploadAdminFile(sessionId: string, file: { dataUrl: string; filename: string }): Promise<AdminUploadedFile> {
+    const blob = dataUrlToBlob(file.dataUrl)
+    const form = new FormData()
+    form.set('file', blob, file.filename)
+    const body = await this.requestJson(`/api/admin/sessions/${encodeURIComponent(sessionId)}/files`, {
+      method: 'POST',
+      body: form
+    })
+    if (!body?.file_id || !body?.session_id) throw new Error('MacSoft Server returned an invalid Admin file.')
+    return body as AdminUploadedFile
+  }
+
+  async readAdminFileDataUrl(sessionId: string, fileId: string): Promise<string> {
+    const response = await this.request(`/api/admin/sessions/${encodeURIComponent(sessionId)}/files/${encodeURIComponent(fileId)}`, { method: 'GET' })
+    if (!response.ok) throw new Error('Admin attachment is unavailable.')
+    const bytes = Buffer.from(await response.arrayBuffer())
+    const mimeType = response.headers.get('content-type')?.split(';')[0] || 'application/octet-stream'
+    return `data:${mimeType};base64,${bytes.toString('base64')}`
+  }
+
+  async startAdminChatStream(sessionId: string, message: string, uploadedFileIds: string[] = [], signal?: AbortSignal): Promise<Response> {
+    return this.requestStream('/api/admin/chat/stream', { session_id: sessionId, message, uploaded_file_ids: uploadedFileIds }, signal)
   }
 
   async interruptAdminChat(sessionId: string): Promise<void> {
@@ -118,9 +153,9 @@ export class MacSoftDesktopAdminChatClient {
       ...init,
       headers: {
         Accept: 'application/json',
-        'Content-Type': 'application/json',
         ...init.headers,
-        Authorization: `Bearer ${this.adminAccessToken ?? ''}`
+        Authorization: `Bearer ${this.adminAccessToken ?? ''}`,
+        ...(init.body instanceof FormData ? {} : { 'Content-Type': 'application/json' })
       },
       signal: init.signal ?? AbortSignal.timeout(timeoutMs)
     })
@@ -129,4 +164,10 @@ export class MacSoftDesktopAdminChatClient {
   private async readJson(response: Response): Promise<any> {
     return response.json().catch(() => null)
   }
+}
+
+function dataUrlToBlob(dataUrl: string): Blob {
+  const match = /^data:([^;,]+);base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl)
+  if (!match) throw new Error('Admin attachment is invalid.')
+  return new Blob([Buffer.from(match[2], 'base64')], { type: match[1] })
 }

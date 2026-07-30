@@ -22,6 +22,7 @@ def _row(row: sqlite3.Row) -> dict[str, Any]:
         "status": row["status"],
         "model": row["model"],
         "created_at": row["created_at"],
+        "attachments": [],
     }
 
 
@@ -66,7 +67,30 @@ def list_admin_messages(conn: sqlite3.Connection, session_id: str) -> list[dict[
         """,
         (session_id,),
     ).fetchall()
-    return [_row(row) for row in rows]
+    messages = [_row(row) for row in rows]
+    by_id = {message["message_id"]: message for message in messages}
+    if not by_id:
+        return messages
+    files = conn.execute(
+        "SELECT file_id, message_id, original_name, media_type, size_bytes, created_at FROM admin_uploaded_files WHERE session_id = ? AND message_id IS NOT NULL ORDER BY created_at ASC",
+        (session_id,),
+    ).fetchall()
+    for file in files:
+        message = by_id.get(str(file["message_id"]))
+        if message is not None:
+            message["attachments"].append({"file_id": str(file["file_id"]), "filename": str(file["original_name"]), "content_type": str(file["media_type"]), "size_bytes": int(file["size_bytes"]), "created_at": str(file["created_at"])})
+    return messages
+
+
+def attach_admin_files_to_message(conn: sqlite3.Connection, *, session_id: str, message_id: str, file_ids: list[str]) -> None:
+    if not file_ids:
+        return
+    placeholders = ",".join("?" for _ in file_ids)
+    cursor = conn.execute(f"UPDATE admin_uploaded_files SET message_id = ? WHERE session_id = ? AND message_id IS NULL AND file_id IN ({placeholders})", (message_id, session_id, *file_ids))
+    if cursor.rowcount != len(file_ids):
+        conn.rollback()
+        raise ValueError("admin_file_not_found")
+    conn.commit()
 
 
 def list_admin_context(conn: sqlite3.Connection, session_id: str) -> list[dict[str, str]]:

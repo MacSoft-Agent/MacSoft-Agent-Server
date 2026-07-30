@@ -6,7 +6,7 @@ from io import BytesIO, StringIO
 from typing import Any
 
 from macsoft.config import AppConfig
-from macsoft.files.storage import UploadedFileRecord, stored_path
+from macsoft.files.storage import AdminUploadedFileRecord, UploadedFileRecord, stored_path
 
 
 MAX_EXTRACTED_TEXT_CHARS = 80_000
@@ -102,7 +102,7 @@ def _extract_pdf(data: bytes) -> str:
     return text
 
 
-def _document_text(record: UploadedFileRecord, data: bytes) -> str:
+def _document_text(record: UploadedFileRecord | AdminUploadedFileRecord, data: bytes) -> str:
     if record.media_type == "text/csv":
         text = _extract_csv(data)
     elif record.media_type == "text/plain":
@@ -122,7 +122,7 @@ def build_hermes_user_content(
     config: AppConfig,
     *,
     message: str,
-    files: list[UploadedFileRecord],
+    files: list[UploadedFileRecord | AdminUploadedFileRecord],
 ) -> str | list[dict[str, Any]]:
     if not files:
         return message

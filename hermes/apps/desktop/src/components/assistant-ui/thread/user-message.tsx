@@ -1,5 +1,5 @@
 import { ActionBarPrimitive, BranchPickerPrimitive, MessagePrimitive, useAuiState } from '@assistant-ui/react'
-import { type FC, type ReactNode, useCallback, useRef, useState } from 'react'
+import { type FC, type ReactNode, useCallback, useMemo, useRef, useState } from 'react'
 
 import { DirectiveContent } from '@/components/assistant-ui/directive-text'
 import { messageAttachmentRefs, messageContentText } from '@/components/assistant-ui/thread/content'
@@ -11,6 +11,7 @@ import { useI18n } from '@/i18n'
 import { triggerHaptic } from '@/lib/haptics'
 import { StopFilled } from '@/lib/icons'
 import { cn } from '@/lib/utils'
+import { setCurrentSessionPreviewTarget } from '@/store/preview'
 import { notifyThreadEditOpen } from '@/store/thread-scroll'
 import { isWatchWindow } from '@/store/windows'
 
@@ -97,6 +98,97 @@ const ProcessNotificationNote: FC<{ text: string }> = ({ text }) => {
   )
 }
 
+type AdminAttachment = {
+  fileId: string
+  sessionId: string
+  filename: string
+  contentType: string
+  sizeBytes: number
+}
+
+function adminAttachments(value: unknown): AdminAttachment[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is AdminAttachment => {
+    if (!item || typeof item !== 'object') return false
+    const file = item as Partial<AdminAttachment>
+    return (
+      typeof file.fileId === 'string' &&
+      typeof file.sessionId === 'string' &&
+      typeof file.filename === 'string' &&
+      typeof file.contentType === 'string' &&
+      typeof file.sizeBytes === 'number'
+    )
+  })
+}
+
+function readableBytes(value: number) {
+  if (value < 1024) return `${value} B`
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`
+}
+
+const AdminAttachmentCards: FC<{ files: AdminAttachment[] }> = ({ files }) => {
+  const [openingId, setOpeningId] = useState<string | null>(null)
+  const [failedId, setFailedId] = useState<string | null>(null)
+
+  const open = useCallback(async (file: AdminAttachment) => {
+    setOpeningId(file.fileId)
+    setFailedId(null)
+    try {
+      const dataUrl = await window.hermesDesktop.macSoftAdminChat.readFileDataUrl({
+        fileId: file.fileId,
+        sessionId: file.sessionId
+      })
+      const isImage = file.contentType.startsWith('image/')
+      const isText = file.contentType.startsWith('text/') || file.contentType === 'application/csv'
+      const isPdf = file.contentType === 'application/pdf'
+      setCurrentSessionPreviewTarget(
+        {
+          binary: !isImage && !isText && !isPdf,
+          byteSize: file.sizeBytes,
+          dataUrl,
+          kind: 'file',
+          label: file.filename,
+          mimeType: file.contentType,
+          previewKind: isImage ? 'image' : isText ? 'text' : 'binary',
+          source: `admin-attachment:${file.fileId}`,
+          url: dataUrl
+        },
+        'manual',
+        `admin-attachment:${file.fileId}`
+      )
+    } catch {
+      setFailedId(file.fileId)
+    } finally {
+      setOpeningId(null)
+    }
+  }, [])
+
+  return (
+    <div className="flex max-w-full flex-wrap justify-start gap-2 -mt-3 mb-2" data-slot="admin-attachment-cards">
+      {files.map(file => (
+        <button
+          className="group flex min-w-64 max-w-sm items-center gap-3 rounded-xl border border-border/70 bg-background/80 p-2 text-left shadow-sm transition-colors hover:border-border hover:bg-muted/45 disabled:cursor-wait"
+          disabled={openingId === file.fileId}
+          key={file.fileId}
+          onClick={() => void open(file)}
+          type="button"
+        >
+          <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-red-500 text-white">
+            <Codicon name={file.contentType.startsWith('image/') ? 'file-media' : 'file'} size="1.1rem" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-sm font-medium">{file.filename}</span>
+            <span className="block text-xs text-muted-foreground">
+              {failedId === file.fileId ? 'Preview unavailable' : `${file.contentType.split('/').at(-1)?.toUpperCase() || 'FILE'} · ${readableBytes(file.sizeBytes)}`}
+            </span>
+          </span>
+        </button>
+      ))}
+    </div>
+  )
+}
+
 export const UserMessage: FC<{
   onCancel?: () => Promise<void> | void
   onRequestRestoreConfirm?: (messageId: string, target: RestoreMessageTarget) => void
@@ -143,6 +235,11 @@ export const UserMessage: FC<{
 
     return messageAttachmentRefs(custom.attachmentRefs)
   })
+  const adminAttachmentMetadata = useAuiState(s => {
+    const custom = (s.message.metadata?.custom ?? {}) as { adminAttachments?: unknown }
+    return custom.adminAttachments
+  })
+  const adminFiles = useMemo(() => adminAttachments(adminAttachmentMetadata), [adminAttachmentMetadata])
 
   // Sticky human bubbles clamp to ~2 lines with a soft fade so a long prompt
   // doesn't dominate the viewport while the response streams underneath; the
@@ -247,7 +344,9 @@ export const UserMessage: FC<{
           // Attachments live BELOW the sticky bubble in normal flow, so they
           // scroll away behind the pinned bubble instead of riding along with
           // it. Image refs render as thumbnails, file refs as chips; no border.
-          attachmentRefs.length > 0 ? (
+          adminFiles.length > 0 ? (
+            <AdminAttachmentCards files={adminFiles} />
+          ) : attachmentRefs.length > 0 ? (
             <div className="flex flex-wrap gap-1 -mt-3 mb-2">
               <DirectiveContent text={attachmentRefs.join(' ')} />
             </div>

@@ -332,13 +332,7 @@ export function ChatView({
       if (macSoftCustomerRuntime) {
         if (!adminChat) {return false}
 
-        if (options?.attachments?.length) {
-          notify({ kind: 'info', title: 'Server admin chat', message: 'Attachments are not supported in Admin chat yet.' })
-
-          return false
-        }
-
-        return adminChat.submit(text)
+        return adminChat.submit(text, options?.attachments)
       }
 
       return onSubmit(text, options)
@@ -591,6 +585,7 @@ export function ChatView({
               onTranscribeAudio={onTranscribeAudio}
               queueSessionKey={macSoftCustomerRuntime ? adminChat?.selectedSessionId : selectedSessionId}
               queueWhileBusy={!macSoftCustomerRuntime}
+              restrictedAttachmentMenu={macSoftCustomerRuntime}
               sessionId={macSoftCustomerRuntime ? adminChat?.selectedSessionId : activeSessionId}
               state={chatBarState}
               statusMessage={

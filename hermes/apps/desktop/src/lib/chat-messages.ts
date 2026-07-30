@@ -19,6 +19,13 @@ export type ChatMessage = {
   hidden?: boolean
   /** Composer attachment ref strings (`@file:...`, `@image:...`) sent with this user message. */
   attachmentRefs?: string[]
+  adminAttachments?: {
+    fileId: string
+    sessionId: string
+    filename: string
+    contentType: string
+    sizeBytes: number
+  }[]
 }
 
 export type GatewayEventPayload = {

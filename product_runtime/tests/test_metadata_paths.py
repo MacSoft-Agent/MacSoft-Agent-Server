@@ -17,6 +17,14 @@ class ProductMetadataAndPathsTests(unittest.TestCase):
         source = json.loads((root / "product.json").read_text("utf-8"))
         metadata = load_product_metadata(root)
         self.assertEqual(metadata.product, "MacSoft Agent")
+        self.assertEqual(source["product_version"], "0.1.2")
+        self.assertEqual(source["build_id"], "macsoft-agent-0.1.2-stable.20260730.1")
+        self.assertEqual(source["runtime_base_version"], "v2026.7.7.2")
+        self.assertEqual(
+            source["runtime_base_commit"],
+            "79f12748022817a7c4f3fee747e45e9e6979214a",
+        )
+        self.assertEqual(source["data_schema_version"], 1)
         self.assertEqual(metadata.product_version, source["product_version"])
         self.assertEqual(metadata.build_id, source["build_id"])
         self.assertEqual(len(metadata.runtime_base_commit), 40)
@@ -26,6 +34,10 @@ class ProductMetadataAndPathsTests(unittest.TestCase):
             metadata.update_manifest_url,
             "https://github.com/MacSoft-Agent/MacSoft-Agent-Releases/releases/latest/download/"
             "macsoft-agent-stable-manifest-v1.json",
+        )
+        self.assertEqual(
+            metadata.update_manifest_public_key,
+            "MCowBQYDK2VwAyEANuklnSpzDv32q5qf+JtDKlIOD1hvADK0GX9yo5cgddg=",
         )
         self.assertGreater(len(base64.b64decode(metadata.update_manifest_public_key, validate=True)), 0)
 

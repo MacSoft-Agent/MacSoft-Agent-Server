@@ -12,8 +12,10 @@ from pathlib import Path
 DEV_ORIGINS = {
     "http://127.0.0.1:5173",
     "http://127.0.0.1:5174",
+    "http://127.0.0.1:5175",
     "http://localhost:5173",
     "http://localhost:5174",
+    "http://localhost:5175",
 }
 
 
@@ -148,7 +150,7 @@ class CorsContractTests(unittest.TestCase):
                 method="OPTIONS",
                 path="/api/client/me",
                 headers={
-                    "origin": "http://127.0.0.1:5174",
+                    "origin": "http://127.0.0.1:5175",
                     "access-control-request-method": "GET",
                     "access-control-request-headers": ",".join(
                         sorted(requested_headers)
@@ -160,7 +162,7 @@ class CorsContractTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(
             headers["access-control-allow-origin"],
-            "http://127.0.0.1:5174",
+            "http://127.0.0.1:5175",
         )
         self.assertIn("GET", headers["access-control-allow-methods"])
         allowed_headers = {

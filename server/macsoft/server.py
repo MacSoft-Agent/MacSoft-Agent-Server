@@ -20,10 +20,15 @@ from macsoft.product import product_version
 
 
 CLIENT_CORS_ORIGINS = [
+    # Packaged Electron renders from file://, which Chromium serializes as
+    # the opaque Origin value "null" for CORS preflight requests.
+    "null",
     "http://127.0.0.1:5173",
     "http://127.0.0.1:5174",
+    "http://127.0.0.1:5175",
     "http://localhost:5173",
     "http://localhost:5174",
+    "http://localhost:5175",
 ]
 
 

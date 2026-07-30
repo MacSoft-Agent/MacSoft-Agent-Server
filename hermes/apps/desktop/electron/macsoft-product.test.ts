@@ -30,6 +30,11 @@ test('authoritative metadata is loaded from the product root', () => {
   const paths = resolveMacSoftProductPaths({ packaged: false, configuredProgramRoot: root })
   const metadata = loadMacSoftProductMetadata(paths)
   assert.equal(metadata.product, 'MacSoft Agent')
+  assert.equal(source.product_version, '0.1.2')
+  assert.equal(source.build_id, 'macsoft-agent-0.1.2-stable.20260730.1')
+  assert.equal(source.runtime_base_version, 'v2026.7.7.2')
+  assert.equal(source.runtime_base_commit, '79f12748022817a7c4f3fee747e45e9e6979214a')
+  assert.equal(source.data_schema_version, 1)
   assert.equal(metadata.product_version, source.product_version)
   assert.equal(metadata.build_id, source.build_id)
   assert.equal(metadata.runtime_contract_version, 1)
@@ -38,7 +43,10 @@ test('authoritative metadata is loaded from the product root', () => {
     metadata.update_manifest_url,
     'https://github.com/MacSoft-Agent/MacSoft-Agent-Releases/releases/latest/download/macsoft-agent-stable-manifest-v1.json'
   )
-  assert.ok(metadata.update_manifest_public_key)
+  assert.equal(
+    metadata.update_manifest_public_key,
+    'MCowBQYDK2VwAyEANuklnSpzDv32q5qf+JtDKlIOD1hvADK0GX9yo5cgddg='
+  )
   const publicKey = createPublicKey({ key: Buffer.from(metadata.update_manifest_public_key, 'base64'), format: 'der', type: 'spki' })
   assert.equal(publicKey.asymmetricKeyType, 'ed25519')
 })

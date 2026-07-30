@@ -73,7 +73,7 @@ export async function writeVerifiedMacSoftInstaller(
 
   const hash = createHash('sha256')
   let bytes = 0
-  const input = Readable.fromWeb(source.body)
+  const input = Readable.from(source.body, { objectMode: false })
   input.on('data', (chunk: Buffer) => {
     bytes += chunk.length
     if (bytes > expectedBytes || bytes > MAX_INSTALLER_BYTES) {

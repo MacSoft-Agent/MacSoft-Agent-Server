@@ -44,7 +44,7 @@ installed matching Python may not be necessary when `uv` can download it.
 Run PowerShell in the parent directory where the source should live:
 
 ```powershell
-git -c core.longpaths=true clone https://github.com/MacSoft-Agent/MacSoft-Agent.git
+git -c core.longpaths=true clone https://github.com/MacSoft-Agent/MacSoft-Agent-Server.git
 cd MacSoft-Agent
 git config core.longpaths true
 ```
@@ -62,7 +62,7 @@ git status --short --branch
 Both `origin` URLs should point to:
 
 ```text
-https://github.com/MacSoft-Agent/MacSoft-Agent.git
+https://github.com/MacSoft-Agent/MacSoft-Agent-Server.git
 ```
 
 Read these repository instructions before changing code:

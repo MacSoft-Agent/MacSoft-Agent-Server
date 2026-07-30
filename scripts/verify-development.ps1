@@ -24,6 +24,16 @@ if ($LASTEXITCODE -ne 0) {
     throw 'Repository cleanliness verification failed.'
 }
 
+& (Join-Path $root 'scripts\test-release-artifact-finalization.ps1')
+if ($LASTEXITCODE -ne 0) {
+    throw 'Release artifact finalization tests failed.'
+}
+
+& (Join-Path $root 'scripts\test-rfc3161-timestamp-verification.ps1')
+if ($LASTEXITCODE -ne 0) {
+    throw 'RFC 3161 timestamp verification tests failed.'
+}
+
 $previousPythonPath = $env:PYTHONPATH
 try {
     $env:PYTHONPATH = "$(Join-Path $root 'product_runtime');$(Join-Path $root 'server')"

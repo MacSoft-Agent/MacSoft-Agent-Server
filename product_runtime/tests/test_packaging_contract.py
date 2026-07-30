@@ -121,6 +121,8 @@ class PackagingContractTests(unittest.TestCase):
 
     def test_release_build_is_clean_commit_gated_and_version_driven(self) -> None:
         release = (ROOT / "scripts" / "build-release.ps1").read_text(encoding="utf-8-sig")
+        finalizer = (ROOT / "scripts" / "finalize-release-artifact.ps1").read_text(encoding="utf-8-sig")
+        rfc3161_verifier = (ROOT / "scripts" / "verify-rfc3161-timestamp.ps1").read_text(encoding="utf-8-sig")
         staging = (ROOT / "scripts" / "build-staging.ps1").read_text(encoding="utf-8-sig")
         installer_builder = (ROOT / "packaging" / "build-installer.ps1").read_text(encoding="utf-8-sig")
         self.assertIn("MacSoft-Agent-Packaging", release)
@@ -131,7 +133,38 @@ class PackagingContractTests(unittest.TestCase):
         self.assertIn("run pack --workspace apps/desktop", release)
         self.assertIn("build-staging.ps1", release)
         self.assertIn("build-installer.ps1", release)
+        self.assertIn("finalize-release-artifact.ps1", release)
         self.assertIn("build-report.json", release)
+        self.assertIn("InternalTestUnsigned", release)
+        self.assertIn("Production", release)
+        self.assertIn("production_ready", release)
+        self.assertIn("rfc3161_verified", release)
+        self.assertIn("timestamp_digest_algorithm", release)
+        self.assertIn("reportTemporaryPath", release)
+        self.assertIn("Move-Item", release)
+        self.assertLess(
+            release.index("Remove-Item -LiteralPath $reportPath"),
+            release.index("finalize-release-artifact.ps1"),
+        )
+        self.assertLess(
+            release.index("$artifact = &"),
+            release.index("$report = [ordered]"),
+        )
+        self.assertIn("Get-AuthenticodeSignature", finalizer)
+        self.assertIn("TimeStamperCertificate", finalizer)
+        self.assertIn("verify-rfc3161-timestamp.ps1", finalizer)
+        self.assertIn("rfc3161_verified", finalizer)
+        self.assertIn("CryptVerifyTimeStampSignature", rfc3161_verifier)
+        self.assertIn("1.3.6.1.4.1.311.3.3.1", rfc3161_verifier)
+        self.assertIn("1.2.840.113549.1.9.6", rfc3161_verifier)
+        self.assertIn("1.3.6.1.4.1.311.2.4.1", rfc3161_verifier)
+        self.assertIn("2.16.840.1.101.3.4.2.1", rfc3161_verifier)
+        self.assertIn("GetSignature()", rfc3161_verifier)
+        development_verifier = (ROOT / "scripts" / "verify-development.ps1").read_text(encoding="utf-8-sig")
+        self.assertIn("test-rfc3161-timestamp-verification.ps1", development_verifier)
+        self.assertIn("signtool.exe", finalizer)
+        self.assertIn("Get-StableArtifactEvidence", finalizer)
+        self.assertIn("outside the source repository", finalizer)
         self.assertIn("$Product.product_version", staging)
         self.assertIn("$Product.build_id", staging)
         self.assertIn("$manifest.product_version", installer_builder)

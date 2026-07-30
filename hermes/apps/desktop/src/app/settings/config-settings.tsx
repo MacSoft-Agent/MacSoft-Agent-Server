@@ -22,7 +22,7 @@ import { CONTROL_TEXT, EMPTY_SELECT_VALUE, FIELD_DESCRIPTIONS, FIELD_LABELS, SEC
 import { fieldCopyForSchemaKey } from './field-copy'
 import { enumOptionsFor, getNested, prettyName, setNested } from './helpers'
 import { MemoryConnect } from './memory/connect'
-import { ModelSettings, ModelSettingsSkeleton } from './model-settings'
+import { ModelSettings } from './model-settings'
 import { EmptyState, ListRow, LoadingState, SettingsContent } from './primitives'
 import { ProviderConfigPanel } from './provider-config-panel'
 
@@ -228,8 +228,8 @@ export function ConfigSettings({
   // The editable draft is local (debounced autosave watches it), but it's seeded
   // from — and saved back through — the shared config cache, so edits are visible
   // in the MCP/model surfaces and reopening the page doesn't reload-flash.
-  const [config, setConfig] = useState<HermesConfigRecord | null>(null)
   const { data: loadedConfig, isError: configLoadFailed, refetch: refetchConfig } = useHermesConfigRecord()
+  const [config, setConfig] = useState<HermesConfigRecord | null>(() => loadedConfig ?? null)
 
   const {
     data: schemaResponse,
@@ -249,7 +249,7 @@ export function ConfigSettings({
 
   // Seed the local draft once, the first time the shared record lands.
   // Background refetches thereafter must not clobber in-progress edits.
-  const configSeeded = useRef(false)
+  const configSeeded = useRef(Boolean(loadedConfig))
 
   useEffect(() => {
     if (loadedConfig && !configSeeded.current) {
@@ -270,6 +270,10 @@ export function ConfigSettings({
   })
 
   useEffect(() => {
+    if (activeSectionId !== 'voice') {
+      return
+    }
+
     let cancelled = false
 
     getElevenLabsVoices()
@@ -289,7 +293,7 @@ export function ConfigSettings({
       })
 
     return () => void (cancelled = true)
-  }, [])
+  }, [activeSectionId])
 
   useEffect(() => {
     if (!config || saveVersion === 0) {
@@ -396,6 +400,40 @@ export function ConfigSettings({
   }
 
   if (!config || !schema) {
+    // The main model panel owns independent endpoints and cache. Do not hide it
+    // behind the generic config/schema gate: a missing optional settings field
+    // response must not turn the entire Model page back into a skeleton.
+    if (activeSectionId === 'model') {
+      const genericLoadFailed = (configLoadFailed && !config) || (schemaFailed && !schema)
+
+      return (
+        <SettingsContent>
+          <div className="mb-6">
+            <ModelSettings onMainModelChanged={onMainModelChanged} />
+          </div>
+          {genericLoadFailed ? (
+            <PanelEmpty
+              action={
+                <Button
+                  onClick={() => {
+                    void refetchConfig()
+                    void refetchSchema()
+                  }}
+                  size="sm"
+                >
+                  {t.skills.refresh}
+                </Button>
+              }
+              icon="error"
+              title={c.failedLoad}
+            />
+          ) : (
+            <LoadingState label={c.loading} />
+          )}
+        </SettingsContent>
+      )
+    }
+
     // A failed config/schema fetch must surface a retry, not spin forever.
     if ((configLoadFailed && !config) || (schemaFailed && !schema)) {
       return (
@@ -416,18 +454,6 @@ export function ConfigSettings({
             title={c.failedLoad}
           />
         </div>
-      )
-    }
-
-    // Model keeps its shape via a skeleton (its catalog fetch is the slow part);
-    // other sections are quick config/schema reads, so a light loader is fine.
-    if (activeSectionId === 'model') {
-      return (
-        <SettingsContent>
-          <div className="mb-6">
-            <ModelSettingsSkeleton />
-          </div>
-        </SettingsContent>
       )
     }
 

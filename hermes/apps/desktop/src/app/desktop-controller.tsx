@@ -1014,6 +1014,7 @@ export function DesktopController() {
     branchCurrentSession: branchInNewChat,
     busyRef,
     createBackendSessionForSend,
+    eagerFileUploads: !macSoftCustomerRuntime,
     handleSkinCommand,
     openMemoryGraph: openStarmap,
     refreshSessions,

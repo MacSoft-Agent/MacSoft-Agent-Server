@@ -35,7 +35,9 @@ git checkout --detach <accepted-40-character-commit>
 Build only when a release artifact is required:
 
 ```powershell
-.\scripts\build-release.ps1 -ExpectedCommit <accepted-40-character-commit>
+.\scripts\build-release.ps1 `
+  -ExpectedCommit <accepted-40-character-commit> `
+  -ArtifactMode InternalTestUnsigned
 ```
 
 The release script refuses a dirty clone, a mismatched commit, the development
@@ -43,6 +45,11 @@ workspace name, or occupied product ports. It rebuilds Python and Node
 dependencies from `uv.lock` and `package-lock.json`, creates Electron
 `win-unpacked`, assembles a fresh audited staging payload, verifies its manifest,
 and emits the final NSIS installer plus `release\build-report.json`.
+`InternalTestUnsigned` is explicitly non-production. Production mode requires
+an external signing command outside the source repository, then independently
+verifies Authenticode, timestamp and final post-sign bytes before writing the
+report. See
+`docs/work-packages/WP-006-release-signing-and-artifact-finalization.md`.
 
 If packaging or acceptance reveals a source defect, fix it in the source test
 workspace, repeat testing, commit and push, then update the Packaging clone to

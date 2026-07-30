@@ -1,6 +1,6 @@
 # MacSoft Agent release readiness
 
-Assessment date: 2026-07-27
+Assessment date: 2026-07-29
 
 Baseline: `baseline-0.1.0-collaboration-safe-20260727` (resolve the
 annotated tag for the exact commit)
@@ -172,33 +172,43 @@ decision.
 
 ## 7. Update, distribution, and Hermes maintenance
 
-**Current state:** customer updates are intentionally installer-managed.
-`product.json` has no update manifest URL; update check/apply returns
-`installer-managed` without fetching. SHA-256 evidence is generated for release
-artifacts. No built-in discovery/apply/rollback service or repository-evidenced
-installer code-signing pipeline exists. Hermes is pinned, and a separate
-integration-branch compatibility workflow is documented.
+**Current state:** WP-004 implemented a fail-closed, installer-managed update
+path in Settings -> About. `product.json` still has no production manifest URL
+or public key, so current builds make no update request and cannot install an
+update. The signing pipeline, public release-only location, production trust
+provisioning, updater-activation build, update candidate, and real installed
+acceptance remain incomplete.
 
 **Evidence:** `product.json`,
-`hermes/apps/desktop/electron/macsoft-update-policy.ts` and tests,
-`scripts/build-release.ps1`, and
-`docs/development/MACSOFT_UPSTREAM_MAINTENANCE.md`.
+`docs/contracts/MACSOFT_UPDATE_CONTRACT.md`,
+`docs/decisions/0001-production-release-and-update-trust.md`,
+`docs/release/PRODUCTION_RELEASE_CONTROL.md`, update modules and tests,
+installer maintenance/health source, and `scripts/build-release.ps1`.
 
-**Impact and priority:**
+**Approved release sequence:**
 
-- Trusted distribution and installer authenticity: **High**, and a blocker for
-  broad external distribution unless the Product Owner accepts a narrower
-  controlled pilot.
-- Built-in update discovery/apply/rollback: **Later** if installer-only delivery
-  is an explicit first-release policy; otherwise it becomes a release blocker.
-- Hermes upstream automation: **Later**. The pinned baseline is the release
-  input; a newer Hermes version must use the documented compatibility branch
-  and receive a new MacSoft version/Build ID.
+- WP-005: production release policy and trust decisions.
+- Owner-authorized release-distribution setup.
+- WP-006: signing and artifact-finalization implementation.
+- Product Owner/Security Production Trust Provisioning Gate.
+- WP-007: merged 0.1.1 source bootstrap followed by the controlled release
+  operation.
+- WP-008: 0.1.2 installed update and rollback acceptance.
+- WP-009: limited-pilot promotion, production publication, go/no-go evidence,
+  and withdrawal rehearsal.
 
-**Acceptance needed:** owner-approved delivery channel and signing policy;
-signature and SHA-256 verification; controlled installer upgrade/rollback
-instructions; proof that packaged code cannot fetch or move the Hermes pin;
-compatibility matrix for every future Hermes candidate.
+**Impact and priority:** **Blocker.** Source implementation is not production
+enablement. Customer release remains blocked until the above gates produce
+signed artifacts, independent trust evidence, real installed acceptance, and
+an approved go/no-go record.
+
+**Acceptance needed:** the exact requirements and evidence boundaries are
+defined in `docs/work-packages/WP-005-production-release-policy-and-trust.md`
+and `docs/release/PRODUCTION_RELEASE_CONTROL.md`. The 0.1.1 activation build is
+distributed manually to a recorded limited cohort. The stable manifest remains
+unavailable until an accepted 0.1.2 candidate is ready; update checks therefore
+fail closed during bootstrap. Future Hermes candidates still require the
+documented compatibility branch and a new version/Build ID.
 
 ## 8. Collaboration, source publication, and supply-chain hygiene
 
@@ -240,7 +250,8 @@ triage as separate release work.
 
 ## Confirmed boundaries and unsupported older conclusions
 
-- A built-in updater is not partially working; it is deliberately unavailable.
+- Built-in update source exists but remains production-disabled until trusted
+  release configuration and installed acceptance complete.
 - Port handling is not dynamic; current behavior is detect-and-fail.
 - Automated installer contract tests do not equal a successful real Windows
   installation or overlay upgrade.
@@ -270,7 +281,6 @@ product behavior.
 logic, ports, runtime ownership, AutoCount behavior, Hermes upgrade, packaging
 or Release Candidate creation.
 
-The next sequence, after owner acceptance, is clean reproducible packaging,
-real clean-install/overlay acceptance, installed lifecycle acceptance, external
-Client compatibility, and scoped AutoCount acceptance. Built-in updates and
-dynamic ports require separate Product Owner decisions.
+The next sequence is owner-authorized release-distribution setup, WP-006,
+Production Trust Provisioning, WP-007, WP-008, and WP-009. Dynamic ports remain
+a separate Product Owner decision.

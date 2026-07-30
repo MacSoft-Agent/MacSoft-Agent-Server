@@ -20,6 +20,8 @@ authorities.
   state, evidence, and next owner decision
 - [`release/RELEASE_READINESS.md`](release/RELEASE_READINESS.md) - current
   release risks, sequencing, and acceptance needs
+- [`release/PRODUCTION_RELEASE_CONTROL.md`](release/PRODUCTION_RELEASE_CONTROL.md) -
+  production distribution, trust-gate, and non-secret evidence controls
 - [`work-packages/_TEMPLATE.md`](work-packages/_TEMPLATE.md) - reusable medium
   and high-value task record
 - [`decisions/README.md`](decisions/README.md) - when and how to record durable
@@ -51,6 +53,8 @@ guidance.
 ## Release and packaging
 
 - `release/RELEASE_READINESS.md` - current evidence and missing acceptance
+- `release/PRODUCTION_RELEASE_CONTROL.md` - approved release-location, signing,
+  trust-provisioning, and publication controls; never a secret store
 - `development/DEVELOPMENT_AND_RELEASE_WORKTREES.md` - development/release
   separation; validate historical literal paths before use
 - `development/MACSOFT_PREPACKAGING_HARDENING.md` - packaging hardening context
@@ -69,11 +73,19 @@ not a general backlog.
   investigation, evidence, risks, and gated implementation scope
 - `work-packages/WP-004-built-in-update.md` - trusted installer update scope,
   verification evidence, and remaining installed-product gates
+- `work-packages/WP-005-production-release-policy-and-trust.md` - approved
+  production release policy, trust decisions, roles, sequencing, and gates
+- `work-packages/WP-006-release-signing-and-artifact-finalization.md` -
+  Authenticode signing boundary, fail-closed verification, and post-sign
+  artifact evidence
 
 ## Decisions
 
 `decisions/` is for durable architecture decisions that future developers
 should not unknowingly reverse. It is not for ordinary bug-fix notes.
+
+- `decisions/0001-production-release-and-update-trust.md` - source/release
+  separation, stable update trust, immutable publication, and recovery policy
 
 ## Contracts
 

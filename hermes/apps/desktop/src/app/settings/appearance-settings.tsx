@@ -435,7 +435,7 @@ export function AppearanceSettings() {
               <div className="flex min-w-[32rem] items-start justify-end gap-6">
                 <div className="flex w-[18.75rem] flex-col gap-2 pt-1">
                   <input
-                    aria-label="Font Size"
+                    aria-label={a.fontSizeTitle}
                     className="h-1 w-full cursor-pointer appearance-none rounded-full bg-(--ui-stroke-tertiary)"
                     max={FONT_SCALE_OPTIONS.length - 1}
                     min={0}
@@ -464,7 +464,7 @@ export function AppearanceSettings() {
                       lineHeight: `${Math.round(20 * draftFontScaleOption.scale)}px`
                     }}
                   >
-                    {draftFontScaleOption.label}
+                    {a.fontSizeOptions[draftFontScaleOption.id]}
                   </span>
                   <Button
                     disabled={!fontScaleChanged}
@@ -476,13 +476,13 @@ export function AppearanceSettings() {
                     type="button"
                     variant="outline"
                   >
-                    Apply
+                    {a.fontSizeApply}
                   </Button>
                 </div>
               </div>
             }
-            description="Adjust text size for readability. This setting is restored after the app restarts."
-            title="Font Size"
+            description={a.fontSizeDesc}
+            title={a.fontSizeTitle}
             wide
           />
 

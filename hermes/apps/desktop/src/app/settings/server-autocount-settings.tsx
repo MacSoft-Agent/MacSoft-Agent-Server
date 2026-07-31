@@ -13,6 +13,7 @@ import type {
   SaveServerAutoCountInput,
   ServerAutoCountSettings
 } from '@/global'
+import { useI18n } from '@/i18n'
 import {
   AlertCircle,
   CheckCircle2,
@@ -94,10 +95,12 @@ function withPort(rawUrl: string, rawPort: string): string {
 }
 
 function StatusPanel({ result }: { result: ReadableCheckResult | null }) {
+  const c = useI18n().t.settings.serverAutoCount
+
   if (!result) {
     return (
       <div className="rounded-xl border border-(--ui-stroke-tertiary) bg-(--ui-bg-quinary) px-4 py-3 text-xs text-(--ui-text-tertiary)">
-        No connection test has been run yet.
+        {c.noTestRun}
       </div>
     )
   }
@@ -106,9 +109,7 @@ function StatusPanel({ result }: { result: ReadableCheckResult | null }) {
     <div
       className={cn(
         'rounded-xl border px-4 py-3',
-        result.ok
-          ? 'border-emerald-500/25 bg-emerald-500/5'
-          : 'border-destructive/30 bg-destructive/5'
+        result.ok ? 'border-emerald-500/25 bg-emerald-500/5' : 'border-destructive/30 bg-destructive/5'
       )}
     >
       <div className="flex items-start gap-2">
@@ -120,7 +121,11 @@ function StatusPanel({ result }: { result: ReadableCheckResult | null }) {
         <div className="min-w-0">
           <p className="text-sm font-medium text-foreground">{result.title}</p>
           <p className="mt-1 text-xs leading-5 text-(--ui-text-tertiary)">{result.summary}</p>
-          {result.action ? <p className="mt-2 text-xs leading-5 text-foreground">Next: {result.action}</p> : null}
+          {result.action ? (
+            <p className="mt-2 text-xs leading-5 text-foreground">
+              {c.next}: {result.action}
+            </p>
+          ) : null}
         </div>
       </div>
 
@@ -137,7 +142,7 @@ function StatusPanel({ result }: { result: ReadableCheckResult | null }) {
 
       {result.details ? (
         <details className="mt-3 border-t border-(--ui-stroke-tertiary) pt-2 text-xs text-(--ui-text-tertiary)">
-          <summary className="cursor-pointer select-none">Administrator detail</summary>
+          <summary className="cursor-pointer select-none">{c.administratorDetail}</summary>
           <p className="mt-2 font-mono">{result.details}</p>
         </details>
       ) : null}
@@ -145,16 +150,8 @@ function StatusPanel({ result }: { result: ReadableCheckResult | null }) {
   )
 }
 
-function networkLabel(network: NetworkAddress): string {
-  const kind = {
-    ethernet: 'Ethernet',
-    other: 'Network',
-    vpn: 'VPN',
-    virtual: 'Virtual',
-    wifi: 'Wi-Fi'
-  }[network.kind]
-
-  return `${network.interfaceName} · ${kind} · ${network.address}${network.recommended ? ' · Recommended' : ''}`
+function networkLabel(network: NetworkAddress, kind: string, recommended: string): string {
+  return `${network.interfaceName} · ${kind} · ${network.address}${network.recommended ? ` · ${recommended}` : ''}`
 }
 
 function ServiceControl({
@@ -168,25 +165,43 @@ function ServiceControl({
   onAction: (action: MacSoftServiceAction) => void
   service: MacSoftServiceStatus | undefined
 }) {
+  const c = useI18n().t.settings.serverAutoCount
   const status = service?.status || 'stopped'
-  const tone = status === 'running' ? 'text-emerald-600 dark:text-emerald-400' : status === 'error' ? 'text-destructive' : 'text-(--ui-text-tertiary)'
+
+  const tone =
+    status === 'running'
+      ? 'text-emerald-600 dark:text-emerald-400'
+      : status === 'error'
+        ? 'text-destructive'
+        : 'text-(--ui-text-tertiary)'
+
   return (
     <div className="rounded-xl border border-(--ui-stroke-tertiary) bg-(--ui-bg-quinary) px-4 py-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-sm font-medium text-foreground">{label}</p>
-          <p className={cn('mt-1 text-xs capitalize', tone)}>{status.replace('_', ' ')}</p>
+          <p className={cn('mt-1 text-xs capitalize', tone)}>{c.serviceStatuses[status]}</p>
           {service?.last_error ? <p className="mt-1 max-w-xl text-xs text-destructive">{service.last_error}</p> : null}
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button disabled={busy || status === 'running' || status === 'starting'} onClick={() => onAction('start')} size="sm" variant="outline">
-            <Play /> Start
+          <Button
+            disabled={busy || status === 'running' || status === 'starting'}
+            onClick={() => onAction('start')}
+            size="sm"
+            variant="outline"
+          >
+            <Play /> {c.start}
           </Button>
           <Button disabled={busy || status === 'stopped'} onClick={() => onAction('stop')} size="sm" variant="outline">
-            <Square /> Stop
+            <Square /> {c.stop}
           </Button>
-          <Button disabled={busy || status === 'stopped'} onClick={() => onAction('restart')} size="sm" variant="outline">
-            <RefreshCw /> Restart
+          <Button
+            disabled={busy || status === 'stopped'}
+            onClick={() => onAction('restart')}
+            size="sm"
+            variant="outline"
+          >
+            <RefreshCw /> {c.restart}
           </Button>
         </div>
       </div>
@@ -195,6 +210,7 @@ function ServiceControl({
 }
 
 export function ServerAutoCountSettingsPage() {
+  const c = useI18n().t.settings.serverAutoCount
   const api = window.hermesDesktop?.serverAutoCount
   const hostApi = window.hermesDesktop?.macSoftHost
   const [loading, setLoading] = useState(true)
@@ -231,7 +247,7 @@ export function ServerAutoCountSettingsPage() {
 
   const load = async () => {
     if (!api) {
-      setLoadError('The Desktop configuration bridge is unavailable.')
+      setLoadError(c.desktopBridgeUnavailable)
       setLoading(false)
 
       return
@@ -243,7 +259,7 @@ export function ServerAutoCountSettingsPage() {
     try {
       applyLoadedSettings(await api.load())
     } catch (error) {
-      setLoadError(macSoftSettingsErrorMessage(error, 'Could not load Server & AutoCount settings.'))
+      setLoadError(macSoftSettingsErrorMessage(error, c.settingsLoadFailed))
     } finally {
       setLoading(false)
     }
@@ -251,37 +267,46 @@ export function ServerAutoCountSettingsPage() {
 
   const refreshHostStatus = async () => {
     if (!hostApi) {
-      setHostError('The Desktop Host bridge is unavailable.')
+      setHostError(c.hostBridgeUnavailable)
+
       return
     }
+
     try {
       setHostStatus(await hostApi.status())
       setHostError(null)
     } catch (error) {
-      setHostError(macSoftSettingsErrorMessage(error, 'MacSoft Agent Host is unavailable.'))
+      setHostError(macSoftSettingsErrorMessage(error, c.hostUnavailable))
     }
   }
 
   const runServiceAction = async (name: MacSoftServiceName, action: MacSoftServiceAction) => {
-    if (!hostApi) return
+    if (!hostApi) {
+      return
+    }
+
     setServiceAction(name)
+
     try {
       await hostApi.serviceAction(name, action)
       await refreshHostStatus()
     } catch (error) {
-      setHostError(macSoftSettingsErrorMessage(error, 'The service action failed.'))
+      setHostError(macSoftSettingsErrorMessage(error, c.serviceActionFailed))
     } finally {
       setServiceAction(null)
     }
   }
 
   const setAutoStart = async (enabled: boolean) => {
-    if (!hostApi) return
+    if (!hostApi) {
+      return
+    }
+
     try {
       const autoStart = await hostApi.setAutoStart(enabled)
       setHostStatus(current => (current ? { ...current, auto_start: autoStart } : current))
     } catch (error) {
-      setHostError(macSoftSettingsErrorMessage(error, 'Auto-start could not be updated.'))
+      setHostError(macSoftSettingsErrorMessage(error, c.autoStartUpdateFailed))
     }
   }
 
@@ -292,7 +317,8 @@ export function ServerAutoCountSettingsPage() {
   }, [])
 
   const clientUrl = useMemo(
-    () => `http://${selectedAddress || settings?.recommendedAddress || settings?.localOnlyAddress || '127.0.0.1'}:${form.serverPort || '8787'}`,
+    () =>
+      `http://${selectedAddress || settings?.recommendedAddress || settings?.localOnlyAddress || '127.0.0.1'}:${form.serverPort || '8787'}`,
     [form.serverPort, selectedAddress, settings?.localOnlyAddress, settings?.recommendedAddress]
   )
 
@@ -329,8 +355,8 @@ export function ServerAutoCountSettingsPage() {
     } catch (error) {
       notify({
         kind: 'error',
-        message: macSoftSettingsErrorMessage(error, 'Network interfaces could not be refreshed.'),
-        title: 'Refresh failed'
+        message: macSoftSettingsErrorMessage(error, c.networkRefreshFailed),
+        title: c.refreshFailed
       })
     }
   }
@@ -338,14 +364,16 @@ export function ServerAutoCountSettingsPage() {
   const copyClientUrl = async () => {
     try {
       await window.hermesDesktop.writeClipboard(clientUrl)
-      notify({ kind: 'success', message: clientUrl, title: 'Client URL copied' })
+      notify({ kind: 'success', message: clientUrl, title: c.clientUrlCopied })
     } catch {
-      notify({ kind: 'error', message: 'Copy the URL manually from the field.', title: 'Copy failed' })
+      notify({ kind: 'error', message: c.copyManually, title: c.copyFailed })
     }
   }
 
   const getPairingCode = async () => {
-    if (!api) return
+    if (!api) {
+      return
+    }
 
     setGettingPairingCode(true)
     setPairingCode(null)
@@ -354,7 +382,7 @@ export function ServerAutoCountSettingsPage() {
     try {
       setPairingCode(await api.getPairingCode(Number(form.serverPort)))
     } catch {
-      setPairingError('Unable to get pairing code.')
+      setPairingError(c.pairingCodeFailed)
     } finally {
       setGettingPairingCode(false)
     }
@@ -399,10 +427,10 @@ export function ServerAutoCountSettingsPage() {
       setAutoCountStatus(await api.testAutoCount(autoCountPayload()))
     } catch (error) {
       setAutoCountStatus({
-        action: 'Review the fields and try again.',
+        action: c.reviewFields,
         ok: false,
-        summary: macSoftSettingsErrorMessage(error, 'The connection test could not be completed.'),
-        title: 'AutoCount test failed'
+        summary: macSoftSettingsErrorMessage(error, c.connectionTestFailed),
+        title: c.autoCountTestFailed
       })
     } finally {
       setTesting(null)
@@ -423,15 +451,15 @@ export function ServerAutoCountSettingsPage() {
       notify({
         kind: 'success',
         message: result.restartRequired
-          ? `Saved safely. Restart required: ${result.servicesToRestart.join(', ')}.`
-          : 'Saved safely. No service restart is required.',
-        title: 'Server & AutoCount settings saved'
+          ? c.savedRestartRequired(result.servicesToRestart.join(', '))
+          : c.savedNoRestart,
+        title: c.settingsSaved
       })
     } catch (error) {
       notify({
         kind: 'error',
-        message: macSoftSettingsErrorMessage(error, 'The settings could not be saved.'),
-        title: 'Save failed'
+        message: macSoftSettingsErrorMessage(error, c.settingsSaveFailed),
+        title: c.saveFailed
       })
     } finally {
       setSaving(false)
@@ -439,17 +467,17 @@ export function ServerAutoCountSettingsPage() {
   }
 
   if (loading) {
-    return <LoadingState label="Loading Server & AutoCount settings..." />
+    return <LoadingState label={c.loading} />
   }
 
   if (loadError || !settings) {
     return (
       <SettingsContent>
         <div className="rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3">
-          <p className="text-sm font-medium text-destructive">Settings could not be loaded</p>
+          <p className="text-sm font-medium text-destructive">{c.loadPageFailed}</p>
           <p className="mt-1 text-xs leading-5 text-(--ui-text-tertiary)">{loadError}</p>
           <Button className="mt-3" onClick={() => void load()} size="sm" variant="outline">
-            <RefreshCw /> Retry
+            <RefreshCw /> {c.retry}
           </Button>
         </div>
       </SettingsContent>
@@ -459,30 +487,28 @@ export function ServerAutoCountSettingsPage() {
   return (
     <SettingsContent>
       <div className="mb-6">
-        <h2 className="text-lg font-semibold tracking-tight">Server & AutoCount</h2>
-        <p className="mt-1 max-w-2xl text-xs leading-5 text-(--ui-text-tertiary)">
-          Configure the Client-facing MacSoft Server, internal AI Service, and AutoCount Cloud connection. Saving never starts or stops a service automatically.
-        </p>
+        <h2 className="text-lg font-semibold tracking-tight">{c.title}</h2>
+        <p className="mt-1 max-w-2xl text-xs leading-5 text-(--ui-text-tertiary)">{c.intro}</p>
       </div>
 
-      <SectionHeading icon={Cpu} title="Service Control" />
+      <SectionHeading icon={Cpu} title={c.serviceControl} />
       <div className="grid gap-3">
         <ServiceControl
           busy={serviceAction === 'ai_service'}
-          label="AI Service"
+          label={c.aiService}
           onAction={action => void runServiceAction('ai_service', action)}
           service={hostStatus?.services.ai_service}
         />
         <ServiceControl
           busy={serviceAction === 'server'}
-          label="MacSoft Server"
+          label={c.macsoftServer}
           onAction={action => void runServiceAction('server', action)}
           service={hostStatus?.services.server}
         />
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-4">
         <Button onClick={() => void refreshHostStatus()} size="sm" variant="textStrong">
-          <RefreshCw /> Refresh Status
+          <RefreshCw /> {c.refreshStatus}
         </Button>
         <label className="flex items-center gap-2 text-xs text-foreground">
           <input
@@ -491,17 +517,29 @@ export function ServerAutoCountSettingsPage() {
             onChange={event => void setAutoStart(event.target.checked)}
             type="checkbox"
           />
-          Auto-start services with Windows
+          {c.autoStartWithWindows}
         </label>
       </div>
       {hostError ? <p className="mt-3 text-xs text-destructive">{hostError}</p> : null}
       <details className="mt-3 rounded-xl border border-(--ui-stroke-tertiary) bg-(--ui-bg-quinary) px-4 py-3 text-xs text-(--ui-text-tertiary)">
-        <summary className="cursor-pointer select-none">Administrator details</summary>
+        <summary className="cursor-pointer select-none">{c.administratorDetails}</summary>
         <dl className="mt-3 grid gap-2 sm:grid-cols-2">
-          <div><dt>Host version</dt><dd className="font-mono text-foreground">{hostStatus?.version || 'Unavailable'}</dd></div>
-          <div><dt>AI Service PID</dt><dd className="font-mono text-foreground">{hostStatus?.services.ai_service.pid || 'Not running'}</dd></div>
-          <div><dt>Server PID</dt><dd className="font-mono text-foreground">{hostStatus?.services.server.pid || 'Not running'}</dd></div>
-          <div><dt>Control boundary</dt><dd className="text-foreground">Local Host interface only</dd></div>
+          <div>
+            <dt>{c.hostVersion}</dt>
+            <dd className="font-mono text-foreground">{hostStatus?.version || c.unavailable}</dd>
+          </div>
+          <div>
+            <dt>{c.aiServicePid}</dt>
+            <dd className="font-mono text-foreground">{hostStatus?.services.ai_service.pid || c.notRunning}</dd>
+          </div>
+          <div>
+            <dt>{c.serverPid}</dt>
+            <dd className="font-mono text-foreground">{hostStatus?.services.server.pid || c.notRunning}</dd>
+          </div>
+          <div>
+            <dt>{c.controlBoundary}</dt>
+            <dd className="text-foreground">{c.localHostOnly}</dd>
+          </div>
         </dl>
       </details>
 
@@ -515,12 +553,12 @@ export function ServerAutoCountSettingsPage() {
         </div>
       ))}
 
-      <SectionHeading icon={Globe} title="MacSoft Server" />
+      <SectionHeading icon={Globe} title={c.macsoftServer} />
       <div className="grid gap-1">
         <ListRow
           action={
             <Input
-              aria-label="Server port"
+              aria-label={c.serverPort}
               className={cn('h-8 w-36', CONTROL_TEXT)}
               max={65535}
               min={1}
@@ -529,43 +567,44 @@ export function ServerAutoCountSettingsPage() {
               value={form.serverPort}
             />
           }
-          description="Client-facing port. MacSoft Client connects here, not to the AI Service."
-          title="Server port"
+          description={c.serverPortDesc}
+          title={c.serverPort}
         />
         <ListRow
           action={
             <select
-              aria-label="Selected network interface"
+              aria-label={c.networkInterfaceAria}
               className="h-8 min-w-64 max-w-full rounded-md border border-input bg-transparent px-2 text-xs text-foreground"
               onChange={event => setSelectedAddress(event.target.value)}
               value={selectedAddress}
             >
               {settings.networkAddresses.map(network => (
                 <option key={network.id} value={network.address}>
-                  {networkLabel(network)}
+                  {networkLabel(network, c.networkKinds[network.kind] ?? network.kind, c.recommended)}
                 </option>
               ))}
-              <option value={settings.localOnlyAddress}>This computer only · 127.0.0.1</option>
+              <option value={settings.localOnlyAddress}>{c.thisComputerOnly} · 127.0.0.1</option>
             </select>
           }
-          description="Physical Wi-Fi or Ethernet is recommended. Virtual and VPN addresses remain selectable."
-          title="Network interface"
+          description={c.networkInterfaceDesc}
+          title={c.networkInterface}
         />
         <ListRow
           action={
             <div className="flex max-w-full items-center gap-2">
-              <Input aria-label="Client URL" className="h-8 min-w-0 font-mono text-xs" readOnly value={clientUrl} />
-              <Button aria-label="Copy Client URL" onClick={() => void copyClientUrl()} size="icon-sm" variant="outline">
+              <Input aria-label={c.clientUrl} className="h-8 min-w-0 font-mono text-xs" readOnly value={clientUrl} />
+              <Button
+                aria-label={c.copyClientUrl}
+                onClick={() => void copyClientUrl()}
+                size="icon-sm"
+                variant="outline"
+              >
                 <Copy />
               </Button>
             </div>
           }
-          description={
-            selectedAddress === settings.localOnlyAddress
-              ? 'Local-only URL. Other computers cannot use this address.'
-              : 'Share this URL with MacSoft Client devices on the same local network.'
-          }
-          title="Client URL"
+          description={selectedAddress === settings.localOnlyAddress ? c.clientUrlLocalDesc : c.clientUrlDesc}
+          title={c.clientUrl}
         />
         <ListRow
           action={
@@ -577,27 +616,27 @@ export function ServerAutoCountSettingsPage() {
                 variant="outline"
               >
                 {gettingPairingCode ? <Loader2 className="animate-spin" /> : null}
-                Get Code
+                {c.getCode}
               </Button>
-              {pairingCode ? <span className="font-mono text-sm font-semibold text-foreground">{pairingCode}</span> : null}
+              {pairingCode ? (
+                <span className="font-mono text-sm font-semibold text-foreground">{pairingCode}</span>
+              ) : null}
             </div>
           }
           description={
-            hostStatus?.services.server.status !== 'running'
-              ? 'MacSoft Server is not running.'
-              : pairingError || 'Request a one-time code for pairing a MacSoft Client.'
+            hostStatus?.services.server.status !== 'running' ? c.serverNotRunning : pairingError || c.pairingCodeDesc
           }
-          title="Pairing Code"
+          title={c.pairingCode}
         />
       </div>
 
       <div className="mt-3 flex flex-wrap gap-4">
         <Button onClick={() => void refreshNetworks()} size="sm" variant="textStrong">
-          <RefreshCw /> Refresh IP
+          <RefreshCw /> {c.refreshIp}
         </Button>
         <Button disabled={testing === 'server'} onClick={() => void testServer()} size="sm" variant="outline">
           {testing === 'server' ? <Loader2 className="animate-spin" /> : null}
-          Test Server
+          {c.testServer}
         </Button>
       </div>
       <div className="mt-4">
@@ -605,26 +644,26 @@ export function ServerAutoCountSettingsPage() {
       </div>
 
       <details className="mt-8 rounded-xl border border-(--ui-stroke-tertiary) bg-(--ui-bg-quinary) px-4 py-3">
-        <summary className="cursor-pointer select-none text-sm font-medium">Advanced · AI Service</summary>
+        <summary className="cursor-pointer select-none text-sm font-medium">{c.advancedAiService}</summary>
         <div className="mt-4">
-          <SectionHeading icon={Cpu} title="AI Service" />
+          <SectionHeading icon={Cpu} title={c.aiService} />
           <div className="grid gap-1">
             <ListRow
               action={
                 <Input
-                  aria-label="AI Service URL"
+                  aria-label={c.serviceUrl}
                   className={cn('h-8 font-mono', CONTROL_TEXT)}
                   onChange={event => setForm(current => ({ ...current, aiServiceUrl: event.target.value }))}
                   value={form.aiServiceUrl}
                 />
               }
-              description="Internal service used by MacSoft Server. It is not a Client URL."
-              title="Service URL"
+              description={c.serviceUrlDesc}
+              title={c.serviceUrl}
             />
             <ListRow
               action={
                 <Input
-                  aria-label="AI Service port"
+                  aria-label={c.servicePort}
                   className={cn('h-8 w-36', CONTROL_TEXT)}
                   max={65535}
                   min={1}
@@ -633,8 +672,8 @@ export function ServerAutoCountSettingsPage() {
                   value={form.aiServicePort}
                 />
               }
-              description="Changing this updates the runtime API Server port and MacSoft Server URL together."
-              title="Service port"
+              description={c.servicePortDesc}
+              title={c.servicePort}
             />
           </div>
           <Button
@@ -645,7 +684,7 @@ export function ServerAutoCountSettingsPage() {
             variant="outline"
           >
             {testing === 'ai' ? <Loader2 className="animate-spin" /> : null}
-            Test AI Service
+            {c.testAiService}
           </Button>
           <div className="mt-4">
             <StatusPanel result={aiStatus} />
@@ -654,7 +693,7 @@ export function ServerAutoCountSettingsPage() {
       </details>
 
       <div className="mt-8">
-        <SectionHeading icon={KeyRound} title="AutoCount Connection" />
+        <SectionHeading icon={KeyRound} title={c.autoCountConnection} />
         <div className="grid gap-1">
           <ListRow
             action={
@@ -664,8 +703,8 @@ export function ServerAutoCountSettingsPage() {
                 value={form.cloudUrl}
               />
             }
-            description="AutoCount Cloud API base URL."
-            title="Cloud URL"
+            description={c.cloudUrlDesc}
+            title={c.cloudUrl}
           />
           <ListRow
             action={
@@ -674,12 +713,12 @@ export function ServerAutoCountSettingsPage() {
                   autoComplete="off"
                   className={cn('h-8 font-mono', CONTROL_TEXT)}
                   onChange={event => setForm(current => ({ ...current, apiKey: event.target.value }))}
-                  placeholder={form.apiKeyConfigured ? 'Existing key configured · leave blank to keep' : 'Enter API Key'}
+                  placeholder={form.apiKeyConfigured ? c.existingKeyPlaceholder : c.enterApiKeyPlaceholder}
                   type={showApiKey ? 'text' : 'password'}
                   value={form.apiKey}
                 />
                 <Button
-                  aria-label={showApiKey ? 'Hide API Key' : 'Reveal typed API Key'}
+                  aria-label={showApiKey ? c.hideApiKey : c.revealApiKey}
                   onClick={() => setShowApiKey(value => !value)}
                   size="icon-sm"
                   type="button"
@@ -689,8 +728,8 @@ export function ServerAutoCountSettingsPage() {
                 </Button>
               </div>
             }
-            description="The existing key is never loaded into this page. Leave blank to preserve it; do not include a Bearer prefix."
-            title="API Key"
+            description={c.apiKeyDesc}
+            title={c.apiKey}
           />
           <ListRow
             action={
@@ -700,8 +739,8 @@ export function ServerAutoCountSettingsPage() {
                 value={form.connectorId}
               />
             }
-            description="Selects the registered Local Connector."
-            title="Connector ID"
+            description={c.connectorIdDesc}
+            title={c.connectorId}
           />
           <ListRow
             action={
@@ -711,8 +750,8 @@ export function ServerAutoCountSettingsPage() {
                 value={form.companyId}
               />
             }
-            description="Selects the company/account book exposed by the Connector. Database details are read-only test results."
-            title="Company ID"
+            description={c.companyIdDesc}
+            title={c.companyId}
           />
         </div>
 
@@ -724,7 +763,7 @@ export function ServerAutoCountSettingsPage() {
           variant="outline"
         >
           {testing === 'autocount' ? <Loader2 className="animate-spin" /> : null}
-          Test AutoCount Connection
+          {c.testAutoCount}
         </Button>
         <div className="mt-4">
           <StatusPanel result={autoCountStatus} />
@@ -732,12 +771,10 @@ export function ServerAutoCountSettingsPage() {
       </div>
 
       <div className="mt-8 flex flex-wrap items-center justify-end gap-3 border-t border-(--ui-stroke-tertiary) pt-5">
-        <p className="mr-auto max-w-xl text-xs leading-5 text-(--ui-text-tertiary)">
-          Save creates timestamped backups and atomically replaces validated configuration files. The result will list any required service restarts.
-        </p>
+        <p className="mr-auto max-w-xl text-xs leading-5 text-(--ui-text-tertiary)">{c.saveDesc}</p>
         <Button disabled={saving} onClick={() => void save()} size="sm">
           {saving ? <Loader2 className="animate-spin" /> : <Save />}
-          Save & Apply
+          {c.saveAndApply}
         </Button>
       </div>
     </SettingsContent>

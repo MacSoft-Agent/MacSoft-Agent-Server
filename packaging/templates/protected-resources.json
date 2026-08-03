@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "resources": [
     {
       "source": "protected/runtime/plugins/macsoft-autocount/__init__.py",
@@ -24,6 +24,12 @@
     {
       "source": "protected/runtime/plugins/macsoft-autocount/skills/autocount-operations/SKILL.md",
       "destination": "runtime/plugins/macsoft-autocount/skills/autocount-operations/SKILL.md"
+    }
+  ],
+  "directories": [
+    {
+      "source": "protected/runtime/skills",
+      "destination": "runtime/skills"
     }
   ]
 }

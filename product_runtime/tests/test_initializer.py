@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from macsoft_runtime.initializer import initialize_product_data
@@ -84,6 +85,80 @@ class FirstRunInitializationTests(unittest.TestCase):
         second = initialize_product_data(self.paths, self.metadata)
         self.assertIn("runtime/plugins/macsoft-autocount/validator.py", second.conflicts)
         self.assertEqual(target.read_text("utf-8"), "# administrator change\n")
+
+    def test_protected_skill_directory_syncs_and_reconciles_safely(self) -> None:
+        source_root = (
+            self.program
+            / "templates"
+            / "protected"
+            / "runtime"
+            / "skills"
+            / "macsoft-chart-dashboard"
+        )
+        source_file = source_root / "SKILL.md"
+        source_file.parent.mkdir(parents=True)
+        source_file.write_text("version one\n", encoding="utf-8")
+
+        first = initialize_product_data(self.paths, self.metadata)
+        target_file = self.paths.runtime_root / "skills" / "macsoft-chart-dashboard" / "SKILL.md"
+        self.assertIn("runtime/skills/macsoft-chart-dashboard/SKILL.md", first.created)
+        self.assertEqual(target_file.read_text("utf-8"), "version one\n")
+
+        # A new bundled version updates an unchanged managed file.
+        source_file.write_text("version two\n", encoding="utf-8")
+        manifest_path = self.program / "templates" / "protected-resources.json"
+        manifest = json.loads(manifest_path.read_text("utf-8"))
+        manifest["version"] = 4
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        second = initialize_product_data(
+            self.paths,
+            replace(self.metadata, protected_resource_version=4),
+        )
+        self.assertIn("runtime/skills/macsoft-chart-dashboard/SKILL.md", second.updated_protected)
+        self.assertEqual(target_file.read_text("utf-8"), "version two\n")
+
+        # Files outside the managed source remain untouched.
+        external_file = self.paths.runtime_root / "skills" / "installed-by-admin" / "SKILL.md"
+        external_file.parent.mkdir(parents=True)
+        external_file.write_text("administrator skill\n", encoding="utf-8")
+
+        # A local edit creates a conflict and is never overwritten.
+        target_file.write_text("local edit\n", encoding="utf-8")
+        source_file.write_text("version three\n", encoding="utf-8")
+        manifest["version"] = 5
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        third = initialize_product_data(
+            self.paths,
+            replace(self.metadata, protected_resource_version=5),
+        )
+        self.assertIn("runtime/skills/macsoft-chart-dashboard/SKILL.md", third.conflicts)
+        self.assertEqual(target_file.read_text("utf-8"), "local edit\n")
+        self.assertEqual(external_file.read_text("utf-8"), "administrator skill\n")
+
+        # A later product update must continue to preserve the unresolved edit.
+        source_file.write_text("version four\n", encoding="utf-8")
+        manifest["version"] = 6
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        conflicted_update = initialize_product_data(
+            self.paths,
+            replace(self.metadata, protected_resource_version=6),
+        )
+        self.assertIn("runtime/skills/macsoft-chart-dashboard/SKILL.md", conflicted_update.conflicts)
+        self.assertEqual(target_file.read_text("utf-8"), "local edit\n")
+
+        # Once the local edit is restored to the last managed content, removing
+        # the source file can safely remove the obsolete managed runtime file.
+        target_file.write_text("version four\n", encoding="utf-8")
+        source_file.unlink()
+        manifest["version"] = 7
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        fourth = initialize_product_data(
+            self.paths,
+            replace(self.metadata, protected_resource_version=7),
+        )
+        self.assertIn("runtime/skills/macsoft-chart-dashboard/SKILL.md", fourth.removed_protected)
+        self.assertFalse(target_file.exists())
+        self.assertTrue(external_file.exists())
 
 
 if __name__ == "__main__":

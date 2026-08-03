@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import {
   $desktopVersion,
+  $updateApply,
   $updateChecking,
   $updateStatus
 } from '@/store/updates'
@@ -21,6 +22,15 @@ describe('AboutSettings MacSoft installer updates', () => {
       updateMode: 'installer'
     })
     $updateChecking.set(false)
+    $updateApply.set({
+      applying: false,
+      stage: 'idle',
+      message: '',
+      percent: null,
+      error: null,
+      command: null,
+      log: []
+    })
     $updateStatus.set(null)
   })
 
@@ -55,5 +65,34 @@ describe('AboutSettings MacSoft installer updates', () => {
     expect(screen.getByText('MacSoft Agent 0.2.0 is available')).toBeTruthy()
     expect(screen.getByText('Target build macsoft-agent-0.2.0-stable.1')).toBeTruthy()
     expect(screen.getByRole('button', { name: /install update/i })).toBeTruthy()
+  })
+
+  it('shows existing download progress and prevents duplicate update actions', () => {
+    $updateStatus.set({
+      supported: true,
+      updateAvailable: true,
+      manifestConfigured: true,
+      currentVersion: '0.1.2',
+      currentBuildId: 'macsoft-agent-0.1.2-stable.1',
+      targetVersion: '0.1.3',
+      targetBuildId: 'macsoft-agent-0.1.3-stable.1',
+      message: 'MacSoft Agent 0.1.3 is available.',
+      fetchedAt: 1
+    })
+    $updateApply.set({
+      applying: true,
+      stage: 'fetch',
+      message: 'Downloading the verified installer…',
+      percent: 15,
+      error: null,
+      command: null,
+      log: []
+    })
+
+    render(<AboutSettings />)
+
+    expect(screen.getByText('Downloading the verified installer…')).toBeTruthy()
+    expect((screen.getByRole('button', { name: /check for updates/i }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: /downloading/i }) as HTMLButtonElement).disabled).toBe(true)
   })
 })

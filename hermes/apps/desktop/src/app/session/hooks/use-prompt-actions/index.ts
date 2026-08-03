@@ -3,7 +3,7 @@ import { useStore } from '@nanostores/react'
 import { type MutableRefObject, useCallback, useEffect, useRef } from 'react'
 
 import { PROMPT_SUBMIT_REQUEST_TIMEOUT_MS, transcribeAudio } from '@/hermes'
-import { useI18n } from '@/i18n'
+import { localeSttLanguage, useI18n } from '@/i18n'
 import { stripAnsi } from '@/lib/ansi'
 import { branchGroupForUser, type ChatMessage, chatMessageText, textPart } from '@/lib/chat-messages'
 import { pathLabel, SLASH_COMMAND_RE } from '@/lib/chat-runtime'
@@ -200,7 +200,7 @@ export function usePromptActions({
   sttEnabled,
   updateSessionState
 }: PromptActionsOptions) {
-  const { t } = useI18n()
+  const { locale, t } = useI18n()
   const copy = t.desktop
 
   const appendSessionTextMessage = useCallback(
@@ -486,11 +486,11 @@ export function usePromptActions({
       }
 
       const dataUrl = await blobToDataUrl(audio)
-      const result = await transcribeAudio(dataUrl, audio.type)
+      const result = await transcribeAudio(dataUrl, audio.type, localeSttLanguage(locale))
 
       return result.transcript
     },
-    [copy.sttDisabled, sttEnabled]
+    [copy.sttDisabled, locale, sttEnabled]
   )
 
   const cancelRun = useCallback(async () => {

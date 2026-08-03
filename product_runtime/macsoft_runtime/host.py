@@ -161,6 +161,7 @@ def build_service_specs(
                 **shared_environment,
                 "MACSOFT_SERVER_CONFIG": str(paths.server_config),
                 "MACSOFT_HERMES_API_KEY": ai_api_key,
+                "MACSOFT_HERMES_CONFIG_API_URL": f"http://127.0.0.1:{CONFIG_BACKEND_PORT}",
                 "PYTHONPATH": str(paths.server_program_root),
             },
             health_url=f"http://127.0.0.1:{server_port}/health",

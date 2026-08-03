@@ -993,13 +993,21 @@ export function getActionStatus(name: string, lines = 200): Promise<ActionStatus
   })
 }
 
-export function transcribeAudio(dataUrl: string, mimeType?: string): Promise<AudioTranscriptionResponse> {
+export function transcribeAudio(
+  dataUrl: string,
+  mimeType?: string,
+  language?: 'en' | 'zh' | 'ja'
+): Promise<AudioTranscriptionResponse> {
   return window.hermesDesktop.api<AudioTranscriptionResponse>({
     path: '/api/audio/transcribe',
     method: 'POST',
+    // Local Whisper models can take substantially longer than the normal API
+    // timeout to load and transcribe, especially on CPU and on first use.
+    timeoutMs: 90_000,
     body: {
       data_url: dataUrl,
-      mime_type: mimeType
+      mime_type: mimeType,
+      language
     }
   })
 }

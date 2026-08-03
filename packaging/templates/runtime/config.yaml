@@ -2,6 +2,16 @@ model:
   provider: openai-codex
   default: gpt-5.4
 
+stt:
+  enabled: true
+  provider: auto
+  routing:
+    prefer_current_provider: true
+    cloud_first: true
+    local_fallback: true
+  local:
+    model: large-v3-turbo
+
 platforms:
   api_server:
     enabled: true

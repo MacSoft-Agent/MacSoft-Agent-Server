@@ -1526,6 +1526,13 @@ class TestWebServerEndpoints:
         assert "/api/audio/speak" in paths
         assert "/api/audio/elevenlabs/voices" in paths
 
+    def test_config_only_boundary_allows_only_transcription_audio_route(self):
+        from hermes_cli.web_server import _config_only_http_path_allowed
+
+        assert _config_only_http_path_allowed("/api/audio/transcribe") is True
+        assert _config_only_http_path_allowed("/api/audio/speak") is False
+        assert _config_only_http_path_allowed("/api/sessions") is False
+
     def test_elevenlabs_voices_unavailable_without_key(self, monkeypatch):
         import hermes_cli.web_server as web_server
 

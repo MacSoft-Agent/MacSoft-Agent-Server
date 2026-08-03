@@ -623,6 +623,7 @@ def _config_only_http_path_allowed(path: str) -> bool:
         "/api/env/reveal",
         "/api/providers/validate",
         "/api/providers/oauth",
+        "/api/audio/transcribe",
     }:
         return True
     return path.startswith("/api/model/") or path.startswith("/api/providers/oauth/")
@@ -929,6 +930,7 @@ class WhatsAppOnboardingApply(BaseModel):
 class AudioTranscriptionRequest(BaseModel):
     data_url: str
     mime_type: Optional[str] = None
+    language: Optional[str] = None
 
 
 class ManagedFileUpload(BaseModel):
@@ -3652,7 +3654,10 @@ async def transcribe_audio_upload(payload: AudioTranscriptionRequest):
         from tools.transcription_tools import transcribe_audio
 
         loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(None, transcribe_audio, temp_path)
+        language = (payload.language or "").strip().lower() or None
+        if language not in {None, "en", "zh", "ja"}:
+            raise HTTPException(status_code=400, detail="Unsupported transcription language")
+        result = await loop.run_in_executor(None, transcribe_audio, temp_path, None, language)
     except HTTPException:
         raise
     except Exception as exc:

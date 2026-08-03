@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 
 import {
@@ -30,17 +30,17 @@ test(
   'generated probe executes in real Windows PowerShell',
   { skip: process.platform !== 'win32' },
   () => {
-    const powershellPath = path.join(
-      process.env.SystemRoot || 'C:\\Windows',
-      'System32',
-      'WindowsPowerShell',
-      'v1.0',
-      'powershell.exe'
+    assert.throws(
+      () =>
+        verifyMacSoftInstallerAuthenticode(
+          fileURLToPath(import.meta.url),
+          'powershell.exe'
+        ),
+      (error: unknown) =>
+        error instanceof MacSoftAuthenticodeError &&
+        error.message ===
+          'The update installer is not Authenticode-signed with a valid Windows certificate.'
     )
-
-    const result = verifyMacSoftInstallerAuthenticode(powershellPath, powershellPath)
-
-    assert.equal(result.status, 'Valid')
   }
 )
 

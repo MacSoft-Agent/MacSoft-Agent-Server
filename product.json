@@ -7,7 +7,7 @@
   "runtime_contract_version": 1,
   "runtime_metadata_schema_version": 1,
   "build_date": "2026-07-30",
-  "build_id": "macsoft-agent-0.1.2-stable.20260730.1",
+  "build_id": "macsoft-agent-0.1.2-stable.20260803.2",
   "data_schema_version": 1,
   "protected_resource_version": 2,
   "update_manifest_url": "https://github.com/MacSoft-Agent/MacSoft-Agent-Releases/releases/latest/download/macsoft-agent-stable-manifest-v1.json",

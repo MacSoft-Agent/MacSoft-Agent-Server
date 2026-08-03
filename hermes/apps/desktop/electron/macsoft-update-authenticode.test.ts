@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import path from 'node:path'
 import test from 'node:test'
 
 import {
@@ -24,6 +25,24 @@ test('valid Windows Authenticode result is accepted without exposing signer deta
   )
   assert.equal(result.status, 'Valid')
 })
+
+test(
+  'generated probe executes in real Windows PowerShell',
+  { skip: process.platform !== 'win32' },
+  () => {
+    const powershellPath = path.join(
+      process.env.SystemRoot || 'C:\\Windows',
+      'System32',
+      'WindowsPowerShell',
+      'v1.0',
+      'powershell.exe'
+    )
+
+    const result = verifyMacSoftInstallerAuthenticode(powershellPath, powershellPath)
+
+    assert.equal(result.status, 'Valid')
+  }
+)
 
 test('unsigned, invalid or malformed results fail closed', () => {
   for (const output of [

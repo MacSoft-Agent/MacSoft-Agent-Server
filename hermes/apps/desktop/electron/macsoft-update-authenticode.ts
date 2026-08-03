@@ -28,7 +28,7 @@ const AUTHENTICODE_PROBE = [
   "  subject = [string]$signature.SignerCertificate.Subject",
   "  thumbprint = [string]$signature.SignerCertificate.Thumbprint",
   '} | ConvertTo-Json -Compress'
-].join('; ')
+].join('\n')
 
 function parseProbe(value: string): AuthenticodeProbe {
   let parsed: unknown

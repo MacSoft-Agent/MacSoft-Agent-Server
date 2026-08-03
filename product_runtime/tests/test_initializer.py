@@ -93,15 +93,15 @@ class FirstRunInitializationTests(unittest.TestCase):
             / "protected"
             / "runtime"
             / "skills"
-            / "macsoft-chart-dashboard"
+            / "fixture-skill"
         )
         source_file = source_root / "SKILL.md"
         source_file.parent.mkdir(parents=True)
         source_file.write_text("version one\n", encoding="utf-8")
 
         first = initialize_product_data(self.paths, self.metadata)
-        target_file = self.paths.runtime_root / "skills" / "macsoft-chart-dashboard" / "SKILL.md"
-        self.assertIn("runtime/skills/macsoft-chart-dashboard/SKILL.md", first.created)
+        target_file = self.paths.runtime_root / "skills" / "fixture-skill" / "SKILL.md"
+        self.assertIn("runtime/skills/fixture-skill/SKILL.md", first.created)
         self.assertEqual(target_file.read_text("utf-8"), "version one\n")
 
         # A new bundled version updates an unchanged managed file.
@@ -114,7 +114,7 @@ class FirstRunInitializationTests(unittest.TestCase):
             self.paths,
             replace(self.metadata, protected_resource_version=4),
         )
-        self.assertIn("runtime/skills/macsoft-chart-dashboard/SKILL.md", second.updated_protected)
+        self.assertIn("runtime/skills/fixture-skill/SKILL.md", second.updated_protected)
         self.assertEqual(target_file.read_text("utf-8"), "version two\n")
 
         # Files outside the managed source remain untouched.
@@ -131,7 +131,7 @@ class FirstRunInitializationTests(unittest.TestCase):
             self.paths,
             replace(self.metadata, protected_resource_version=5),
         )
-        self.assertIn("runtime/skills/macsoft-chart-dashboard/SKILL.md", third.conflicts)
+        self.assertIn("runtime/skills/fixture-skill/SKILL.md", third.conflicts)
         self.assertEqual(target_file.read_text("utf-8"), "local edit\n")
         self.assertEqual(external_file.read_text("utf-8"), "administrator skill\n")
 
@@ -143,7 +143,7 @@ class FirstRunInitializationTests(unittest.TestCase):
             self.paths,
             replace(self.metadata, protected_resource_version=6),
         )
-        self.assertIn("runtime/skills/macsoft-chart-dashboard/SKILL.md", conflicted_update.conflicts)
+        self.assertIn("runtime/skills/fixture-skill/SKILL.md", conflicted_update.conflicts)
         self.assertEqual(target_file.read_text("utf-8"), "local edit\n")
 
         # Once the local edit is restored to the last managed content, removing
@@ -156,7 +156,7 @@ class FirstRunInitializationTests(unittest.TestCase):
             self.paths,
             replace(self.metadata, protected_resource_version=7),
         )
-        self.assertIn("runtime/skills/macsoft-chart-dashboard/SKILL.md", fourth.removed_protected)
+        self.assertIn("runtime/skills/fixture-skill/SKILL.md", fourth.removed_protected)
         self.assertFalse(target_file.exists())
         self.assertTrue(external_file.exists())
 

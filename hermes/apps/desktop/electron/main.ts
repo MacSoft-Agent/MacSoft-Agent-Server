@@ -104,6 +104,7 @@ import {
 } from './macsoft-product-initializer'
 import { customerUpdateApply, customerUpdateBranch, customerUpdateCheck } from './macsoft-update-policy'
 import { writeVerifiedMacSoftInstaller } from './macsoft-update-download'
+import { fetchTrustedMacSoftUpdateResource } from './macsoft-update-fetch'
 import {
   MAX_UPDATE_MANIFEST_BYTES,
   type TrustedMacSoftRelease
@@ -8437,17 +8438,13 @@ async function fetchMacSoftUpdateManifest(url: string): Promise<string> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 15_000)
   try {
-    const response = await electronNet.fetch(url, {
+    const response = await fetchTrustedMacSoftUpdateResource(url, {
       cache: 'no-store',
       headers: { Accept: 'application/json' },
       method: 'GET',
       signal: controller.signal
-    })
+    }, electronNet.fetch)
     if (!response.ok) throw new Error(`Update manifest request failed with HTTP ${response.status}.`)
-    const finalUrl = new URL(response.url)
-    if (finalUrl.protocol !== 'https:' || finalUrl.username || finalUrl.password) {
-      throw new Error('Update manifest redirected to an untrusted URL.')
-    }
     const declaredLength = Number(response.headers.get('content-length') || 0)
     if (declaredLength > MAX_UPDATE_MANIFEST_BYTES) {
       throw new Error('Update manifest exceeds the supported size.')
@@ -8479,18 +8476,14 @@ async function downloadTrustedMacSoftInstaller(release: TrustedMacSoftRelease) {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 10 * 60_000)
   try {
-    const response = await electronNet.fetch(release.installer.url, {
+    const response = await fetchTrustedMacSoftUpdateResource(release.installer.url, {
       cache: 'no-store',
       headers: { Accept: 'application/octet-stream' },
       method: 'GET',
       signal: controller.signal
-    })
+    }, electronNet.fetch)
     if (!response.ok || !response.body) {
       throw new Error(`Update installer request failed with HTTP ${response.status}.`)
-    }
-    const finalUrl = new URL(response.url)
-    if (finalUrl.protocol !== 'https:' || finalUrl.username || finalUrl.password) {
-      throw new Error('Update installer redirected to an untrusted URL.')
     }
     const contentLengthHeader = response.headers.get('content-length')
     const contentLength = contentLengthHeader === null ? undefined : Number(contentLengthHeader)

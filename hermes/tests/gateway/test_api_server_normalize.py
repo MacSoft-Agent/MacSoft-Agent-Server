@@ -1,7 +1,37 @@
 """Tests for _normalize_chat_content in the API server adapter."""
 
 from gateway.platforms import api_server
-from gateway.platforms.api_server import _normalize_chat_content
+from gateway.platforms.api_server import (
+    _html_document_payload,
+    _is_dashboard_request,
+    _is_html_document,
+    _normalize_chat_content,
+)
+
+
+class TestHtmlDashboardContract:
+    def test_complete_html_document_is_recognized(self):
+        assert _is_html_document("<!doctype html>\n<html><body>ok</body></html>")
+        assert not _is_html_document("<div>not a document</div>")
+        assert not _is_html_document("```html\n<!doctype html>...</html>\n```")
+
+    def test_dashboard_request_detection(self):
+        assert _is_dashboard_request("给我 debtor dashboard，有 chart")
+        assert not _is_dashboard_request("列出所有 debtor")
+
+    def test_html_event_payload_is_explicit(self):
+        payload = _html_document_payload(
+            "<!doctype html><html></html>",
+            message_id="msg_1",
+            session_id="sess_1",
+        )
+        assert payload == {
+            "schema_version": 1,
+            "message_id": "msg_1",
+            "session_id": "sess_1",
+            "mime_type": "text/html",
+            "html": "<!doctype html><html></html>",
+        }
 
 
 class TestNormalizeChatContent:

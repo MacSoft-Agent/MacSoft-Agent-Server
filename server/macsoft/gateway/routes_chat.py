@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterator
 
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -50,6 +51,15 @@ router = APIRouter()
 SERVER_HERMES_MODEL_ID = "server-hermes-current"
 MAX_CHAT_MESSAGE_CHARS = 16_000
 MAX_CHAT_MESSAGE_BYTES = 32_000
+_HTML_DOCUMENT_RE = re.compile(
+    r"^\s*<!doctype\s+html\s*>\s*<html\b[\s\S]*</html>\s*$",
+    re.IGNORECASE,
+)
+
+
+def is_complete_html_document(content: str) -> bool:
+    """Match the raw HTML document contract consumed by the Client."""
+    return isinstance(content, str) and bool(_HTML_DOCUMENT_RE.match(content))
 
 
 class ChatStreamRequest(BaseModel):
@@ -541,6 +551,19 @@ def chat_stream(
                             "text": assistant_text,
                         },
                     )
+
+                    if is_complete_html_document(assistant_text):
+                        yield sse_event(
+                            "html_document",
+                            {
+                                "schema_version": 1,
+                                "document_id": f"{assistant_message_id}:html",
+                                "message_id": assistant_message_id,
+                                "session_id": body.session_id,
+                                "mime_type": "text/html",
+                                "html": assistant_text,
+                            },
+                        )
 
                     if request_ok:
                         activity_event = activity_sse(

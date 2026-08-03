@@ -49,6 +49,11 @@ class TestGetToolset:
     def test_unknown_returns_none(self):
         assert get_toolset("nonexistent") is None
 
+    def test_api_skill_toolset_is_read_only(self):
+        tools = resolve_toolset("skills_readonly")
+        assert set(tools) == {"skills_list", "skill_view"}
+        assert "skill_manage" not in tools
+
 
 class TestResolveToolset:
     def test_leaf_toolset(self):

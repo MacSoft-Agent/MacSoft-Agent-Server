@@ -847,9 +847,14 @@ PLATFORM_HINTS = {
     ),
     "api_server": (
         "You're responding through an API server. The rendering layer is unknown — "
-        "assume plain text. No markdown formatting (no asterisks, bullets, headers, "
-        "code fences). Treat this like a conversation, not a document. Keep responses "
-        "brief and natural."
+        "assume plain text for ordinary conversation. For any request containing a "
+        "chart, dashboard, KPI view, visualization, or data-driven HTML page, you "
+        "MUST first call skill_view(name='macsoft-chart-dashboard') and follow that "
+        "Skill. Use the read-only Skill tools only; never attempt Skill management. "
+        "For those requests, do not return ASCII bars, a Markdown-only chart, or a "
+        "claim that a chart was created. Return one complete HTML document beginning "
+        "with <!doctype html> and ending with </html>. Do not wrap that HTML in a "
+        "Markdown code fence. Keep ordinary non-visual responses brief and natural."
     ),
     "webui": (
         "You are in the Hermes WebUI, a browser-based chat interface. "

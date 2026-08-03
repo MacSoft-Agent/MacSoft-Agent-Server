@@ -13,6 +13,7 @@ platforms:
 platform_toolsets:
   api_server:
     - macsoft_autocount
+    - skills_readonly
 
 plugins:
   enabled:

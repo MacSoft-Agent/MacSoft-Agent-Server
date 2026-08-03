@@ -85,6 +85,59 @@ def _synchronize_yaml_scalar(path: Path, key_path: tuple[str, ...], value: str) 
     raise ValueError(f"{path.name} is missing required setting: {'.'.join(key_path)}")
 
 
+def _ensure_yaml_list_item(path: Path, key_path: tuple[str, ...], value: str) -> bool:
+    """Add one product-required YAML list item while preserving user settings.
+
+    Runtime config is mutable and is intentionally not recopied on upgrades.
+    This narrow migration lets a new product-owned capability become available
+    without replacing the user's model, provider, or other configuration.
+    """
+    lines = path.read_text(encoding="utf-8-sig").splitlines(keepends=True)
+    target_indent = None
+    list_start = None
+    list_end = None
+
+    for index, line in enumerate(lines):
+        match = _YAML_KEY_LINE.match(line)
+        if not match:
+            continue
+        prefix, key, remainder, _newline = match.groups()
+        indent = len(prefix.expandtabs(8))
+        if target_indent is None:
+            if key != key_path[-1] or indent != 2:
+                continue
+            parents = []
+            for prior in lines[:index]:
+                prior_match = _YAML_KEY_LINE.match(prior)
+                if prior_match:
+                    prior_prefix, prior_key, prior_remainder, _ = prior_match.groups()
+                    prior_indent = len(prior_prefix.expandtabs(8))
+                    while parents and parents[-1][0] >= prior_indent:
+                        parents.pop()
+                    if not (prior_remainder or "").strip() or (prior_remainder or "").lstrip().startswith("#"):
+                        parents.append((prior_indent, prior_key))
+            if tuple(item[1] for item in parents) != key_path[:-1]:
+                continue
+            target_indent = indent
+            list_start = index + 1
+            list_end = list_start
+            continue
+        if indent <= target_indent and line.strip() and not line.lstrip().startswith("#"):
+            list_end = index
+            break
+        list_end = index + 1
+
+    if list_start is None:
+        raise ValueError(f"{path.name} is missing required list: {'.'.join(key_path)}")
+    if any(re.search(rf"^\s*-\s*{re.escape(value)}\s*(?:#.*)?$", line) for line in lines[list_start:list_end]):
+        return False
+
+    newline = "\r\n" if any(line.endswith("\r\n") for line in lines) else "\n"
+    lines.insert(list_end, f"{' ' * (target_indent + 2)}- {value}{newline}")
+    _atomic_write(path, "".join(lines).encode("utf-8"))
+    return True
+
+
 def _load_json(path: Path, fallback: dict) -> dict:
     if not path.exists():
         return fallback
@@ -273,6 +326,11 @@ def initialize_product_data(paths: ProductPaths, metadata: ProductMetadata) -> I
         paths.runtime_config,
         ("platforms", "api_server", "extra", "key"),
         local_api_key,
+    )
+    _ensure_yaml_list_item(
+        paths.runtime_config,
+        ("platform_toolsets", "api_server"),
+        "skills_readonly",
     )
     if paths.is_packaged:
         _synchronize_yaml_scalar(

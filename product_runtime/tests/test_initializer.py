@@ -54,6 +54,20 @@ class FirstRunInitializationTests(unittest.TestCase):
         self.assertEqual(self.paths.runtime_config.read_text("utf-8"), custom)
         self.assertIn("runtime\\config.yaml" if __import__('os').name == 'nt' else "runtime/config.yaml", second.preserved)
 
+    def test_upgrade_adds_read_only_skill_toolset_without_replacing_runtime_config(self) -> None:
+        initialize_product_data(self.paths, self.metadata)
+        runtime = self.paths.runtime_config.read_text("utf-8")
+        runtime = runtime.replace("    - macsoft_autocount\n", "    - macsoft_autocount\n    # customer setting\n")
+        runtime = runtime.replace("default: gpt-5.4", "default: customer-model")
+        self.paths.runtime_config.write_text(runtime, encoding="utf-8")
+
+        initialize_product_data(self.paths, self.metadata)
+
+        updated = self.paths.runtime_config.read_text("utf-8")
+        self.assertIn("    - skills_readonly", updated)
+        self.assertIn("default: customer-model", updated)
+        self.assertIn("# customer setting", updated)
+
     def test_upgrade_synchronizes_internal_api_key_without_rewriting_other_settings(self) -> None:
         initialize_product_data(self.paths, self.metadata)
         state = json.loads((self.paths.config_root / "initialization.json").read_text("utf-8"))

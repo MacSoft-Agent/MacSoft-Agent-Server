@@ -97,6 +97,35 @@ CHAT_COMPLETIONS_SSE_KEEPALIVE_SECONDS = 30.0
 MAX_NORMALIZED_TEXT_LENGTH = 65_536  # 64 KB cap for normalized content parts
 MAX_CONTENT_LIST_SIZE = 1_000  # Max items when content is an array
 
+_HTML_DOCUMENT_RE = re.compile(
+    r"^\s*(?:<!doctype\s+html\s*>)\s*<html\b[\s\S]*</html>\s*$",
+    re.IGNORECASE,
+)
+_DASHBOARD_REQUEST_RE = re.compile(
+    r"(?:chart|dashboard|kpi|visuali[sz]ation|html\s+page|图表|仪表板|仪表盘|看板)",
+    re.IGNORECASE,
+)
+
+
+def _is_html_document(content: Any) -> bool:
+    """Return whether model output is a complete raw HTML document."""
+    return isinstance(content, str) and bool(_HTML_DOCUMENT_RE.match(content))
+
+
+def _is_dashboard_request(content: Any) -> bool:
+    """Identify requests that use the API server's HTML dashboard contract."""
+    return isinstance(content, str) and bool(_DASHBOARD_REQUEST_RE.search(content))
+
+
+def _html_document_payload(content: str, *, message_id: str, session_id: str) -> dict:
+    return {
+        "schema_version": 1,
+        "message_id": message_id,
+        "session_id": session_id,
+        "mime_type": "text/html",
+        "html": content,
+    }
+
 
 def _coerce_port(value: Any, default: int = DEFAULT_PORT) -> int:
     """Parse a listen port without letting malformed env/config values crash startup."""
@@ -2008,10 +2037,23 @@ class APIServerAdapter(BasePlatformAdapter):
                 final_response = _resolve_media_to_data_urls(result.get("final_response", "") if isinstance(result, dict) else "")
                 effective_session_id = result.get("session_id", session_id) if isinstance(result, dict) else session_id
                 turn_messages = self._turn_transcript_messages(history, user_message, result) if isinstance(result, dict) else []
+                is_html = _is_html_document(final_response)
+                if _is_dashboard_request(user_message) and not is_html:
+                    logger.warning(
+                        "Dashboard request %s completed without a complete HTML document",
+                        session_id,
+                    )
+                if is_html:
+                    await queue.put(_event_payload("html_document", _html_document_payload(
+                        final_response,
+                        message_id=message_id,
+                        session_id=effective_session_id,
+                    )))
                 await queue.put(_event_payload("assistant.completed", {
                     "session_id": effective_session_id,
                     "message_id": message_id,
                     "content": final_response,
+                    "content_type": "text/html" if is_html else "text/plain",
                     "completed": True,
                     "partial": False,
                     "interrupted": False,
@@ -2399,14 +2441,24 @@ class APIServerAdapter(BasePlatformAdapter):
                 "total_tokens": usage.get("total_tokens", 0),
             },
         }
-        if is_partial or is_failed or not completed:
+        is_html = _is_html_document(final_response)
+        if _is_dashboard_request(user_message) and not is_html:
+            logger.warning(
+                "Dashboard request %s completed without a complete HTML document",
+                session_id,
+            )
+        if is_html or _is_dashboard_request(user_message):
             response_data["hermes"] = {
+                "content_type": "text/html" if is_html else "text/plain",
+            }
+        if is_partial or is_failed or not completed:
+            response_data.setdefault("hermes", {}).update({
                 "completed": completed,
                 "partial": is_partial,
                 "failed": is_failed,
                 "error": err_msg,
                 "error_code": "output_truncated" if finish_reason == "length" else "agent_error",
-            }
+            })
             response_headers["X-Hermes-Completed"] = "false"
             response_headers["X-Hermes-Partial"] = "true" if is_partial else "false"
             if err_msg:
@@ -2546,6 +2598,19 @@ class APIServerAdapter(BasePlatformAdapter):
                 finish_reason = "error"
             else:
                 finish_reason = "stop"
+
+            final_response = _resolve_media_to_data_urls(
+                result.get("final_response", "") if isinstance(result, dict) else ""
+            )
+            if _is_html_document(final_response):
+                html_payload = _html_document_payload(
+                    final_response,
+                    message_id=completion_id,
+                    session_id=session_id or "",
+                )
+                await response.write(
+                    f"event: html_document\ndata: {json.dumps(html_payload, ensure_ascii=False)}\n\n".encode("utf-8")
+                )
 
             # Finish chunk
             finish_chunk = {

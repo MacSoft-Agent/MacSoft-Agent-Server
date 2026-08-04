@@ -15,7 +15,10 @@ from starlette.requests import Request
 
 from macsoft.chat.active_runs import get_active_chat_registry
 from macsoft.chat.hermes_client import HermesApiError, _normalized_messages, _raise_transport_error
-from macsoft.chat.result_formatter import map_user_readable_error
+from macsoft.chat.result_formatter import (
+    map_ai_service_response_error,
+    map_user_readable_error,
+)
 from macsoft.gateway.routes_chat import (
     MAX_CHAT_MESSAGE_CHARS,
     ChatStreamRequest,
@@ -389,8 +392,65 @@ class ChatBoundaryTests(unittest.TestCase):
         )
         self.assertEqual(self.message_count(), 1)
 
+    def test_sanitized_provider_usage_limit_is_returned_as_failed_request(self) -> None:
+        provider_error = (
+            "Sorry, I encountered an unexpected error. "
+            "Your plan's usage limit has been reached. Please wait until it resets."
+        )
+        with patch(
+            "macsoft.gateway.routes_chat.stream_hermes_reply_events",
+            return_value=iter([{"type": "text_delta", "text": provider_error}]),
+        ):
+            response = self.chat(
+                ChatStreamRequest(session_id="session_1", message="Hello")
+            )
+            events = parse_sse(asyncio.run(consume(response)))
+
+        self.assertEqual(events[-1][0], "message_done")
+        self.assertFalse(events[-1][1]["ok"])
+        reply = next(data["text"] for name, data in events if name == "token_delta")
+        self.assertIn("usage limit", reply.lower())
+        self.assertIn("MacSoft", reply)
+        self.assertIn("Model/Provider", reply)
+        self.assertNotIn("Hermes", reply)
+        self.assertNotIn("unexpected error", reply.lower())
+
 
 class StructuredErrorTests(unittest.TestCase):
+    def test_ai_usage_limit_response_is_specific_and_safe(self) -> None:
+        raw = (
+            "Sorry, I encountered an unexpected error. "
+            "Your plan's usage limit has been reached. Please wait until it resets."
+        )
+
+        readable = map_ai_service_response_error(raw)
+
+        self.assertIsNotNone(readable)
+        assert readable is not None
+        rendered = readable.title + readable.detail + readable.action
+        self.assertIn("usage limit", rendered.lower())
+        self.assertIn("MacSoft Agent", rendered)
+        self.assertIn("Model/Provider", rendered)
+        self.assertNotIn("Hermes", rendered)
+        self.assertNotIn("unexpected error", rendered.lower())
+
+    def test_ordinary_usage_limit_discussion_is_not_reclassified(self) -> None:
+        self.assertIsNone(
+            map_ai_service_response_error(
+                "The provider documentation says a usage limit has been reached."
+            )
+        )
+
+    def test_ai_http_429_has_a_specific_rate_limit_message(self) -> None:
+        readable = map_user_readable_error(
+            "MacSoft Agent service returned HTTP 429.",
+            service="ai_service",
+            kind="http_error",
+            status_code=429,
+        )
+        self.assertIn("rate-limiting", readable.title)
+        self.assertNotIn("could not be completed", readable.title)
+
     def test_ai_401_is_structured_and_does_not_point_to_autocount(self) -> None:
         error = HTTPError(
             "http://127.0.0.1:8642/v1/chat/completions",

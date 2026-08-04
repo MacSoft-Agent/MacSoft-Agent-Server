@@ -10,6 +10,7 @@ from pathlib import Path
 
 
 DEV_ORIGINS = {
+    "null",
     "http://127.0.0.1:5173",
     "http://127.0.0.1:5174",
     "http://127.0.0.1:5175",
@@ -170,6 +171,23 @@ class CorsContractTests(unittest.TestCase):
             for item in headers["access-control-allow-headers"].split(",")
         }
         self.assertTrue(requested_headers <= allowed_headers)
+
+    def test_packaged_client_null_origin_preflight_is_allowed(self) -> None:
+        status, headers, _ = asyncio.run(
+            asgi_request(
+                self.app,
+                method="OPTIONS",
+                path="/api/client/pair",
+                headers={
+                    "origin": "null",
+                    "access-control-request-method": "POST",
+                    "access-control-request-headers": "content-type,x-client-version,x-device-id",
+                },
+            )
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["access-control-allow-origin"], "null")
 
     def test_unlisted_lan_origin_is_not_reflected(self) -> None:
         status, headers, _ = asyncio.run(

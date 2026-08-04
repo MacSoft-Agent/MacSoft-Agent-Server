@@ -218,6 +218,30 @@ class HermesRunsClientTests(unittest.TestCase):
         self.assertEqual([event["type"] for event in received], ["text_delta", "interrupted"])
         self.assertTrue(open_url.call_args_list[0].args[0].full_url.endswith("/v1/runs"))
         self.assertTrue(open_url.call_args_list[1].args[0].full_url.endswith("/v1/runs/run_123/events"))
+        payload = json.loads(open_url.call_args_list[0].args[0].data.decode())
+        self.assertEqual(payload["input"], [{"role": "user", "content": "hello"}])
+
+    def test_run_wraps_multimodal_content_as_one_user_message(self) -> None:
+        start = self.Response(json.dumps({"run_id": "run_image", "status": "started"}).encode())
+        events = self.Response(lines=[
+            b'data: {"event":"message.delta","delta":"I can see it."}\n',
+            b"\n",
+        ])
+        image = {"type": "image_url", "image_url": {"url": "data:image/png;base64,UE5H"}}
+        with patch("macsoft.chat.hermes_client.urlopen", side_effect=[start, events]) as open_url:
+            list(stream_interruptible_hermes_reply_events(
+                base_url="http://127.0.0.1:8642",
+                api_key="secret",
+                messages=[
+                    {"role": "system", "content": "policy"},
+                    {"role": "user", "content": [{"type": "text", "text": "Read this image."}, image]},
+                ],
+                session_id="admin_scope",
+                timeout_seconds=5,
+                on_run_started=lambda _run_id: False,
+            ))
+        payload = json.loads(open_url.call_args_list[0].args[0].data.decode())
+        self.assertEqual(payload["input"], [{"role": "user", "content": [{"type": "text", "text": "Read this image."}, image]}])
 
     def test_stop_uses_the_existing_hermes_run_endpoint(self) -> None:
         with patch("macsoft.chat.hermes_client.urlopen", return_value=self.Response()) as open_url:

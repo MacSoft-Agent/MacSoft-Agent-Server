@@ -84,6 +84,28 @@ async function renderModelSettings() {
 }
 
 describe('ModelSettings', () => {
+  it('shows the main model without waiting for optional auxiliary data', async () => {
+    getAuxiliaryModels.mockReturnValueOnce(new Promise(() => undefined))
+    await renderModelSettings()
+
+    expect((await screen.findAllByText('Nous')).length).toBeGreaterThan(0)
+    expect(document.querySelector('[data-slot="model-settings-skeleton"]')).toBeNull()
+  })
+
+  it('keeps the last successful model visible while a reopened page refreshes', async () => {
+    const first = await renderModelSettings()
+
+    await screen.findByText('Vision')
+    first.unmount()
+
+    getGlobalModelInfo.mockReturnValueOnce(new Promise(() => undefined))
+    await renderModelSettings()
+
+    expect(document.querySelector('[data-slot="model-settings-skeleton"]')).toBeNull()
+    expect(screen.getByText('Vision')).toBeTruthy()
+    expect(screen.getAllByText('Nous').length).toBeGreaterThan(0)
+  })
+
   it('loads the current main model and lists configured providers only', async () => {
     await renderModelSettings()
 

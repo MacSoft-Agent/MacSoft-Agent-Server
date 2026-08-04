@@ -1,8 +1,22 @@
 import { describe, expect, it } from 'vitest'
 
-import { DEFAULT_LOCALE, isLocale, isSupportedLocaleValue, localeConfigValue, normalizeLocale } from './languages'
+import {
+  DEFAULT_LOCALE,
+  isLocale,
+  isSupportedLocaleValue,
+  localeConfigValue,
+  localeSttLanguage,
+  normalizeLocale
+} from './languages'
 
 describe('desktop i18n languages', () => {
+  it('maps Appearance locales to Whisper language codes', () => {
+    expect(localeSttLanguage('en')).toBe('en')
+    expect(localeSttLanguage('zh')).toBe('zh')
+    expect(localeSttLanguage('zh-hant')).toBe('zh')
+    expect(localeSttLanguage('ja')).toBe('ja')
+  })
+
   it('normalizes supported locale aliases', () => {
     expect(normalizeLocale('en')).toBe('en')
     expect(normalizeLocale('EN-US')).toBe('en')

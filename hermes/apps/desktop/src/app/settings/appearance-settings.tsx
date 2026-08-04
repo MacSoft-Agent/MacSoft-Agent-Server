@@ -13,6 +13,14 @@ import { selectableCardClass } from '@/lib/selectable-card'
 import { normalize } from '@/lib/text'
 import { cn } from '@/lib/utils'
 import { $embedAllowed, $embedMode, clearEmbedAllowed, type EmbedMode, setEmbedMode } from '@/store/embed-consent'
+import {
+  $fontScale,
+  DEFAULT_FONT_SCALE,
+  FONT_SCALE_OPTIONS,
+  type FontScale,
+  fontScaleOption,
+  setFontScale
+} from '@/store/font-scale'
 import { $activeGatewayProfile, $profiles, normalizeProfileKey } from '@/store/profile'
 import { $toolViewMode, setToolViewMode } from '@/store/tool-view'
 import { $translucency, setTranslucency } from '@/store/translucency'
@@ -245,6 +253,7 @@ export function AppearanceSettings() {
   const { themeName, mode, resolvedMode, availableThemes, setTheme, setMode } = useTheme()
   const toolViewMode = useStore($toolViewMode)
   const zoomPercent = useStore($zoomPercent)
+  const appliedFontScale = useStore($fontScale)
   const embedMode = useStore($embedMode)
   const embedAllowed = useStore($embedAllowed)
   const translucency = useStore($translucency)
@@ -254,6 +263,11 @@ export function AppearanceSettings() {
   const a = t.settings.appearance
 
   const [query, setQuery] = useState('')
+  const [draftFontScale, setDraftFontScale] = useState<FontScale>(appliedFontScale)
+
+  useEffect(() => {
+    setDraftFontScale(appliedFontScale)
+  }, [appliedFontScale])
 
   // One box does double duty: filter installed themes live (below), and run a
   // name search against the VS Code Marketplace (the Cmd-K "Install theme…"
@@ -294,6 +308,12 @@ export function AppearanceSettings() {
   const uiScaleOptions = UI_SCALE_PRESETS.map(preset => ({ id: preset, label: `${preset}%` }))
 
   const matchedScalePreset = matchUiScalePreset(zoomPercent)
+  const draftFontScaleOption = fontScaleOption(draftFontScale)
+  const draftFontScaleIndex = Math.max(
+    0,
+    FONT_SCALE_OPTIONS.findIndex(option => option.id === draftFontScale)
+  )
+  const fontScaleChanged = draftFontScale !== appliedFontScale
 
   return (
     <SettingsContent>
@@ -407,6 +427,62 @@ export function AppearanceSettings() {
                 />
               </div>
             }
+            wide
+          />
+
+          <ListRow
+            action={
+              <div className="flex min-w-[32rem] items-start justify-end gap-6">
+                <div className="flex w-[18.75rem] flex-col gap-2 pt-1">
+                  <input
+                    aria-label={a.fontSizeTitle}
+                    className="h-1 w-full cursor-pointer appearance-none rounded-full bg-(--ui-stroke-tertiary)"
+                    max={FONT_SCALE_OPTIONS.length - 1}
+                    min={0}
+                    onChange={event => {
+                      const option = FONT_SCALE_OPTIONS[Number(event.target.value)]
+                      setDraftFontScale(option?.id ?? DEFAULT_FONT_SCALE)
+                    }}
+                    step={1}
+                    style={{ accentColor: 'var(--dt-primary)' }}
+                    type="range"
+                    value={draftFontScaleIndex}
+                  />
+                  <div className="grid grid-cols-5 text-[10px] text-(--ui-text-tertiary)">
+                    {FONT_SCALE_OPTIONS.map(option => (
+                      <span className="text-center first:text-left last:text-right" key={option.id}>
+                        {option.percent}%
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex w-36 flex-col items-end gap-2">
+                  <span
+                    className="text-right font-semibold text-(--ui-text-primary)"
+                    style={{
+                      fontSize: `${Math.round(14 * draftFontScaleOption.scale)}px`,
+                      lineHeight: `${Math.round(20 * draftFontScaleOption.scale)}px`
+                    }}
+                  >
+                    {a.fontSizeOptions[draftFontScaleOption.id]}
+                  </span>
+                  <Button
+                    disabled={!fontScaleChanged}
+                    onClick={() => {
+                      setFontScale(draftFontScale)
+                      triggerHaptic('selection')
+                    }}
+                    size="sm"
+                    type="button"
+                    variant="outline"
+                  >
+                    {a.fontSizeApply}
+                  </Button>
+                </div>
+              </div>
+            }
+            description={a.fontSizeDesc}
+            title={a.fontSizeTitle}
             wide
           />
 

@@ -112,6 +112,14 @@ GROQ_MODELS = {"whisper-large-v3", "whisper-large-v3-turbo", "distil-whisper-lar
 _local_model: Optional[object] = None
 _local_model_name: Optional[str] = None
 
+STT_CAPABLE_MODEL_PROVIDERS = {
+    "openai": "openai",
+    "groq": "groq",
+    "mistral": "mistral",
+    "xai": "xai",
+    "elevenlabs": "elevenlabs",
+}
+
 # ---------------------------------------------------------------------------
 # Config helpers
 # ---------------------------------------------------------------------------
@@ -759,6 +767,9 @@ def _get_provider(stt_config: dict) -> str:
     # --- Explicit provider: respect the user's choice ----------------------
 
     if explicit:
+        if provider == "auto":
+            return _get_cloud_first_provider(stt_config)
+
         if provider == "local":
             if _HAS_FASTER_WHISPER:
                 return "local"
@@ -863,6 +874,77 @@ def _get_provider(stt_config: dict) -> str:
     if get_env_value("ELEVENLABS_API_KEY"):
         logger.info("No local STT available, using ElevenLabs Scribe STT API")
         return "elevenlabs"
+    return "none"
+
+
+def _current_model_stt_provider() -> Optional[str]:
+    """Map the active chat provider only when it explicitly supports STT."""
+    try:
+        from hermes_cli.config import load_config
+
+        model_config = (load_config() or {}).get("model", {})
+    except Exception:
+        return None
+
+    if isinstance(model_config, dict):
+        provider = model_config.get("provider")
+    else:
+        provider = None
+    if not isinstance(provider, str):
+        return None
+    return STT_CAPABLE_MODEL_PROVIDERS.get(provider.strip().lower())
+
+
+def _cloud_provider_available(provider: str) -> bool:
+    if provider == "groq":
+        return bool(_HAS_OPENAI and get_env_value("GROQ_API_KEY"))
+    if provider == "openai":
+        return bool(_HAS_OPENAI and _has_openai_audio_backend())
+    if provider == "mistral":
+        return bool(_HAS_MISTRAL and get_env_value("MISTRAL_API_KEY"))
+    if provider == "xai":
+        try:
+            from tools.xai_http import resolve_xai_http_credentials
+
+            return bool(resolve_xai_http_credentials().get("api_key"))
+        except Exception:
+            return False
+    if provider == "elevenlabs":
+        return bool(get_env_value("ELEVENLABS_API_KEY"))
+    return False
+
+
+def _get_cloud_first_provider(stt_config: dict) -> str:
+    """Choose current-provider STT, another configured cloud STT, then local."""
+    routing = stt_config.get("routing", {})
+    if not isinstance(routing, dict):
+        routing = {}
+    prefer_current = is_truthy_value(routing.get("prefer_current_provider"), default=True)
+    cloud_first = is_truthy_value(routing.get("cloud_first"), default=True)
+    local_fallback = is_truthy_value(routing.get("local_fallback"), default=True)
+
+    if not cloud_first:
+        if _HAS_FASTER_WHISPER:
+            return "local"
+        if _has_local_command():
+            return "local_command"
+
+    current = _current_model_stt_provider() if prefer_current else None
+    candidates = [current] if current else []
+    candidates.extend(("groq", "openai", "mistral", "xai", "elevenlabs"))
+
+    seen = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if _cloud_provider_available(candidate):
+            return candidate
+
+    if local_fallback and _HAS_FASTER_WHISPER:
+        return "local"
+    if local_fallback and _has_local_command():
+        return "local_command"
     return "none"
 
 
@@ -1113,7 +1195,7 @@ def _load_local_whisper_model(model_name: str):
         return WhisperModel(model_name, device="cpu", compute_type="int8")
 
 
-def _transcribe_local(file_path: str, model_name: str) -> Dict[str, Any]:
+def _transcribe_local(file_path: str, model_name: str, language: Optional[str] = None) -> Dict[str, Any]:
     """Transcribe using faster-whisper (local, free)."""
     global _local_model, _local_model_name
 
@@ -1130,7 +1212,8 @@ def _transcribe_local(file_path: str, model_name: str) -> Dict[str, Any]:
 
         # Language: config.yaml (stt.local.language) > env var > auto-detect.
         _forced_lang = (
-            _load_stt_config().get("local", {}).get("language")
+            language
+            or _load_stt_config().get("local", {}).get("language")
             or os.getenv(LOCAL_STT_LANGUAGE_ENV)
             or None
         )
@@ -1275,7 +1358,7 @@ def _transcribe_local_command(file_path: str, model_name: str) -> Dict[str, Any]
 # ---------------------------------------------------------------------------
 
 
-def _transcribe_groq(file_path: str, model_name: str) -> Dict[str, Any]:
+def _transcribe_groq(file_path: str, model_name: str, language: Optional[str] = None) -> Dict[str, Any]:
     """Transcribe using Groq Whisper API (free tier available)."""
     api_key = get_env_value("GROQ_API_KEY")
     if not api_key:
@@ -1294,11 +1377,10 @@ def _transcribe_groq(file_path: str, model_name: str) -> Dict[str, Any]:
         client = OpenAI(api_key=api_key, base_url=GROQ_BASE_URL, timeout=30, max_retries=0)
         try:
             with open(file_path, "rb") as audio_file:
-                transcription = client.audio.transcriptions.create(
-                    model=model_name,
-                    file=audio_file,
-                    response_format="text",
-                )
+                request = {"model": model_name, "file": audio_file, "response_format": "text"}
+                if language:
+                    request["language"] = language
+                transcription = client.audio.transcriptions.create(**request)
 
             transcript_text = str(transcription).strip()
             logger.info("Transcribed %s via Groq API (%s, %d chars)",
@@ -1327,7 +1409,7 @@ def _transcribe_groq(file_path: str, model_name: str) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _transcribe_openai(file_path: str, model_name: str) -> Dict[str, Any]:
+def _transcribe_openai(file_path: str, model_name: str, language: Optional[str] = None) -> Dict[str, Any]:
     """Transcribe using OpenAI Whisper API (paid)."""
     try:
         api_key, base_url = _resolve_openai_audio_client_config()
@@ -1351,11 +1433,14 @@ def _transcribe_openai(file_path: str, model_name: str) -> Dict[str, Any]:
         client = OpenAI(api_key=api_key, base_url=base_url, timeout=30, max_retries=0)
         try:
             with open(file_path, "rb") as audio_file:
-                transcription = client.audio.transcriptions.create(
-                    model=model_name,
-                    file=audio_file,
-                    response_format="text" if model_name == "whisper-1" else "json",
-                )
+                request = {
+                    "model": model_name,
+                    "file": audio_file,
+                    "response_format": "text" if model_name == "whisper-1" else "json",
+                }
+                if language:
+                    request["language"] = language
+                transcription = client.audio.transcriptions.create(**request)
 
             transcript_text = _extract_transcript_text(transcription)
             logger.info("Transcribed %s via OpenAI API (%s, %d chars)",
@@ -1621,7 +1706,11 @@ def _transcribe_elevenlabs(file_path: str, model_name: str) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def transcribe_audio(file_path: str, model: Optional[str] = None) -> Dict[str, Any]:
+def transcribe_audio(
+    file_path: str,
+    model: Optional[str] = None,
+    language: Optional[str] = None,
+) -> Dict[str, Any]:
     """
     Transcribe an audio file using the configured STT provider.
 
@@ -1661,7 +1750,7 @@ def transcribe_audio(file_path: str, model: Optional[str] = None) -> Dict[str, A
         model_name = _normalize_local_model(
             model or local_cfg.get("model", DEFAULT_LOCAL_MODEL)
         )
-        return _transcribe_local(file_path, model_name)
+        return _transcribe_local(file_path, model_name, language)
 
     if provider == "local_command":
         local_cfg = stt_config.get("local", {})
@@ -1672,12 +1761,12 @@ def transcribe_audio(file_path: str, model: Optional[str] = None) -> Dict[str, A
 
     if provider == "groq":
         model_name = model or DEFAULT_GROQ_STT_MODEL
-        return _transcribe_groq(file_path, model_name)
+        return _transcribe_groq(file_path, model_name, language)
 
     if provider == "openai":
         openai_cfg = stt_config.get("openai", {})
         model_name = model or openai_cfg.get("model", DEFAULT_STT_MODEL)
-        return _transcribe_openai(file_path, model_name)
+        return _transcribe_openai(file_path, model_name, language)
 
     if provider == "mistral":
         mistral_cfg = stt_config.get("mistral", {})

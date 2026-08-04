@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
+from urllib.parse import quote
 
-from fastapi import APIRouter, Header, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, File, Header, HTTPException, Request, UploadFile
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.background import BackgroundTask
 
 from macsoft.admin.auth import bootstrap_response, require_admin
-from macsoft.admin.message_store import list_admin_context, list_admin_messages, save_admin_message
+from macsoft.admin.message_store import attach_admin_files_to_message, list_admin_context, list_admin_messages, save_admin_message
 from macsoft.admin.session_store import (
     create_admin_session,
     get_admin_session,
@@ -26,6 +27,18 @@ from macsoft.chat.hermes_client import (
 )
 from macsoft.chat.result_formatter import format_assistant_reply, format_error_markdown, map_user_readable_error, user_requested_json
 from macsoft.db import connect_db
+from macsoft.files.content import AttachmentContentError, build_hermes_user_content
+from macsoft.files.storage import (
+    MAX_UPLOAD_BYTES,
+    UploadValidationError,
+    create_admin_uploaded_file,
+    delete_admin_owned_file,
+    delete_admin_session_files,
+    require_admin_owned_file,
+    require_admin_owned_files,
+    stored_path,
+)
+from macsoft.gateway.errors import error_response
 from macsoft.gateway.routes_chat import MAX_CHAT_MESSAGE_BYTES, MAX_CHAT_MESSAGE_CHARS, SERVER_HERMES_MODEL_ID, sse_event
 from macsoft.security import new_id
 
@@ -55,6 +68,24 @@ class AdminInterruptRequest(BaseModel):
 
 def _error(code: str, message: str) -> dict:
     return {"ok": False, "error": {"code": code, "message": message, "details": {}}}
+
+
+def _file_response(record) -> dict:
+    return {
+        "ok": True,
+        "file_id": record.file_id,
+        "fileId": record.file_id,
+        "session_id": record.session_id,
+        "sessionId": record.session_id,
+        "filename": record.original_name,
+        "content_type": record.media_type,
+        "contentType": record.media_type,
+        "size_bytes": record.size_bytes,
+        "sizeBytes": record.size_bytes,
+        "sha256": record.sha256,
+        "created_at": record.created_at,
+        "createdAt": record.created_at,
+    }
 
 
 def _require_session(request: Request, session_id: str):
@@ -144,8 +175,84 @@ def delete_admin_session(
         raise HTTPException(status_code=409, detail=_error("admin_session_busy", "Admin session has an active reply."))
     conn = connect_db(request.app.state.config)
     try:
+        delete_admin_session_files(conn, request.app.state.config, session_id=session_id)
         soft_delete_admin_session(conn, session_id)
         return {"ok": True, "session_id": session_id, "deleted": True}
+    finally:
+        conn.close()
+
+
+@router.post("/api/admin/sessions/{session_id}/files")
+async def upload_admin_file(
+    request: Request,
+    session_id: str,
+    file: UploadFile = File(...),
+    authorization: str | None = Header(default=None, alias="Authorization"),
+) -> dict:
+    require_admin(request, authorization)
+    config = request.app.state.config
+    conn = connect_db(config)
+    try:
+        if get_admin_session(conn, session_id) is None:
+            raise HTTPException(status_code=404, detail=_error("admin_session_not_found", "Admin session does not exist."))
+        data = await file.read(MAX_UPLOAD_BYTES + 1)
+        try:
+            record = create_admin_uploaded_file(conn, config, session_id=session_id, filename=file.filename, data=data)
+        except UploadValidationError as error:
+            raise HTTPException(status_code=422, detail=error_response(error.code, str(error)))
+        except ValueError:
+            raise HTTPException(status_code=404, detail=_error("admin_session_not_found", "Admin session does not exist."))
+        return _file_response(record)
+    finally:
+        await file.close()
+        conn.close()
+
+
+@router.get("/api/admin/sessions/{session_id}/files/{file_id}")
+def download_admin_file(
+    request: Request,
+    session_id: str,
+    file_id: str,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+) -> Response:
+    require_admin(request, authorization)
+    config = request.app.state.config
+    conn = connect_db(config)
+    try:
+        try:
+            record = require_admin_owned_file(conn, file_id=file_id, session_id=session_id)
+            data = stored_path(config, record).read_bytes()
+        except (ValueError, FileNotFoundError):
+            raise HTTPException(status_code=404, detail=error_response("admin_file_not_found", "Admin file was not found."))
+        return Response(
+            content=data,
+            media_type=record.media_type,
+            headers={
+                "Cache-Control": "no-store",
+                "Content-Disposition": f"attachment; filename*=UTF-8''{quote(record.original_name, safe='')}",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+    finally:
+        conn.close()
+
+
+@router.delete("/api/admin/sessions/{session_id}/files/{file_id}")
+def delete_admin_file(
+    request: Request,
+    session_id: str,
+    file_id: str,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+) -> dict:
+    require_admin(request, authorization)
+    config = request.app.state.config
+    conn = connect_db(config)
+    try:
+        try:
+            record = delete_admin_owned_file(conn, config, file_id=file_id, session_id=session_id)
+        except ValueError:
+            raise HTTPException(status_code=404, detail=error_response("admin_file_not_found", "Admin file was not found."))
+        return {"ok": True, "deleted": True, "file_id": record.file_id, "fileId": record.file_id}
     finally:
         conn.close()
 
@@ -200,14 +307,18 @@ def admin_chat_stream(
     reserved = False
 
     try:
-        if body.uploaded_file_ids:
-            raise HTTPException(status_code=422, detail=_error("attachments_not_supported", "Attachments are not supported by Admin chat."))
         if not body.message.strip():
             raise HTTPException(status_code=422, detail=_error("blank_message", "Message must contain non-whitespace content."))
         if len(body.message) > MAX_CHAT_MESSAGE_CHARS or len(body.message.encode("utf-8")) > MAX_CHAT_MESSAGE_BYTES:
             raise HTTPException(status_code=422, detail=_error("message_too_large", "Message exceeds the supported request size."))
         if get_admin_session(conn, body.session_id) is None:
             raise HTTPException(status_code=404, detail=_error("admin_session_not_found", "Admin session does not exist."))
+        try:
+            uploaded_files = require_admin_owned_files(conn, file_ids=body.uploaded_file_ids, session_id=body.session_id)
+        except UploadValidationError as error:
+            raise HTTPException(status_code=422, detail=error_response(error.code, str(error)))
+        except ValueError:
+            raise HTTPException(status_code=404, detail=error_response("admin_file_not_found", "Admin file was not found."))
         if not registry.reserve(run_key):
             raise HTTPException(status_code=409, detail=_error("admin_session_busy", "Admin session already has an active reply."))
         reserved = True
@@ -215,13 +326,19 @@ def admin_chat_stream(
         if get_admin_session(conn, body.session_id) is None:
             raise HTTPException(status_code=404, detail=_error("admin_session_not_found", "Admin session does not exist."))
 
+        try:
+            current_user_content = build_hermes_user_content(config, message=body.message, files=uploaded_files)
+        except AttachmentContentError as error:
+            raise HTTPException(status_code=422, detail=error_response(error.code, str(error)))
         user_message = save_admin_message(conn, session_id=body.session_id, role="user", content=body.message)
+        attach_admin_files_to_message(conn, session_id=body.session_id, message_id=user_message["message_id"], file_ids=body.uploaded_file_ids)
         hermes_messages = [{"role": "system", "content": build_protected_system_instruction(
             None,
             "The user is operating MacSoft Server from the trusted local Server Desktop. "
             "Do not invent privileged management capabilities or claim actions were performed.",
         )}]
         hermes_messages.extend(list_admin_context(conn, body.session_id))
+        hermes_messages[-1]["content"] = current_user_content
         assistant_message_id = new_id("admin_msg")
 
         def event_stream() -> Iterator[str]:

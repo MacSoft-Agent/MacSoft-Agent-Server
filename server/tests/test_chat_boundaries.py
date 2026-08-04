@@ -451,6 +451,21 @@ class StructuredErrorTests(unittest.TestCase):
         self.assertIn("rate-limiting", readable.title)
         self.assertNotIn("could not be completed", readable.title)
 
+    def test_unknown_ai_error_keeps_redacted_detail_and_macsoft_branding(self) -> None:
+        readable = map_user_readable_error(
+            "Hermes Agent provider failed with code provider_x; "
+            "Authorization: Bearer secret-value at C:\\private\\trace.txt",
+            service="ai_service",
+            kind="run_failed",
+        )
+        rendered = readable.title + " " + readable.detail
+        self.assertIn("provider_x", rendered)
+        self.assertIn("MacSoft Agent", rendered)
+        self.assertNotIn("Hermes", rendered)
+        self.assertNotIn("secret-value", rendered)
+        self.assertNotIn("C:\\private", rendered)
+        self.assertNotIn("could not be completed", rendered)
+
     def test_ai_401_is_structured_and_does_not_point_to_autocount(self) -> None:
         error = HTTPError(
             "http://127.0.0.1:8642/v1/chat/completions",

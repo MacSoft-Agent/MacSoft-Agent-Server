@@ -18,6 +18,7 @@ _SECRET_ASSIGNMENT = re.compile(
     r"\s*[:=]\s*[^\s,;]+"
 )
 _WINDOWS_PATH = re.compile(r"(?i)\b[a-z]:\\[^\s]+")
+_HERMES_PRODUCT_NAME = re.compile(r"(?i)\bhermes(?:[-_\s]+agent)?\b")
 _SENSITIVE_KEYS = {
     "apikey",
     "api_key",
@@ -58,6 +59,20 @@ class UserReadableError:
     action: str
 
 
+def _safe_ai_service_error_detail(message: str) -> str:
+    """Keep the classified AI error while removing internal/sensitive data."""
+
+    detail = " ".join((message or "").split())
+    detail = _BEARER_TOKEN.sub("Bearer [redacted]", detail)
+    detail = _SECRET_ASSIGNMENT.sub(
+        lambda match: f"{match.group(1)}=[redacted]",
+        detail,
+    )
+    detail = _WINDOWS_PATH.sub("[local path removed]", detail)
+    detail = _HERMES_PRODUCT_NAME.sub("MacSoft Agent", detail)
+    return detail[:1000] or "MacSoft Agent did not provide additional error details."
+
+
 def map_user_readable_error(
     message: str,
     *,
@@ -69,7 +84,16 @@ def map_user_readable_error(
     lowered = clean.lower()
 
     if service == "ai_service":
-        if kind == "usage_limit":
+        if kind == "usage_limit" or any(
+            marker in lowered
+            for marker in (
+                "usage_limit_reached",
+                "usage limit has been reached",
+                "usage limit is reached",
+                "insufficient_quota",
+                "quota has been exhausted",
+            )
+        ):
             return UserReadableError(
                 title="The MacSoft Agent Model/Provider usage limit has been reached",
                 detail="The Model/Provider account configured in MacSoft Agent has no usage available for this request.",
@@ -99,6 +123,16 @@ def map_user_readable_error(
                 detail="MacSoft Server could not reach its internal AI Service.",
                 action="Start or restart the AI Service from Server Settings, then try again.",
             )
+        # The internal AI Service already classifies and redacts provider
+        # failures before they cross its API boundary. Preserve that useful
+        # error summary instead of replacing every unrecognized error with a
+        # generic message. Apply a second Server-side redaction pass and keep
+        # the internal runtime product name out of Client-facing responses.
+        return UserReadableError(
+            title="MacSoft Agent request failed",
+            detail=_safe_ai_service_error_detail(clean),
+            action="Follow the reported error details and try again. If the problem continues, contact your administrator.",
+        )
 
     if re.search(r"\b401\b", clean) or "unauthorized" in lowered or "authentication" in lowered:
         return UserReadableError(

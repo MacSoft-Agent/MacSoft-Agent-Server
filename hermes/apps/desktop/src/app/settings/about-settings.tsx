@@ -7,6 +7,7 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { RefreshCw } from '@/lib/icons'
 import {
   $desktopVersion,
+  $updateApply,
   $updateChecking,
   $updateStatus,
   applyUpdates,
@@ -19,9 +20,11 @@ import { SectionHeading, SettingsContent } from './primitives'
 
 export function AboutSettings() {
   const version = useStore($desktopVersion)
+  const apply = useStore($updateApply)
   const checking = useStore($updateChecking)
   const update = useStore($updateStatus)
   const [confirmUpdate, setConfirmUpdate] = useState(false)
+  const updating = apply.applying || apply.stage === 'restart'
 
   useEffect(() => {
     void refreshDesktopVersion()
@@ -55,7 +58,9 @@ export function AboutSettings() {
                   : 'MacSoft Agent updates'}
               </p>
               <p className="mt-1 text-xs text-muted-foreground">
-                {update?.message ??
+                {updating
+                  ? apply.message || 'Downloading update…'
+                  : update?.message ??
                   'Check the trusted MacSoft release source for a newer installed version.'}
               </p>
               {update?.targetBuildId ? (
@@ -66,7 +71,7 @@ export function AboutSettings() {
             </div>
             <div className="flex shrink-0 gap-2">
               <Button
-                disabled={checking}
+                disabled={checking || updating}
                 onClick={() => void checkUpdates()}
                 type="button"
                 variant="outline"
@@ -75,8 +80,8 @@ export function AboutSettings() {
                 {checking ? 'Checking…' : 'Check for updates'}
               </Button>
               {update?.updateAvailable ? (
-                <Button onClick={() => setConfirmUpdate(true)} type="button">
-                  Install update
+                <Button disabled={updating} onClick={() => setConfirmUpdate(true)} type="button">
+                  {updating ? 'Downloading…' : 'Install update'}
                 </Button>
               ) : null}
             </div>

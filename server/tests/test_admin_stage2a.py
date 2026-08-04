@@ -19,6 +19,7 @@ from macsoft.admin.session_store import create_admin_session, list_admin_session
 from macsoft.db import connect_db, init_db
 from macsoft.gateway.routes_admin import AdminChatRequest, admin_chat_stream, get_admin_sessions, post_admin_session
 from macsoft.chat.active_runs import ActiveChatRunRegistry
+from macsoft.chat.hermes_client import HermesApiError
 
 
 def make_request(app: FastAPI, host: str = "127.0.0.1") -> Request:
@@ -130,6 +131,57 @@ class AdminStage2ATests(unittest.TestCase):
             conn.close()
         self.assertEqual([row[0] for row in rows], ["user", "assistant"])
         self.assertFalse(self.app.state.active_chat_runs.is_active(f"admin:{created['session_id']}"))
+
+    def test_admin_stream_exposes_specific_provider_usage_limit(self) -> None:
+        token = self.admin_token()
+        conn = connect_db(self.config)
+        try:
+            created = create_admin_session(conn, "Usage limit")
+        finally:
+            conn.close()
+        body = AdminChatRequest(session_id=created["session_id"], message="Hello")
+        upstream_error = HermesApiError(
+            "Error code: 429 - {'error': {'type': 'usage_limit_reached', "
+            "'message': 'The usage limit has been reached'}}",
+            kind="run_failed",
+        )
+
+        with patch(
+            "macsoft.gateway.routes_admin.stream_interruptible_hermes_reply_events",
+            side_effect=upstream_error,
+        ):
+            response = admin_chat_stream(self.request, body, f"Bearer {token}")
+            events = "".join(asyncio.run(consume(response)))
+
+        self.assertIn("MacSoft Agent Model/Provider usage limit", events)
+        self.assertNotIn("The request could not be completed", events)
+        self.assertNotIn("Hermes", events)
+        self.assertIn('"ok": false', events)
+
+    def test_admin_stream_preserves_unrecognized_redacted_ai_error(self) -> None:
+        token = self.admin_token()
+        conn = connect_db(self.config)
+        try:
+            created = create_admin_session(conn, "Provider failure")
+        finally:
+            conn.close()
+        body = AdminChatRequest(session_id=created["session_id"], message="Hello")
+
+        with patch(
+            "macsoft.gateway.routes_admin.stream_interruptible_hermes_reply_events",
+            side_effect=HermesApiError(
+                "Hermes provider rejected model route provider_x",
+                kind="run_failed",
+            ),
+        ):
+            response = admin_chat_stream(self.request, body, f"Bearer {token}")
+            events = "".join(asyncio.run(consume(response)))
+
+        self.assertIn("provider_x", events)
+        self.assertIn("MacSoft Agent", events)
+        self.assertNotIn("Hermes", events)
+        self.assertNotIn("The request could not be completed", events)
+        self.assertIn('"ok": false', events)
 
 
 if __name__ == "__main__":

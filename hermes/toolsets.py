@@ -168,6 +168,15 @@ TOOLSETS = {
         "tools": ["skills_list", "skill_view", "skill_manage"],
         "includes": []
     },
+
+    # API-facing read-only surface. Remote chat clients may need protected
+    # product guidance, but they must not be able to create, edit, or delete
+    # Skill files.
+    "skills_readonly": {
+        "description": "Read available Skill instructions without management access",
+        "tools": ["skills_list", "skill_view"],
+        "includes": []
+    },
     
     "browser": {
         "description": "Browser automation for web interaction (navigate, click, type, scroll, iframes, hold-click) with web search for finding URLs",

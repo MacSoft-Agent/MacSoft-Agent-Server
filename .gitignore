@@ -46,6 +46,11 @@ server/macsoft-hermes-bridge-input.txt
 # Runtime data and databases
 # ============================================================
 runtime/
+# Protected Skill source is authored in Packaging and deployed into the
+# generated runtime by protected-resources directory synchronization.
+!packaging/templates/protected/runtime/
+!packaging/templates/protected/runtime/skills/
+!packaging/templates/protected/runtime/skills/**
 server/data/
 server/initialization.json
 *.db

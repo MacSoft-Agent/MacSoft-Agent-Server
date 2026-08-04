@@ -1031,6 +1031,12 @@ class TestPromptBuilderConstants:
         assert "api_server" in PLATFORM_HINTS
         assert "webui" in PLATFORM_HINTS
 
+    def test_api_server_dashboard_hint_requires_read_only_skill_and_html(self):
+        hint = PLATFORM_HINTS["api_server"]
+        assert "skill_view(name='macsoft-chart-dashboard')" in hint
+        assert "skill_manage" not in hint
+        assert "<!doctype html>" in hint
+
     def test_cli_and_tui_hints_flag_local_only_cron(self):
         """#51568 — cron jobs from CLI/TUI sessions don't deliver back into
         the session, so the agent must be told up front not to promise it."""

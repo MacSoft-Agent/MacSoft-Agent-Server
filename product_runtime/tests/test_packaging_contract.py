@@ -133,6 +133,29 @@ class PackagingContractTests(unittest.TestCase):
             product["protected_resource_version"], protected["version"]
         )
 
+    def test_protected_skill_directory_is_deployed_as_a_managed_tree(self) -> None:
+        product = json.loads((ROOT / "product.json").read_text(encoding="utf-8"))
+        protected = json.loads(
+            (ROOT / "packaging" / "templates" / "protected-resources.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        directories = protected.get("directories")
+        self.assertIn(
+            {
+                "source": "protected/runtime/skills",
+                "destination": "runtime/skills",
+            },
+            directories,
+        )
+        self.assertEqual(product["protected_resource_version"], protected["version"])
+        self.assertIn(
+            "directories",
+            (ROOT / "product_runtime" / "macsoft_runtime" / "initializer.py").read_text(
+                encoding="utf-8"
+            ),
+        )
+
     def test_release_build_is_clean_commit_gated_and_version_driven(self) -> None:
         release = (ROOT / "scripts" / "build-release.ps1").read_text(encoding="utf-8-sig")
         finalizer = (ROOT / "scripts" / "finalize-release-artifact.ps1").read_text(encoding="utf-8-sig")

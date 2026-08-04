@@ -18,6 +18,7 @@ from .paths import ProductPaths
 class InitializationResult:
     created: list[str] = field(default_factory=list)
     updated_protected: list[str] = field(default_factory=list)
+    removed_protected: list[str] = field(default_factory=list)
     preserved: list[str] = field(default_factory=list)
     conflicts: list[str] = field(default_factory=list)
 
@@ -84,6 +85,59 @@ def _synchronize_yaml_scalar(path: Path, key_path: tuple[str, ...], value: str) 
     raise ValueError(f"{path.name} is missing required setting: {'.'.join(key_path)}")
 
 
+def _ensure_yaml_list_item(path: Path, key_path: tuple[str, ...], value: str) -> bool:
+    """Add one product-required YAML list item while preserving user settings.
+
+    Runtime config is mutable and is intentionally not recopied on upgrades.
+    This narrow migration lets a new product-owned capability become available
+    without replacing the user's model, provider, or other configuration.
+    """
+    lines = path.read_text(encoding="utf-8-sig").splitlines(keepends=True)
+    target_indent = None
+    list_start = None
+    list_end = None
+
+    for index, line in enumerate(lines):
+        match = _YAML_KEY_LINE.match(line)
+        if not match:
+            continue
+        prefix, key, remainder, _newline = match.groups()
+        indent = len(prefix.expandtabs(8))
+        if target_indent is None:
+            if key != key_path[-1] or indent != 2:
+                continue
+            parents = []
+            for prior in lines[:index]:
+                prior_match = _YAML_KEY_LINE.match(prior)
+                if prior_match:
+                    prior_prefix, prior_key, prior_remainder, _ = prior_match.groups()
+                    prior_indent = len(prior_prefix.expandtabs(8))
+                    while parents and parents[-1][0] >= prior_indent:
+                        parents.pop()
+                    if not (prior_remainder or "").strip() or (prior_remainder or "").lstrip().startswith("#"):
+                        parents.append((prior_indent, prior_key))
+            if tuple(item[1] for item in parents) != key_path[:-1]:
+                continue
+            target_indent = indent
+            list_start = index + 1
+            list_end = list_start
+            continue
+        if indent <= target_indent and line.strip() and not line.lstrip().startswith("#"):
+            list_end = index
+            break
+        list_end = index + 1
+
+    if list_start is None:
+        raise ValueError(f"{path.name} is missing required list: {'.'.join(key_path)}")
+    if any(re.search(rf"^\s*-\s*{re.escape(value)}\s*(?:#.*)?$", line) for line in lines[list_start:list_end]):
+        return False
+
+    newline = "\r\n" if any(line.endswith("\r\n") for line in lines) else "\n"
+    lines.insert(list_end, f"{' ' * (target_indent + 2)}- {value}{newline}")
+    _atomic_write(path, "".join(lines).encode("utf-8"))
+    return True
+
+
 def _load_json(path: Path, fallback: dict) -> dict:
     if not path.exists():
         return fallback
@@ -92,6 +146,133 @@ def _load_json(path: Path, fallback: dict) -> dict:
     if not isinstance(value, dict):
         raise ValueError(f"{path.name} must contain a JSON object.")
     return value
+
+
+def _relative_manifest_path(value: object, field_name: str) -> str:
+    """Normalize a manifest path while rejecting traversal outside the data root."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"Protected resource {field_name} must be non-empty text.")
+    normalized = value.replace("\\", "/").strip("/")
+    parts = Path(normalized).parts
+    if not normalized or any(part in {"", ".", ".."} for part in parts):
+        raise ValueError(f"Protected resource {field_name} contains an unsafe path.")
+    return "/".join(parts)
+
+
+def _sync_protected_file(
+    *,
+    source: Path,
+    destination: Path,
+    relative_destination: str,
+    bundled_version: int,
+    state: dict,
+    protected_state: dict,
+    result: InitializationResult,
+) -> None:
+    """Synchronize one protected file using the same conflict rules everywhere."""
+    source_hash = _sha256(source)
+    previous = protected_state.get(relative_destination, {})
+    previous_hash = previous.get("hash") if isinstance(previous, dict) else None
+    previously_conflicted = (
+        previous.get("conflicted") is True if isinstance(previous, dict) else False
+    )
+    current_hash = _sha256(destination) if destination.exists() else None
+
+    if current_hash is None:
+        _atomic_write(destination, source.read_bytes())
+        result.created.append(relative_destination)
+        current_hash = source_hash
+        conflicted = False
+    elif current_hash == source_hash:
+        result.preserved.append(relative_destination)
+        # The administrator may have restored a previously conflicting file to
+        # the current bundled content; it is managed again from this point.
+        conflicted = False
+    elif (
+        previous_hash
+        and current_hash == previous_hash
+        and not previously_conflicted
+        and int(state.get("protected_version", 0)) < bundled_version
+    ):
+        _atomic_write(destination, source.read_bytes())
+        result.updated_protected.append(relative_destination)
+        current_hash = source_hash
+        conflicted = False
+    else:
+        # A locally changed protected file is customer/administrator state from
+        # the initializer's perspective. Keep it intact and report a conflict.
+        result.conflicts.append(relative_destination)
+        conflicted = True
+
+    protected_state[relative_destination] = {
+        "bundled_hash": source_hash,
+        "hash": current_hash,
+        "conflicted": conflicted,
+        "version": bundled_version,
+    }
+
+
+def _sync_protected_directory(
+    *,
+    source_root: Path,
+    destination_root: Path,
+    relative_destination_root: str,
+    bundled_version: int,
+    state: dict,
+    protected_state: dict,
+    result: InitializationResult,
+) -> None:
+    """Synchronize a managed directory without touching unknown runtime files.
+
+    The manifest owns individual files below this directory, not the whole target
+    directory. This lets the product remove an unchanged obsolete file while
+    preserving files installed or edited outside MacSoft's managed set.
+    """
+    source_files = {
+        path.relative_to(source_root).as_posix(): path
+        for path in source_root.rglob("*")
+        if path.is_file()
+    }
+    managed_prefix = relative_destination_root.rstrip("/") + "/"
+
+    for relative_path, source in source_files.items():
+        relative_destination = f"{managed_prefix}{relative_path}"
+        _sync_protected_file(
+            source=source,
+            destination=destination_root / relative_path,
+            relative_destination=relative_destination,
+            bundled_version=bundled_version,
+            state=state,
+            protected_state=protected_state,
+            result=result,
+        )
+
+    # Reconcile files removed from the source directory. Only remove files that
+    # still match the last deployed hash; unknown files and local edits survive.
+    for relative_destination in list(protected_state):
+        if not relative_destination.startswith(managed_prefix):
+            continue
+        if relative_destination in {
+            f"{managed_prefix}{relative_path}" for relative_path in source_files
+        }:
+            continue
+        previous = protected_state.get(relative_destination, {})
+        # ``bundled_hash`` is the last desired product content. ``hash`` may
+        # intentionally be the local conflicting content kept in runtime.
+        previous_hash = previous.get("bundled_hash") if isinstance(previous, dict) else None
+        relative_path = relative_destination[len(managed_prefix) :]
+        destination = destination_root / relative_path
+        current_hash = _sha256(destination) if destination.exists() else None
+        if (
+            destination.exists()
+            and current_hash == previous_hash
+            and int(state.get("protected_version", 0)) < bundled_version
+        ):
+            destination.unlink()
+            result.removed_protected.append(relative_destination)
+            protected_state.pop(relative_destination, None)
+        elif destination.exists():
+            result.conflicts.append(relative_destination)
 
 
 def initialize_product_data(paths: ProductPaths, metadata: ProductMetadata) -> InitializationResult:
@@ -146,6 +327,11 @@ def initialize_product_data(paths: ProductPaths, metadata: ProductMetadata) -> I
         ("platforms", "api_server", "extra", "key"),
         local_api_key,
     )
+    _ensure_yaml_list_item(
+        paths.runtime_config,
+        ("platform_toolsets", "api_server"),
+        "skills_readonly",
+    )
     if paths.is_packaged:
         _synchronize_yaml_scalar(
             paths.server_config,
@@ -167,33 +353,36 @@ def initialize_product_data(paths: ProductPaths, metadata: ProductMetadata) -> I
     for item in resource_manifest.get("resources", []):
         if not isinstance(item, dict):
             continue
-        relative_source = str(item["source"])
-        relative_destination = str(item["destination"])
+        relative_source = _relative_manifest_path(item.get("source"), "source")
+        relative_destination = _relative_manifest_path(item.get("destination"), "destination")
         source = paths.templates_root / relative_source
         destination = paths.data_root / relative_destination
-        source_hash = _sha256(source)
-        previous = protected_state.get(relative_destination, {})
-        previous_hash = previous.get("hash") if isinstance(previous, dict) else None
-        current_hash = _sha256(destination) if destination.exists() else None
+        _sync_protected_file(
+            source=source,
+            destination=destination,
+            relative_destination=relative_destination,
+            bundled_version=bundled_version,
+            state=state,
+            protected_state=protected_state,
+            result=result,
+        )
 
-        if current_hash is None:
-            _atomic_write(destination, source.read_bytes())
-            result.created.append(relative_destination)
-            current_hash = source_hash
-        elif current_hash == source_hash:
-            result.preserved.append(relative_destination)
-        elif previous_hash and current_hash == previous_hash and int(state.get("protected_version", 0)) < bundled_version:
-            _atomic_write(destination, source.read_bytes())
-            result.updated_protected.append(relative_destination)
-            current_hash = source_hash
-        else:
-            result.conflicts.append(relative_destination)
-
-        protected_state[relative_destination] = {
-            "bundled_hash": source_hash,
-            "hash": current_hash,
-            "version": bundled_version,
-        }
+    for item in resource_manifest.get("directories", []):
+        if not isinstance(item, dict):
+            continue
+        relative_source = _relative_manifest_path(item.get("source"), "source")
+        relative_destination = _relative_manifest_path(item.get("destination"), "destination")
+        source_root = paths.templates_root / relative_source
+        destination_root = paths.data_root / relative_destination
+        _sync_protected_directory(
+            source_root=source_root,
+            destination_root=destination_root,
+            relative_destination_root=relative_destination,
+            bundled_version=bundled_version,
+            state=state,
+            protected_state=protected_state,
+            result=result,
+        )
 
     next_state = {
         "schema_version": metadata.data_schema_version,

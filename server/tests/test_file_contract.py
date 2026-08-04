@@ -184,6 +184,30 @@ class FileContractTests(unittest.TestCase):
         self.assertIn("bank-slip.png", user_content[0]["text"])
         self.assertTrue(user_content[1]["image_url"]["url"].startswith("data:image/png;base64,"))
 
+    def test_chat_emits_client_html_document_event_for_complete_html(self) -> None:
+        html = "<!doctype html><html><body><h1>Debtor dashboard</h1></body></html>"
+
+        with patch(
+            "macsoft.gateway.routes_chat.stream_hermes_reply_events",
+            return_value=iter([{"type": "text_delta", "text": html}]),
+        ):
+            response = self.client.post(
+                "/api/chat/stream",
+                headers={**self.headers_1, "X-MacSoft-Client-Capabilities": "activity-v1"},
+                json={
+                    "session_id": "session_1",
+                    "message": "Give me a debtor dashboard with a chart.",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("event: message_start", response.text)
+        self.assertIn("event: token_delta", response.text)
+        self.assertIn("event: html_document", response.text)
+        self.assertIn('"mime_type": "text/html"', response.text)
+        self.assertIn('"document_id": "msg_assistant', response.text)
+        self.assertIn("event: message_done", response.text)
+
     def test_unsupported_content_is_rejected_even_when_extension_is_allowed(self) -> None:
         response = self.client.post(
             "/api/files",

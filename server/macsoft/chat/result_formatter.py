@@ -18,6 +18,7 @@ _SECRET_ASSIGNMENT = re.compile(
     r"\s*[:=]\s*[^\s,;]+"
 )
 _WINDOWS_PATH = re.compile(r"(?i)\b[a-z]:\\[^\s]+")
+_HERMES_PRODUCT_NAME = re.compile(r"(?i)\bhermes(?:[-_\s]+agent)?\b")
 _SENSITIVE_KEYS = {
     "apikey",
     "api_key",
@@ -58,6 +59,20 @@ class UserReadableError:
     action: str
 
 
+def _safe_ai_service_error_detail(message: str) -> str:
+    """Keep the classified AI error while removing internal/sensitive data."""
+
+    detail = " ".join((message or "").split())
+    detail = _BEARER_TOKEN.sub("Bearer [redacted]", detail)
+    detail = _SECRET_ASSIGNMENT.sub(
+        lambda match: f"{match.group(1)}=[redacted]",
+        detail,
+    )
+    detail = _WINDOWS_PATH.sub("[local path removed]", detail)
+    detail = _HERMES_PRODUCT_NAME.sub("MacSoft Agent", detail)
+    return detail[:1000] or "MacSoft Agent did not provide additional error details."
+
+
 def map_user_readable_error(
     message: str,
     *,
@@ -69,6 +84,27 @@ def map_user_readable_error(
     lowered = clean.lower()
 
     if service == "ai_service":
+        if kind == "usage_limit" or any(
+            marker in lowered
+            for marker in (
+                "usage_limit_reached",
+                "usage limit has been reached",
+                "usage limit is reached",
+                "insufficient_quota",
+                "quota has been exhausted",
+            )
+        ):
+            return UserReadableError(
+                title="The MacSoft Agent Model/Provider usage limit has been reached",
+                detail="The Model/Provider account configured in MacSoft Agent has no usage available for this request.",
+                action="Wait for the account limit to reset, add available usage, or select another configured Model/Provider account.",
+            )
+        if kind == "rate_limit" or status_code == 429:
+            return UserReadableError(
+                title="The MacSoft Agent Model/Provider is rate-limiting requests",
+                detail="The Model/Provider configured in MacSoft Agent temporarily rejected the request because too many requests were made.",
+                action="Wait briefly and try again. If the problem continues, check the configured Model/Provider account limits.",
+            )
         if kind == "authentication" or status_code == 401:
             return UserReadableError(
                 title="Server Model/Provider login is required",
@@ -87,6 +123,16 @@ def map_user_readable_error(
                 detail="MacSoft Server could not reach its internal AI Service.",
                 action="Start or restart the AI Service from Server Settings, then try again.",
             )
+        # The internal AI Service already classifies and redacts provider
+        # failures before they cross its API boundary. Preserve that useful
+        # error summary instead of replacing every unrecognized error with a
+        # generic message. Apply a second Server-side redaction pass and keep
+        # the internal runtime product name out of Client-facing responses.
+        return UserReadableError(
+            title="MacSoft Agent request failed",
+            detail=_safe_ai_service_error_detail(clean),
+            action="Follow the reported error details and try again. If the problem continues, contact your administrator.",
+        )
 
     if re.search(r"\b401\b", clean) or "unauthorized" in lowered or "authentication" in lowered:
         return UserReadableError(
@@ -155,6 +201,36 @@ def map_user_readable_error(
         detail="MacSoft Agent received an error while processing the request.",
         action="Review the information provided and try again. If the problem continues, contact your administrator.",
     )
+
+
+def map_ai_service_response_error(message: str) -> UserReadableError | None:
+    """Recognize the AI Service's fixed, sanitized terminal error response.
+
+    The MacSoft Agent AI Service can complete its internal HTTP request with
+    status 200 after an upstream provider failure and put a sanitized failure
+    explanation in the assistant content. Match only that fixed wrapper so
+    ordinary assistant discussion about account limits is not reclassified.
+    """
+
+    clean = " ".join((message or "").split())
+    lowered = clean.lower()
+    if not lowered.startswith("sorry, i encountered an unexpected error."):
+        return None
+    if "usage limit has been reached" in lowered:
+        return map_user_readable_error(
+            clean,
+            service="ai_service",
+            kind="usage_limit",
+            status_code=429,
+        )
+    if "being rate-limited" in lowered or "rate limit" in lowered:
+        return map_user_readable_error(
+            clean,
+            service="ai_service",
+            kind="rate_limit",
+            status_code=429,
+        )
+    return None
 
 
 def format_error_markdown(error: UserReadableError) -> str:
@@ -380,6 +456,10 @@ def format_assistant_reply(text: str, *, preserve_json: bool = False) -> str:
     Ordinary text and Markdown are returned byte-for-byte so the Server does
     not reinterpret a normal Agent answer.
     """
+
+    ai_response_error = map_ai_service_response_error(text)
+    if ai_response_error is not None:
+        return format_error_markdown(ai_response_error)
 
     if preserve_json:
         return text

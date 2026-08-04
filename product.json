@@ -9,7 +9,7 @@
   "build_date": "2026-08-03",
   "build_id": "macsoft-agent-0.1.5-stable.20260803.1",
   "data_schema_version": 1,
-  "protected_resource_version": 2,
+  "protected_resource_version": 3,
   "update_manifest_url": "https://github.com/MacSoft-Agent/MacSoft-Agent-Releases/releases/latest/download/macsoft-agent-stable-manifest-v1.json",
   "update_manifest_public_key": "MCowBQYDK2VwAyEANuklnSpzDv32q5qf+JtDKlIOD1hvADK0GX9yo5cgddg="
 }

@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterator
 
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -27,6 +28,7 @@ from macsoft.chat.hermes_client import (
 from macsoft.chat.result_formatter import (
     format_assistant_reply,
     format_error_markdown,
+    map_ai_service_response_error,
     map_user_readable_error,
     user_requested_json,
 )
@@ -50,6 +52,15 @@ router = APIRouter()
 SERVER_HERMES_MODEL_ID = "server-hermes-current"
 MAX_CHAT_MESSAGE_CHARS = 16_000
 MAX_CHAT_MESSAGE_BYTES = 32_000
+_HTML_DOCUMENT_RE = re.compile(
+    r"^\s*<!doctype\s+html\s*>\s*<html\b[\s\S]*</html>\s*$",
+    re.IGNORECASE,
+)
+
+
+def is_complete_html_document(content: str) -> bool:
+    """Match the raw HTML document contract consumed by the Client."""
+    return isinstance(content, str) and bool(_HTML_DOCUMENT_RE.match(content))
 
 
 class ChatStreamRequest(BaseModel):
@@ -432,7 +443,20 @@ def chat_stream(
                                     mapped_activity = None
                                 if mapped_activity is not None:
                                     yield sse_event("activity", mapped_activity)
-                            assistant_text = format_final_reply("".join(raw_parts).strip())
+                            raw_assistant_text = "".join(raw_parts).strip()
+                            ai_response_error = map_ai_service_response_error(
+                                raw_assistant_text,
+                            )
+                            if ai_response_error is not None:
+                                # The internal AI Service reports some upstream provider
+                                # failures as sanitized assistant content over HTTP 200.
+                                # Preserve that safety boundary while marking the request
+                                # failed and giving the Client an actionable explanation.
+                                request_ok = False
+                                readable_error = ai_response_error
+                                assistant_text = format_error_markdown(ai_response_error)
+                            else:
+                                assistant_text = format_final_reply(raw_assistant_text)
                         except HermesApiError as error:
                             request_ok = False
                             readable_error = map_user_readable_error(
@@ -541,6 +565,19 @@ def chat_stream(
                             "text": assistant_text,
                         },
                     )
+
+                    if is_complete_html_document(assistant_text):
+                        yield sse_event(
+                            "html_document",
+                            {
+                                "schema_version": 1,
+                                "document_id": f"{assistant_message_id}:html",
+                                "message_id": assistant_message_id,
+                                "session_id": body.session_id,
+                                "mime_type": "text/html",
+                                "html": assistant_text,
+                            },
+                        )
 
                     if request_ok:
                         activity_event = activity_sse(

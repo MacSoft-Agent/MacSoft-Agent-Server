@@ -35,7 +35,7 @@ class ProductPathTests(unittest.TestCase):
     def test_product_version_comes_from_authoritative_metadata(self) -> None:
         root = Path(__file__).resolve().parents[2]
         expected = json.loads((root / "product.json").read_text("utf-8"))["product_version"]
-        self.assertEqual(expected, "0.1.6")
+        self.assertEqual(expected, "0.1.7")
         with patch.dict("os.environ", {"MACSOFT_PRODUCT_METADATA": str(root / "product.json")}):
             self.assertEqual(product_version(), expected)
 

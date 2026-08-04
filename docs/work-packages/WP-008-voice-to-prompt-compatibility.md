@@ -138,3 +138,13 @@ the synchronized actual Server tree, and 10 Desktop REST helper tests.
 ## Related commits and documents
 
 - Commits: pending
+
+## Recording quality, cancellation, and temporary-file hygiene extension (2026-08-03)
+
+The Product Owner authorized a narrow follow-up: improve browser microphone
+capture constraints, keep Thin Client dictation available beside attachments
+and typed text, allow an in-flight Client request to be cancelled without
+changing faster-whisper execution, and remove abandoned desktop voice files.
+The backend cleanup is limited to regular files in the system temporary
+directory whose names begin with `hermes-desktop-voice-` and whose age exceeds
+one hour. Normal request cleanup remains in the existing `finally` block.

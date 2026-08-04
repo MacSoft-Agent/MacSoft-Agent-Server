@@ -121,6 +121,32 @@ except ImportError:
 WEB_DIST = Path(os.environ["HERMES_WEB_DIST"]) if "HERMES_WEB_DIST" in os.environ else Path(__file__).parent / "web_dist"
 _log = logging.getLogger(__name__)
 
+_DESKTOP_VOICE_TEMP_PREFIX = "hermes-desktop-voice-"
+_DESKTOP_VOICE_TEMP_MAX_AGE_SECONDS = 60 * 60
+
+
+def _cleanup_stale_desktop_voice_files(
+    *, temp_dir: Path | None = None, now: float | None = None
+) -> int:
+    """Remove abandoned desktop recordings without touching active requests."""
+    root = temp_dir or Path(tempfile.gettempdir())
+    cutoff = (time.time() if now is None else now) - _DESKTOP_VOICE_TEMP_MAX_AGE_SECONDS
+    removed = 0
+
+    try:
+        candidates = root.glob(f"{_DESKTOP_VOICE_TEMP_PREFIX}*")
+        for candidate in candidates:
+            try:
+                if candidate.is_file() and candidate.stat().st_mtime <= cutoff:
+                    candidate.unlink()
+                    removed += 1
+            except OSError:
+                _log.debug("Could not remove stale voice recording %s", candidate, exc_info=True)
+    except OSError:
+        _log.debug("Could not scan voice recording temp directory %s", root, exc_info=True)
+
+    return removed
+
 # ---------------------------------------------------------------------------
 # Per-channel subscriber registry used by /api/pub (PTY-side gateway → dashboard)
 # and /api/events (dashboard → browser sidebar).  Keyed by an opaque channel id
@@ -180,6 +206,10 @@ async def _lifespan(app: "FastAPI"):
     # On app.state (not a module global) so the Lock binds to the running
     # event loop during lifespan startup — see _get_event_state's docstring.
     app.state.chat_argv_lock = asyncio.Lock()
+
+    removed_voice_files = _cleanup_stale_desktop_voice_files()
+    if removed_voice_files:
+        _log.info("Removed %d stale desktop voice recording(s)", removed_voice_files)
 
     # The MacSoft configuration-only backend must never warm or initialise an
     # Agent/Gateway execution path. Normal dashboard/serve launches retain the
@@ -3644,7 +3674,7 @@ async def transcribe_audio_upload(payload: AudioTranscriptionRequest):
     try:
         suffix = _audio_extension_for_mime(mime_type)
         with tempfile.NamedTemporaryFile(
-            prefix="hermes-desktop-voice-",
+            prefix=_DESKTOP_VOICE_TEMP_PREFIX,
             suffix=suffix,
             delete=False,
         ) as tmp:

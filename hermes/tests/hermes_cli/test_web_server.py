@@ -1472,8 +1472,9 @@ class TestWebServerEndpoints:
 
         captured = {}
 
-        def fake_transcribe_audio(path):
+        def fake_transcribe_audio(path, model=None, language=None):
             captured["path"] = path
+            captured["language"] = language
             return {
                 "success": True,
                 "transcript": "hello from voice mode",
@@ -1510,6 +1511,28 @@ class TestWebServerEndpoints:
 
         assert resp.status_code == 400
         assert "base64" in resp.json()["detail"]
+
+    def test_stale_desktop_voice_cleanup_is_scoped_and_age_bounded(self, tmp_path):
+        from hermes_cli.web_server import (
+            _DESKTOP_VOICE_TEMP_MAX_AGE_SECONDS,
+            _cleanup_stale_desktop_voice_files,
+        )
+
+        now = 2_000_000.0
+        stale = tmp_path / "hermes-desktop-voice-stale.webm"
+        recent = tmp_path / "hermes-desktop-voice-recent.webm"
+        unrelated = tmp_path / "other-recording.webm"
+        for path in (stale, recent, unrelated):
+            path.write_bytes(b"audio")
+        old_time = now - _DESKTOP_VOICE_TEMP_MAX_AGE_SECONDS - 1
+        os.utime(stale, (old_time, old_time))
+        os.utime(unrelated, (old_time, old_time))
+        os.utime(recent, (now, now))
+
+        assert _cleanup_stale_desktop_voice_files(temp_dir=tmp_path, now=now) == 1
+        assert not stale.exists()
+        assert recent.exists()
+        assert unrelated.exists()
 
     def test_desktop_audio_routes_registered(self):
         """All three desktop voice endpoints must exist.

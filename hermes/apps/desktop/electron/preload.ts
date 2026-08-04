@@ -17,7 +17,10 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
     createSession: (title?: string) => ipcRenderer.invoke('hermes:macsoft-admin:create-session', title),
     getMessages: (sessionId: string) => ipcRenderer.invoke('hermes:macsoft-admin:get-messages', sessionId),
     deleteSession: (sessionId: string) => ipcRenderer.invoke('hermes:macsoft-admin:delete-session', sessionId),
-    startStream: (input: { sessionId: string; message: string }) =>
+    uploadFile: (input: { sessionId: string; filename: string; dataUrl: string }) =>
+      ipcRenderer.invoke('hermes:macsoft-admin:upload-file', input),
+    readFileDataUrl: (input: { sessionId: string; fileId: string }) => ipcRenderer.invoke('hermes:macsoft-admin:read-file-data-url', input),
+    startStream: (input: { sessionId: string; message: string; uploadedFileIds?: string[] }) =>
       ipcRenderer.invoke('hermes:macsoft-admin:start-stream', input),
     stopStream: (input: { sessionId: string; streamId: string }) =>
       ipcRenderer.invoke('hermes:macsoft-admin:interrupt-stream', input),

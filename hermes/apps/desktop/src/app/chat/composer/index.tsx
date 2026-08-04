@@ -69,6 +69,7 @@ export function ChatBar({
   maxRecordingSeconds = 120,
   queueSessionKey,
   queueWhileBusy = true,
+  restrictedAttachmentMenu = false,
   sessionId,
   state,
   onCancel,
@@ -681,6 +682,7 @@ export function ChatBar({
       onPickFiles={onPickFiles}
       onPickFolders={onPickFolders}
       onPickImages={onPickImages}
+      restricted={restrictedAttachmentMenu}
       state={state}
     />
   )

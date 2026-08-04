@@ -54,3 +54,32 @@ test('Admin interrupt stays on the authenticated 8787 Admin path', async () => {
   assert.equal(calls[1].method, 'POST')
   assert.deepEqual(JSON.parse(calls[1].body || '{}'), { session_id: 'admin_sess_123' })
 })
+
+test('Admin file upload remains on the separate authenticated Admin session path', async () => {
+  const calls: Array<{ url: string; body: BodyInit | null | undefined; contentType: string | null }> = []
+  const client = new MacSoftDesktopAdminChatClient(
+    { trustedHostToken: () => 'host-secret' },
+    async (input, init) => {
+      const url = String(input)
+      calls.push({ url, body: init?.body, contentType: new Headers(init?.headers).get('Content-Type') })
+      if (url.endsWith('/auth/session')) {
+        return new Response(JSON.stringify({ access_token: 'admin-secret' }), { status: 200 })
+      }
+      return new Response(JSON.stringify({
+        file_id: 'admin_file_123',
+        session_id: 'admin_sess_123'
+      }), { status: 200 })
+    }
+  )
+
+  const uploaded = await client.uploadAdminFile('admin_sess_123', {
+    dataUrl: 'data:image/png;base64,UE5H',
+    filename: 'receipt.png'
+  })
+
+  assert.equal(uploaded.file_id, 'admin_file_123')
+  assert.equal(calls[1].url, 'http://127.0.0.1:8787/api/admin/sessions/admin_sess_123/files')
+  assert.ok(calls[1].body instanceof FormData)
+  assert.equal(calls[1].contentType, null)
+  assert.equal(calls.some(call => call.url.includes('/api/files')), false)
+})

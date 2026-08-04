@@ -30,7 +30,8 @@ export function ContextMenu({
   onPasteClipboardImage,
   onPickFiles,
   onPickFolders,
-  onPickImages
+  onPickImages,
+  restricted
 }: ContextMenuProps) {
   const { t } = useI18n()
   const c = t.composer
@@ -67,9 +68,11 @@ export function ContextMenu({
           <ContextMenuItem disabled={!onPickFiles} icon={FileText} onSelect={onPickFiles}>
             {c.files}
           </ContextMenuItem>
-          <ContextMenuItem disabled={!onPickFolders} icon={FolderOpen} onSelect={onPickFolders}>
-            {c.folder}
-          </ContextMenuItem>
+          {!restricted && (
+            <ContextMenuItem disabled={!onPickFolders} icon={FolderOpen} onSelect={onPickFolders}>
+              {c.folder}
+            </ContextMenuItem>
+          )}
           <ContextMenuItem disabled={!onPickImages} icon={ImageIcon} onSelect={onPickImages}>
             {c.images}
           </ContextMenuItem>
@@ -80,27 +83,29 @@ export function ContextMenu({
           >
             {c.pasteImage}
           </ContextMenuItem>
-          <ContextMenuItem icon={Link} onSelect={onOpenUrlDialog}>
-            {c.url}
-          </ContextMenuItem>
-
-          <DropdownMenuSeparator />
-
-          <ContextMenuItem icon={MessageSquareText} onSelect={() => setSnippetsOpen(true)}>
-            {c.promptSnippets}
-          </ContextMenuItem>
-
-          <DropdownMenuSeparator />
-
-          <div className="px-2 py-1 text-[0.7rem] text-muted-foreground/80">
-            {c.tipPre}
-            <Kbd size="sm">@</Kbd>
-            {c.tipPost}
-          </div>
+          {!restricted && (
+            <>
+              <ContextMenuItem icon={Link} onSelect={onOpenUrlDialog}>
+                {c.url}
+              </ContextMenuItem>
+              <DropdownMenuSeparator />
+              <ContextMenuItem icon={MessageSquareText} onSelect={() => setSnippetsOpen(true)}>
+                {c.promptSnippets}
+              </ContextMenuItem>
+              <DropdownMenuSeparator />
+              <div className="px-2 py-1 text-[0.7rem] text-muted-foreground/80">
+                {c.tipPre}
+                <Kbd size="sm">@</Kbd>
+                {c.tipPost}
+              </div>
+            </>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <PromptSnippetsDialog onInsertText={onInsertText} onOpenChange={setSnippetsOpen} open={snippetsOpen} />
+      {!restricted && (
+        <PromptSnippetsDialog onInsertText={onInsertText} onOpenChange={setSnippetsOpen} open={snippetsOpen} />
+      )}
     </>
   )
 }
@@ -175,6 +180,7 @@ interface ContextMenuProps {
   onPickFiles?: () => void
   onPickFolders?: () => void
   onPickImages?: () => void
+  restricted?: boolean
   state: ChatBarState
 }
 

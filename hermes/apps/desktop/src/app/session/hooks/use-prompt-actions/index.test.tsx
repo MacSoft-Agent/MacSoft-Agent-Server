@@ -61,7 +61,8 @@ function Harness({
   seedMessages,
   storedSessionId,
   activeSessionId,
-  createBackendSessionForSend
+  createBackendSessionForSend,
+  eagerFileUploads
 }: {
   busyRef?: MutableRefObject<boolean>
   onReady: (handle: HarnessHandle) => void
@@ -74,6 +75,7 @@ function Harness({
   storedSessionId?: null | string
   activeSessionId?: null | string
   createBackendSessionForSend?: () => Promise<null | string>
+  eagerFileUploads?: boolean
 }) {
   const activeSessionIdRef: MutableRefObject<string | null> = {
     current: activeSessionId === undefined ? RUNTIME_SESSION_ID : activeSessionId
@@ -98,6 +100,7 @@ function Harness({
     branchCurrentSession: async () => true,
     busyRef: localBusyRef,
     createBackendSessionForSend: createBackendSessionForSend ?? (async () => RUNTIME_SESSION_ID),
+    eagerFileUploads,
     handleSkinCommand: () => '',
     openMemoryGraph: openMemoryGraph ?? (() => undefined),
     refreshSessions,
@@ -1390,6 +1393,26 @@ describe('usePromptActions eager attachment upload (drop-time)', () => {
     await waitFor(() => expect($composerAttachments.get()[0]?.uploadState).toBe('error'))
     expect($composerAttachments.get()[0]?.attachedSessionId).toBeUndefined()
     expect($composerAttachments.get()[0]?.path).toBe('/abs/x.pdf')
+  })
+
+  it('does not stage Admin Chat attachments through the ordinary Gateway upload path', async () => {
+    $connection.set({ mode: 'remote' } as never)
+    const requestGateway = vi.fn(async () => ({} as never))
+
+    $composerAttachments.set([{ id: 'file:admin-pdf', kind: 'file', label: 'bill.pdf', path: '/abs/bill.pdf' }])
+
+    render(
+      <Harness
+        eagerFileUploads={false}
+        onReady={() => undefined}
+        refreshSessions={async () => undefined}
+        requestGateway={requestGateway}
+      />
+    )
+
+    await Promise.resolve()
+    expect(requestGateway).not.toHaveBeenCalled()
+    expect($composerAttachments.get()[0]?.uploadState).toBeUndefined()
   })
 
   it('does not eagerly re-upload a chip already attached to this session', async () => {

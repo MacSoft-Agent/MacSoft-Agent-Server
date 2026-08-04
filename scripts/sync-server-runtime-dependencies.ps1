@@ -40,7 +40,7 @@ Write-Host "Synchronizing Hermes and MacSoft Server from the unified product uv 
 $previousEnvironment = $env:UV_PROJECT_ENVIRONMENT
 try {
     $env:UV_PROJECT_ENVIRONMENT = [IO.Path]::GetFullPath((Split-Path -Parent (Split-Path -Parent $Python)))
-    $syncArguments = @('sync', '--project', $HermesProject, '--extra', 'all', '--locked')
+    $syncArguments = @('sync', '--project', $HermesProject, '--extra', 'all', '--extra', 'voice', '--locked')
     if ($IncludeDev) {
         $syncArguments += @('--extra', 'dev')
     }
@@ -52,7 +52,7 @@ try {
     $env:UV_PROJECT_ENVIRONMENT = $previousEnvironment
 }
 
-& $Python -c "import fastapi, multipart, openpyxl, pypdf, uvicorn, yaml"
+& $Python -c "import fastapi, faster_whisper, multipart, openpyxl, pypdf, uvicorn, yaml"
 if ($LASTEXITCODE -ne 0) {
     throw "MacSoft Server runtime dependency verification failed."
 }

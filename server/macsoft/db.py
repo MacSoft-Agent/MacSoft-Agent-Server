@@ -301,8 +301,24 @@ def init_db(config: AppConfig) -> None:
                 created_at TEXT NOT NULL,
                 FOREIGN KEY(session_id) REFERENCES admin_sessions(session_id)
             );
+
+            CREATE TABLE IF NOT EXISTS admin_uploaded_files (
+                file_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                message_id TEXT,
+                original_name TEXT NOT NULL,
+                stored_name TEXT NOT NULL UNIQUE,
+                media_type TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                sha256 TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(session_id) REFERENCES admin_sessions(session_id)
+            );
             """
         )
+        admin_file_columns = {row["name"] for row in conn.execute("PRAGMA table_info(admin_uploaded_files)")}
+        if "message_id" not in admin_file_columns:
+            conn.execute("ALTER TABLE admin_uploaded_files ADD COLUMN message_id TEXT")
 
         session_columns = _table_columns(conn, "sessions")
         if "deleted_at" not in session_columns:
@@ -324,6 +340,12 @@ def init_db(config: AppConfig) -> None:
 
             CREATE INDEX IF NOT EXISTS idx_admin_messages_session
             ON admin_messages(session_id, created_at ASC);
+
+            CREATE INDEX IF NOT EXISTS idx_admin_uploaded_files_session
+            ON admin_uploaded_files(session_id, created_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_admin_uploaded_files_message
+            ON admin_uploaded_files(message_id, created_at ASC);
             """
         )
 

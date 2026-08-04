@@ -301,6 +301,10 @@ export interface Translations {
       intro: string
       colorMode: string
       colorModeDesc: string
+      fontSizeTitle: string
+      fontSizeDesc: string
+      fontSizeOptions: Record<string, string>
+      fontSizeApply: string
       toolViewTitle: string
       toolViewDesc: string
       uiScaleTitle: string
@@ -366,6 +370,93 @@ export interface Translations {
         turnOnFailed: string
         turnOffFailed: string
       }
+    }
+    serverAutoCount: {
+      title: string
+      intro: string
+      serviceControl: string
+      aiService: string
+      macsoftServer: string
+      serviceStatuses: Record<string, string>
+      start: string
+      stop: string
+      restart: string
+      refreshStatus: string
+      autoStartWithWindows: string
+      administratorDetails: string
+      administratorDetail: string
+      hostVersion: string
+      aiServicePid: string
+      serverPid: string
+      controlBoundary: string
+      localHostOnly: string
+      unavailable: string
+      notRunning: string
+      noTestRun: string
+      next: string
+      desktopBridgeUnavailable: string
+      settingsLoadFailed: string
+      hostBridgeUnavailable: string
+      hostUnavailable: string
+      serviceActionFailed: string
+      autoStartUpdateFailed: string
+      networkRefreshFailed: string
+      refreshFailed: string
+      clientUrlCopied: string
+      copyManually: string
+      copyFailed: string
+      pairingCodeFailed: string
+      reviewFields: string
+      connectionTestFailed: string
+      autoCountTestFailed: string
+      savedRestartRequired: (services: string) => string
+      savedNoRestart: string
+      settingsSaved: string
+      settingsSaveFailed: string
+      saveFailed: string
+      loading: string
+      loadPageFailed: string
+      retry: string
+      serverPort: string
+      serverPortDesc: string
+      networkInterface: string
+      networkInterfaceDesc: string
+      networkInterfaceAria: string
+      networkKinds: Record<string, string>
+      recommended: string
+      thisComputerOnly: string
+      clientUrl: string
+      clientUrlDesc: string
+      clientUrlLocalDesc: string
+      copyClientUrl: string
+      pairingCode: string
+      getCode: string
+      serverNotRunning: string
+      pairingCodeDesc: string
+      refreshIp: string
+      testServer: string
+      advancedAiService: string
+      serviceUrl: string
+      serviceUrlDesc: string
+      servicePort: string
+      servicePortDesc: string
+      testAiService: string
+      autoCountConnection: string
+      cloudUrl: string
+      cloudUrlDesc: string
+      apiKey: string
+      existingKeyPlaceholder: string
+      enterApiKeyPlaceholder: string
+      hideApiKey: string
+      revealApiKey: string
+      apiKeyDesc: string
+      connectorId: string
+      connectorIdDesc: string
+      companyId: string
+      companyIdDesc: string
+      testAutoCount: string
+      saveDesc: string
+      saveAndApply: string
     }
     fieldLabels: Record<string, string>
     fieldDescriptions: Record<string, string>

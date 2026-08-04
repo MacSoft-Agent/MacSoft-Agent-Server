@@ -86,3 +86,7 @@ export function isSupportedLocaleValue(value: unknown): boolean {
 export function localeConfigValue(locale: Locale): string {
   return LOCALE_OPTIONS.find(item => item.id === locale)?.configValue ?? DEFAULT_LOCALE
 }
+
+export function localeSttLanguage(locale: Locale): 'en' | 'zh' | 'ja' {
+  return locale === 'zh-hant' ? 'zh' : locale
+}

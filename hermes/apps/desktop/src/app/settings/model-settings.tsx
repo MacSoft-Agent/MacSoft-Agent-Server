@@ -20,14 +20,18 @@ import type {
   AuxiliaryModelsResponse,
   MoaConfigResponse,
   MoaModelSlot,
+  ModelInfoResponse,
   ModelOptionProvider,
+  ModelOptionsResponse,
   StaleAuxAssignment
 } from '@/hermes'
 import { useI18n } from '@/i18n'
 import { AlertTriangle, Cpu, Loader2 } from '@/lib/icons'
+import { queryClient } from '@/lib/query-client'
 import { cn } from '@/lib/utils'
 import { notifyError } from '@/store/notifications'
 import { startManualLocalEndpoint, startManualProviderOAuth } from '@/store/onboarding'
+import { $activeGatewayProfile, normalizeProfileKey } from '@/store/profile'
 
 import { invalidateHermesConfig, setHermesConfigCache, useHermesConfigRecord } from '../hooks/use-config-record'
 import { useOnProfileSwitch } from '../hooks/use-on-profile-switch'
@@ -35,6 +39,46 @@ import { useOnProfileSwitch } from '../hooks/use-on-profile-switch'
 import { CONTROL_TEXT } from './constants'
 import { getNested, setNested } from './helpers'
 import { ListRow, Pill, SectionHeading } from './primitives'
+
+interface ModelSettingsSnapshot {
+  auxiliaryModels: AuxiliaryModelsResponse | null
+  moaModels: MoaConfigResponse | null
+  modelInfo: ModelInfoResponse
+  modelOptions: ModelOptionsResponse
+}
+
+function modelSettingsProfileKey(): string {
+  return normalizeProfileKey($activeGatewayProfile.get())
+}
+
+function modelSettingsQueryKey(profileKey: string) {
+  return ['model-settings', profileKey] as const
+}
+
+function cachedModelSettings(profileKey: string): ModelSettingsSnapshot | undefined {
+  return queryClient.getQueryData<ModelSettingsSnapshot>(modelSettingsQueryKey(profileKey))
+}
+
+function loadModelSettings(profileKey: string): Promise<ModelSettingsSnapshot> {
+  return queryClient.fetchQuery({
+    queryKey: modelSettingsQueryKey(profileKey),
+    staleTime: 0,
+    queryFn: async () => {
+      // Info + options are the only data required to draw the main controls.
+      // Auxiliary and MoA are optional sections: their failure must not keep
+      // the whole Model page in its loading skeleton.
+      const [modelInfo, modelOptions] = await Promise.all([getGlobalModelInfo(), getGlobalModelOptions()])
+      const previous = cachedModelSettings(profileKey)
+
+      return {
+        auxiliaryModels: previous?.auxiliaryModels ?? null,
+        moaModels: previous?.moaModels ?? null,
+        modelInfo,
+        modelOptions
+      }
+    }
+  })
+}
 
 // Skeleton mirror of the Model settings DOM so the page keeps its shape while
 // the provider/model catalog loads, instead of collapsing to a centered
@@ -172,15 +216,18 @@ interface ModelSettingsProps {
 export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
   const { t } = useI18n()
   const m = t.settings.model
-  const [loading, setLoading] = useState(true)
+  const initialSnapshot = cachedModelSettings(modelSettingsProfileKey())
+  const [loading, setLoading] = useState(!initialSnapshot)
   const [error, setError] = useState('')
-  const [mainModel, setMainModel] = useState<{ model: string; provider: string } | null>(null)
-  const [providers, setProviders] = useState<ModelOptionProvider[]>([])
-  const [selectedProvider, setSelectedProvider] = useState('')
-  const [selectedModel, setSelectedModel] = useState('')
-  const [auxiliary, setAuxiliary] = useState<AuxiliaryModelsResponse | null>(null)
-  const [moa, setMoa] = useState<MoaConfigResponse | null>(null)
-  const [selectedMoaPreset, setSelectedMoaPreset] = useState('')
+  const [mainModel, setMainModel] = useState<{ model: string; provider: string } | null>(
+    initialSnapshot ? { model: initialSnapshot.modelInfo.model, provider: initialSnapshot.modelInfo.provider } : null
+  )
+  const [providers, setProviders] = useState<ModelOptionProvider[]>(initialSnapshot?.modelOptions.providers || [])
+  const [selectedProvider, setSelectedProvider] = useState(initialSnapshot?.modelInfo.provider || '')
+  const [selectedModel, setSelectedModel] = useState(initialSnapshot?.modelInfo.model || '')
+  const [auxiliary, setAuxiliary] = useState<AuxiliaryModelsResponse | null>(initialSnapshot?.auxiliaryModels ?? null)
+  const [moa, setMoa] = useState<MoaConfigResponse | null>(initialSnapshot?.moaModels ?? null)
+  const [selectedMoaPreset, setSelectedMoaPreset] = useState(initialSnapshot?.moaModels?.default_preset || '')
   const [newMoaPresetName, setNewMoaPresetName] = useState('')
   // agent.* defaults round-trip through the shared config cache (read → write
   // back the whole record), so a save here shows in the MCP/config surfaces.
@@ -204,16 +251,16 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
 
   const refresh = useCallback(async () => {
     const epoch = profileEpoch.current
-    setLoading(true)
+    const profileKey = modelSettingsProfileKey()
+
+    if (!cachedModelSettings(profileKey)) {
+      setLoading(true)
+    }
+
     setError('')
 
     try {
-      const [modelInfo, modelOptions, auxiliaryModels, moaModels] = await Promise.all([
-        getGlobalModelInfo(),
-        getGlobalModelOptions(),
-        getAuxiliaryModels(),
-        getMoaModels().catch(() => null)
-      ])
+      const { modelInfo, modelOptions, auxiliaryModels, moaModels } = await loadModelSettings(profileKey)
 
       if (profileEpoch.current !== epoch) {
         return
@@ -226,13 +273,39 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
       setAuxiliary(auxiliaryModels)
       setMoa(moaModels)
 
-      if (moaModels) {
-        setSelectedMoaPreset(prev => (prev && moaModels.presets[prev] ? prev : moaModels.default_preset))
-      }
-
       // The config record loads via its own shared query; a model switch can
       // change it server-side (aux slots), so nudge that cache to refetch.
       void invalidateHermesConfig()
+
+      // Optional sections load independently after the main controls are
+      // already visible. Each has its own fallback so neither can block the
+      // other or return the full page to a skeleton.
+      void Promise.all([getAuxiliaryModels().catch(() => null), getMoaModels().catch(() => null)]).then(
+        ([nextAuxiliary, nextMoa]) => {
+          if (profileEpoch.current !== epoch) {
+            return
+          }
+
+          const current = cachedModelSettings(profileKey)
+
+          if (current) {
+            queryClient.setQueryData<ModelSettingsSnapshot>(modelSettingsQueryKey(profileKey), {
+              ...current,
+              auxiliaryModels: nextAuxiliary ?? current.auxiliaryModels,
+              moaModels: nextMoa ?? current.moaModels
+            })
+          }
+
+          if (nextAuxiliary) {
+            setAuxiliary(nextAuxiliary)
+          }
+
+          if (nextMoa) {
+            setMoa(nextMoa)
+            setSelectedMoaPreset(prev => (prev && nextMoa.presets[prev] ? prev : nextMoa.default_preset))
+          }
+        }
+      )
     } catch (err) {
       if (profileEpoch.current === epoch) {
         setError(err instanceof Error ? err.message : String(err))
@@ -246,12 +319,25 @@ export function ModelSettings({ onMainModelChanged }: ModelSettingsProps) {
 
   useEffect(() => {
     void refresh()
+
+    return () => {
+      profileEpoch.current += 1
+    }
   }, [refresh])
 
   // A profile switch swaps the backend under the mounted panel — reload for the
   // new profile (bumping the epoch first so any in-flight A request is discarded).
   useOnProfileSwitch(() => {
     profileEpoch.current += 1
+    const snapshot = cachedModelSettings(modelSettingsProfileKey())
+
+    setMainModel(snapshot ? { model: snapshot.modelInfo.model, provider: snapshot.modelInfo.provider } : null)
+    setProviders(snapshot?.modelOptions.providers || [])
+    setSelectedProvider(snapshot?.modelInfo.provider || '')
+    setSelectedModel(snapshot?.modelInfo.model || '')
+    setAuxiliary(snapshot?.auxiliaryModels ?? null)
+    setMoa(snapshot?.moaModels ?? null)
+    setSelectedMoaPreset(snapshot?.moaModels?.default_preset || '')
     void refresh()
   })
 

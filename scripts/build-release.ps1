@@ -63,7 +63,7 @@ if ($LASTEXITCODE -ne 0) {
 $previousEnvironment = $env:UV_PROJECT_ENVIRONMENT
 try {
     $env:UV_PROJECT_ENVIRONMENT = $HermesVenv
-    & $UvCommand.Source sync --project (Join-Path $ProjectRoot 'hermes') --extra all --locked
+    & $UvCommand.Source sync --project (Join-Path $ProjectRoot 'hermes') --extra all --extra voice --locked
     if ($LASTEXITCODE -ne 0) {
         throw 'uv could not synchronize the unified product lock.'
     }

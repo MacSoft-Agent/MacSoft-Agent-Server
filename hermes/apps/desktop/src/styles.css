@@ -322,7 +322,9 @@
     --dt-font-mono:
       'JetBrains Mono', 'Cascadia Code', 'SF Mono', ui-monospace, Menlo, Consolas, monospace, 'Apple Color Emoji',
       'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji', emoji;
-    --dt-base-size: 1rem;
+    --macsoft-font-scale: 1.25;
+    --macsoft-font-scale-percent: 125%;
+    --dt-base-size: calc(1rem * var(--macsoft-font-scale));
     --dt-line-height: 1.5;
     --dt-letter-spacing: 0;
     --dt-spacing-mul: 1;

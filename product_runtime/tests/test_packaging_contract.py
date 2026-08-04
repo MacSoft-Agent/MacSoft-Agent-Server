@@ -68,6 +68,20 @@ class PackagingContractTests(unittest.TestCase):
             {name: product_versions[name] for name in overlap},
         )
 
+    def test_product_runtime_installs_locked_hermes_voice_extra(self) -> None:
+        pyproject = tomllib.loads((ROOT / "hermes" / "pyproject.toml").read_text(encoding="utf-8"))
+        product_lock = tomllib.loads((ROOT / "hermes" / "uv.lock").read_text(encoding="utf-8"))
+        voice_dependencies = pyproject["project"]["optional-dependencies"]["voice"]
+        locked_names = {item["name"] for item in product_lock["package"]}
+        sync_script = (ROOT / "scripts" / "sync-server-runtime-dependencies.ps1").read_text(encoding="utf-8-sig")
+        release_script = (ROOT / "scripts" / "build-release.ps1").read_text(encoding="utf-8-sig")
+
+        self.assertTrue(any(dependency.startswith("faster-whisper==") for dependency in voice_dependencies))
+        self.assertIn("faster-whisper", locked_names)
+        self.assertIn("'--extra', 'voice'", sync_script)
+        self.assertIn("import fastapi, faster_whisper", sync_script)
+        self.assertIn("--extra all --extra voice --locked", release_script)
+
     def test_source_test_runtime_owns_the_complete_host_and_desktop_lifecycle(self) -> None:
         start = (ROOT / "scripts" / "start-test-runtime.ps1").read_text(encoding="utf-8-sig")
         stop = (ROOT / "scripts" / "stop-test-runtime.ps1").read_text(encoding="utf-8-sig")
@@ -151,7 +165,7 @@ class PackagingContractTests(unittest.TestCase):
         self.assertIn("MacSoft-Agent-Packaging", release)
         self.assertIn("status --porcelain", release)
         self.assertIn("$ExpectedCommit", release)
-        self.assertIn("--extra all --locked", release)
+        self.assertIn("--extra all --extra voice --locked", release)
         self.assertIn("ci", release)
         self.assertIn("run pack --workspace apps/desktop", release)
         self.assertIn("build-staging.ps1", release)

@@ -78,6 +78,37 @@ class TestGetProvider:
         from tools.transcription_tools import _get_provider
         assert _get_provider({"enabled": False, "provider": "openai"}) == "none"
 
+    def test_auto_prefers_stt_capable_current_provider(self):
+        with patch("tools.transcription_tools._current_model_stt_provider", return_value="openai"), \
+             patch("tools.transcription_tools._cloud_provider_available", side_effect=lambda name: name == "openai"), \
+             patch("tools.transcription_tools._HAS_FASTER_WHISPER", True):
+            from tools.transcription_tools import _get_provider
+            assert _get_provider({"provider": "auto"}) == "openai"
+
+    def test_auto_skips_unsupported_current_model_and_uses_configured_cloud(self):
+        with patch("tools.transcription_tools._current_model_stt_provider", return_value=None), \
+             patch("tools.transcription_tools._cloud_provider_available", side_effect=lambda name: name == "groq"), \
+             patch("tools.transcription_tools._HAS_FASTER_WHISPER", True):
+            from tools.transcription_tools import _get_provider
+            assert _get_provider({"provider": "auto"}) == "groq"
+
+    def test_auto_falls_back_to_local_when_no_cloud_stt_is_available(self):
+        with patch("tools.transcription_tools._current_model_stt_provider", return_value=None), \
+             patch("tools.transcription_tools._cloud_provider_available", return_value=False), \
+             patch("tools.transcription_tools._HAS_FASTER_WHISPER", True):
+            from tools.transcription_tools import _get_provider
+            assert _get_provider({"provider": "auto"}) == "local"
+
+    def test_auto_can_disable_local_fallback(self):
+        with patch("tools.transcription_tools._current_model_stt_provider", return_value=None), \
+             patch("tools.transcription_tools._cloud_provider_available", return_value=False), \
+             patch("tools.transcription_tools._HAS_FASTER_WHISPER", True):
+            from tools.transcription_tools import _get_provider
+            assert _get_provider({
+                "provider": "auto",
+                "routing": {"local_fallback": False},
+            }) == "none"
+
 
 # ---------------------------------------------------------------------------
 # File validation
@@ -210,6 +241,19 @@ class TestTranscribeAudio:
 
         assert result["success"] is True
         mock_local.assert_called_once()
+
+    def test_request_language_overrides_local_auto_detection(self, tmp_path):
+        audio_file = tmp_path / "test.ogg"
+        audio_file.write_bytes(b"fake audio")
+
+        with patch("tools.transcription_tools._load_stt_config", return_value={"provider": "local"}), \
+             patch("tools.transcription_tools._get_provider", return_value="local"), \
+             patch("tools.transcription_tools._transcribe_local", return_value={"success": True, "transcript": "你好"}) as mock_local:
+            from tools.transcription_tools import transcribe_audio
+            result = transcribe_audio(str(audio_file), language="zh")
+
+        assert result["success"] is True
+        mock_local.assert_called_once_with(str(audio_file), "base", "zh")
 
     def test_dispatches_to_openai(self, tmp_path):
         audio_file = tmp_path / "test.ogg"

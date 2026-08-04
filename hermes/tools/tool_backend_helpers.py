@@ -139,10 +139,15 @@ def resolve_modal_backend_state(
 
 
 def resolve_openai_audio_api_key() -> str:
-    """Prefer the voice-tools key, but fall back to the normal OpenAI key."""
+    """Prefer the voice-tools key, including values loaded from Hermes .env."""
+    try:
+        from hermes_cli.config import get_env_value
+    except ImportError:
+        get_env_value = os.getenv
+
     return (
-        os.getenv("VOICE_TOOLS_OPENAI_KEY", "")
-        or os.getenv("OPENAI_API_KEY", "")
+        (get_env_value("VOICE_TOOLS_OPENAI_KEY") or "")
+        or (get_env_value("OPENAI_API_KEY") or "")
     ).strip()
 
 

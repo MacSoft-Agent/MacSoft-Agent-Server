@@ -7403,6 +7403,7 @@ const macSoftAdminStreams = new Map<
 >()
 const MACSOFT_ADMIN_SESSION_ID_RE = /^admin_sess_[a-z0-9]+$/
 const MACSOFT_ADMIN_MAX_MESSAGE_BYTES = 32_000
+const MACSOFT_ADMIN_MAX_UPLOAD_DATA_URL_BYTES = 28 * 1024 * 1024
 const MACSOFT_ADMIN_STREAM_EVENTS = new Set(['message_start', 'activity', 'token_delta', 'error', 'message_done'])
 
 function validateMacSoftAdminSessionId(value: unknown): string {
@@ -7417,6 +7418,17 @@ function validateMacSoftAdminMessage(value: unknown): string {
     throw new Error('Admin message is invalid.')
   }
   return value
+}
+
+function validateMacSoftAdminUpload(value: unknown): { dataUrl: string; filename: string; sessionId: string } {
+  const input = value as { dataUrl?: unknown; filename?: unknown; sessionId?: unknown }
+  const sessionId = validateMacSoftAdminSessionId(input?.sessionId)
+  if (
+    typeof input?.filename !== 'string' || !input.filename.trim() || input.filename.length > 255 ||
+    typeof input?.dataUrl !== 'string' || !input.dataUrl.startsWith('data:') ||
+    Buffer.byteLength(input.dataUrl, 'utf8') > MACSOFT_ADMIN_MAX_UPLOAD_DATA_URL_BYTES
+  ) throw new Error('Admin attachment is invalid.')
+  return { dataUrl: input.dataUrl, filename: input.filename, sessionId }
 }
 
 function sendMacSoftAdminStreamEvent(
@@ -7501,11 +7513,24 @@ ipcMain.handle('hermes:macsoft-admin:get-messages', (_event, sessionId) =>
 ipcMain.handle('hermes:macsoft-admin:delete-session', (_event, sessionId) =>
   getMacSoftDesktopAdminChatClient().deleteAdminSession(validateMacSoftAdminSessionId(sessionId))
 )
+ipcMain.handle('hermes:macsoft-admin:upload-file', (_event, request) => {
+  const input = validateMacSoftAdminUpload(request)
+  return getMacSoftDesktopAdminChatClient().uploadAdminFile(input.sessionId, input)
+})
+ipcMain.handle('hermes:macsoft-admin:read-file-data-url', (_event, request) =>
+  getMacSoftDesktopAdminChatClient().readAdminFileDataUrl(
+    validateMacSoftAdminSessionId(request?.sessionId),
+    typeof request?.fileId === 'string' && /^admin_file_[a-z0-9]+$/.test(request.fileId) ? request.fileId : (() => { throw new Error('Invalid Admin file.') })()
+  )
+)
 ipcMain.handle('hermes:macsoft-admin:start-stream', async (event, request) => {
   const payload = event.sender
   if (macSoftAdminStreams.size > 0) throw new Error('Admin chat is already processing a request.')
   const sessionId = validateMacSoftAdminSessionId(request?.sessionId)
   const message = validateMacSoftAdminMessage(request?.message)
+  const uploadedFileIds = Array.isArray(request?.uploadedFileIds) && request.uploadedFileIds.every((fileId: unknown) =>
+    typeof fileId === 'string' && /^admin_file_[a-z0-9]+$/.test(fileId)
+  ) ? request.uploadedFileIds : []
   const controller = new AbortController()
   const streamId = crypto.randomUUID()
   const webContents = payload
@@ -7521,7 +7546,7 @@ ipcMain.handle('hermes:macsoft-admin:start-stream', async (event, request) => {
   macSoftAdminStreams.set(streamId, { controller, onDestroyed, sessionId, webContents })
   webContents.once('destroyed', onDestroyed)
   try {
-    const response = await getMacSoftDesktopAdminChatClient().startAdminChatStream(sessionId, message, controller.signal)
+    const response = await getMacSoftDesktopAdminChatClient().startAdminChatStream(sessionId, message, uploadedFileIds, controller.signal)
     void pumpMacSoftAdminStream(streamId, response, webContents, controller)
     return { streamId }
   } catch (error) {

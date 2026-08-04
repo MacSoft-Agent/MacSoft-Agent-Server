@@ -3,7 +3,7 @@ import { useStore } from '@nanostores/react'
 import { type MutableRefObject, useCallback, useEffect, useRef } from 'react'
 
 import { PROMPT_SUBMIT_REQUEST_TIMEOUT_MS, transcribeAudio } from '@/hermes'
-import { useI18n } from '@/i18n'
+import { localeSttLanguage, useI18n } from '@/i18n'
 import { stripAnsi } from '@/lib/ansi'
 import { branchGroupForUser, type ChatMessage, chatMessageText, textPart } from '@/lib/chat-messages'
 import { pathLabel, SLASH_COMMAND_RE } from '@/lib/chat-runtime'
@@ -158,6 +158,9 @@ interface PromptActionsOptions {
   busyRef: MutableRefObject<boolean>
   branchCurrentSession: () => Promise<boolean>
   createBackendSessionForSend: (preview?: string | null) => Promise<string | null>
+  /** Admin Chat owns attachments through its authenticated Server API, rather
+   * than Hermes Gateway's file.attach staging path. */
+  eagerFileUploads?: boolean
   handleSkinCommand: (arg: string) => string
   openMemoryGraph: () => void
   refreshSessions: () => Promise<void>
@@ -186,6 +189,7 @@ export function usePromptActions({
   busyRef,
   branchCurrentSession,
   createBackendSessionForSend,
+  eagerFileUploads = true,
   handleSkinCommand,
   openMemoryGraph,
   refreshSessions,
@@ -196,7 +200,7 @@ export function usePromptActions({
   sttEnabled,
   updateSessionState
 }: PromptActionsOptions) {
-  const { t } = useI18n()
+  const { locale, t } = useI18n()
   const copy = t.desktop
 
   const appendSessionTextMessage = useCallback(
@@ -324,7 +328,7 @@ export function usePromptActions({
   const composerAttachments = useStore($composerAttachments)
 
   useEffect(() => {
-    if (!activeSessionId) {
+    if (!activeSessionId || !eagerFileUploads) {
       return
     }
 
@@ -346,7 +350,7 @@ export function usePromptActions({
 
       eagerUploadInFlight.current.set(attachment.id, task)
     }
-  }, [activeSessionId, composerAttachments, eagerlyUploadAttachment])
+  }, [activeSessionId, composerAttachments, eagerFileUploads, eagerlyUploadAttachment])
 
   const submitPromptText = useSubmitPrompt({
     activeSessionId,
@@ -482,11 +486,11 @@ export function usePromptActions({
       }
 
       const dataUrl = await blobToDataUrl(audio)
-      const result = await transcribeAudio(dataUrl, audio.type)
+      const result = await transcribeAudio(dataUrl, audio.type, localeSttLanguage(locale))
 
       return result.transcript
     },
-    [copy.sttDisabled, sttEnabled]
+    [copy.sttDisabled, locale, sttEnabled]
   )
 
   const cancelRun = useCallback(async () => {

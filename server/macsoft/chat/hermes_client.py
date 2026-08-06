@@ -237,12 +237,23 @@ def stream_hermes_reply_events(
         )
 
 
-def _run_headers(api_key: str, *, accept: str = "application/json") -> dict[str, str]:
-    return {
+def _run_headers(
+    api_key: str,
+    *,
+    profile_id: str | None = None,
+    accept: str = "application/json",
+) -> dict[str, str]:
+    headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
         "Accept": accept,
     }
+    if profile_id:
+        # This is an internal Server-to-Hermes routing value. It is derived
+        # exclusively from the authenticated device profile, never a Client
+        # parameter or a filesystem path.
+        headers["X-MacSoft-Profile-Id"] = profile_id
+    return headers
 
 
 def _read_json_response(response: Any) -> dict[str, Any]:
@@ -261,12 +272,42 @@ def _read_json_response(response: Any) -> dict[str, Any]:
     return payload
 
 
+def request_profile_operation(
+    *,
+    base_url: str,
+    api_key: str,
+    profile_id: str,
+    path: str,
+    method: str = "GET",
+    payload: dict[str, Any] | None = None,
+    timeout_seconds: int,
+) -> dict[str, Any]:
+    """Call a Server-only Hermes profile endpoint with trusted routing."""
+    if not path.startswith("/v1/macsoft/profile/"):
+        raise HermesApiError("Invalid internal profile operation path.", kind="invalid_request")
+    body = None
+    if method != "GET":
+        body = json.dumps(payload or {}, ensure_ascii=False).encode("utf-8")
+    request = Request(
+        url=f"{base_url.rstrip('/')}{path}",
+        data=body,
+        headers=_run_headers(api_key, profile_id=profile_id),
+        method=method,
+    )
+    try:
+        with urlopen(request, timeout=timeout_seconds) as response:
+            return _read_json_response(response)
+    except (HTTPError, URLError, TimeoutError) as error:
+        _raise_transport_error(error, base_url=base_url, timeout_seconds=timeout_seconds)
+
+
 def _start_hermes_run(
     *,
     base_url: str,
     api_key: str,
     messages: list[dict[str, Any]],
     session_id: str,
+    profile_id: str | None = None,
     timeout_seconds: int,
 ) -> str:
     normalized = _normalized_messages(messages)
@@ -294,7 +335,7 @@ def _start_hermes_run(
     request = Request(
         url=f"{base_url.rstrip('/')}/v1/runs",
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        headers=_run_headers(api_key),
+        headers=_run_headers(api_key, profile_id=profile_id),
         method="POST",
     )
     try:
@@ -309,12 +350,12 @@ def _start_hermes_run(
 
 
 def interrupt_hermes_run(
-    *, base_url: str, api_key: str, run_id: str, timeout_seconds: int
+    *, base_url: str, api_key: str, profile_id: str | None = None, run_id: str, timeout_seconds: int
 ) -> bool:
     request = Request(
         url=f"{base_url.rstrip('/')}/v1/runs/{run_id}/stop",
         data=b"{}",
-        headers=_run_headers(api_key),
+        headers=_run_headers(api_key, profile_id=profile_id),
         method="POST",
     )
     try:
@@ -335,6 +376,7 @@ def stream_interruptible_hermes_reply_events(
     api_key: str,
     messages: list[dict[str, Any]],
     session_id: str,
+    profile_id: str | None = None,
     timeout_seconds: int,
     on_run_started: Callable[[str], bool],
 ) -> Iterator[dict[str, str]]:
@@ -344,19 +386,21 @@ def stream_interruptible_hermes_reply_events(
         api_key=api_key,
         messages=messages,
         session_id=session_id,
+        profile_id=profile_id,
         timeout_seconds=timeout_seconds,
     )
     if on_run_started(run_id):
         interrupt_hermes_run(
             base_url=base_url,
             api_key=api_key,
+            profile_id=profile_id,
             run_id=run_id,
             timeout_seconds=timeout_seconds,
         )
 
     request = Request(
         url=f"{base_url.rstrip('/')}/v1/runs/{run_id}/events",
-        headers=_run_headers(api_key, accept="text/event-stream"),
+        headers=_run_headers(api_key, profile_id=profile_id, accept="text/event-stream"),
         method="GET",
     )
     text_seen = False

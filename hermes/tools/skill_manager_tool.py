@@ -42,7 +42,7 @@ import contextvars as _ctxvars
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from hermes_constants import get_hermes_home, display_hermes_home
+from hermes_constants import get_hermes_home, get_writable_skills_dir, display_hermes_home
 from utils import atomic_replace, is_truthy_value
 from hermes_cli.config import cfg_get
 
@@ -165,7 +165,11 @@ def _skills_dir() -> Path:
     configured = Path(SKILLS_DIR)
     if configured != _SKILLS_DIR_AT_IMPORT:
         return configured
-    return get_hermes_home() / "skills"
+    # MacSoft device Profiles reserve the profile root for Hermes metadata and
+    # reserve ``skills/learned`` as the only agent-writable skill collection.
+    # Private Client Skills never enter this filesystem and are injected by the
+    # Server as read-only request instructions.
+    return get_writable_skills_dir()
 
 MAX_NAME_LENGTH = 64
 MAX_DESCRIPTION_LENGTH = 1024
@@ -599,6 +603,56 @@ def _find_skill(name: str) -> Optional[Dict[str, Any]]:
                 continue
             if skill_md.parent.name == name:
                 return {"path": skill_md.parent}
+    return None
+
+
+def _macsoft_progress_skill_guard(name: str) -> Optional[Dict[str, Any]]:
+    """Reject writes outside a MacSoft Profile's learned skill collection."""
+    macsoft_root = os.environ.get("MACSOFT_PROFILE_ROOT", "").strip()
+    if not macsoft_root:
+        return None
+    try:
+        home = get_hermes_home().resolve()
+        root = Path(macsoft_root).expanduser().resolve()
+        if home.parent != root or not home.name.startswith("prof_"):
+            return None
+    except OSError:
+        return {"success": False, "error": "MacSoft Profile skill root could not be resolved."}
+
+    existing = _find_skill(name)
+    if existing is None:
+        # A new learned Skill may not shadow any immutable shared/bundled Skill.
+        # Local discovery gives profile skills precedence, so allowing the same
+        # name here would effectively let a personal Profile replace a Core,
+        # Company, or Workflow Skill without modifying its file.
+        protected_roots: List[Path] = [Path(__file__).resolve().parents[1] / "skills"]
+        try:
+            from agent.skill_utils import get_external_skills_dirs
+
+            protected_roots.extend(get_external_skills_dirs())
+        except Exception:
+            pass
+        for protected_root in protected_roots:
+            try:
+                if any(path.parent.name == name for path in protected_root.rglob("SKILL.md")):
+                    return {
+                        "success": False,
+                        "error": (
+                            "MacSoft device Profiles cannot shadow Core, Company, "
+                            "Workflow, or other shared Skills."
+                        ),
+                    }
+            except OSError:
+                continue
+        return None
+    learned_root = _skills_dir().resolve()
+    try:
+        existing["path"].resolve().relative_to(learned_root)
+    except (ValueError, OSError):
+        return {
+            "success": False,
+            "error": "MacSoft device Profiles may modify only Progress Skills in skills/learned.",
+        }
     return None
 
 
@@ -1338,6 +1392,11 @@ def skill_manage(
     if preflight is not None:
         return json.dumps(preflight, ensure_ascii=False)
 
+    if action in {"create", "edit", "patch", "delete", "write_file", "remove_file"}:
+        progress_guard = _macsoft_progress_skill_guard(name)
+        if progress_guard is not None:
+            return json.dumps(progress_guard, ensure_ascii=False)
+
     # Approval gate: when on, stages the write for review (skills are too large
     # to review inline, so they always stage regardless of origin); when off
     # (default) passes straight through. The gate is bypassed when this call is
@@ -1351,41 +1410,50 @@ def skill_manage(
     if gate_result is not None:
         return gate_result
 
-    if action == "create":
-        if not content:
-            return tool_error("content is required for 'create'. Provide the full SKILL.md text (frontmatter + body).", success=False)
-        result = _create_skill(name, content, category)
+    if action in {"create", "edit"} and not content:
+        return tool_error(f"content is required for '{action}'. Provide the full SKILL.md text.", success=False)
+    if action == "patch" and not old_string:
+        return tool_error("old_string is required for 'patch'. Provide the text to find.", success=False)
+    if action == "patch" and new_string is None:
+        return tool_error("new_string is required for 'patch'. Use empty string to delete matched text.", success=False)
+    if action in {"write_file", "remove_file"} and not file_path:
+        return tool_error(f"file_path is required for '{action}'.", success=False)
+    if action == "write_file" and file_content is None:
+        return tool_error("file_content is required for 'write_file'.", success=False)
+    if action not in {"create", "edit", "patch", "delete", "write_file", "remove_file"}:
+        return json.dumps({"success": False, "error": f"Unknown action '{action}'. Use: create, edit, patch, delete, write_file, remove_file"}, ensure_ascii=False)
 
-    elif action == "edit":
-        if not content:
-            return tool_error("content is required for 'edit'. Provide the full updated SKILL.md text.", success=False)
-        result = _edit_skill(name, content)
+    mutation_state = None
+    try:
+        from agent.macsoft_profile_mutations import begin_mutation
 
-    elif action == "patch":
-        if not old_string:
-            return tool_error("old_string is required for 'patch'. Provide the text to find.", success=False)
-        if new_string is None:
-            return tool_error("new_string is required for 'patch'. Use empty string to delete matched text.", success=False)
-        result = _patch_skill(name, old_string, new_string, file_path, replace_all)
+        mutation_state = begin_mutation(source=f"skill_manage_{action}", skill_id=name)
+    except Exception as exc:
+        return json.dumps(
+            {"success": False, "error": f"MacSoft pre-mutation safety check failed: {exc}"},
+            ensure_ascii=False,
+        )
 
-    elif action == "delete":
-        result = _delete_skill(name, absorbed_into=absorbed_into)
+    try:
+        if action == "create":
+            result = _create_skill(name, content, category)
+        elif action == "edit":
+            result = _edit_skill(name, content)
+        elif action == "patch":
+            result = _patch_skill(name, old_string, new_string, file_path, replace_all)
+        elif action == "delete":
+            result = _delete_skill(name, absorbed_into=absorbed_into)
+        elif action == "write_file":
+            result = _write_file(name, file_path, file_content)
+        else:
+            result = _remove_file(name, file_path)
+    except Exception as exc:
+        try:
+            from agent.macsoft_profile_mutations import finish_mutation
 
-    elif action == "write_file":
-        if not file_path:
-            return tool_error("file_path is required for 'write_file'. Example: 'references/api-guide.md'", success=False)
-        if file_content is None:
-            return tool_error("file_content is required for 'write_file'.", success=False)
-        result = _write_file(name, file_path, file_content)
-
-    elif action == "remove_file":
-        if not file_path:
-            return tool_error("file_path is required for 'remove_file'.", success=False)
-        result = _remove_file(name, file_path)
-
-    else:
-        result = {"success": False, "error": f"Unknown action '{action}'. Use: create, edit, patch, delete, write_file, remove_file"}
-
+            finish_mutation(mutation_state, success=False, detail=type(exc).__name__)
+        finally:
+            raise
     if result.get("success"):
         try:
             from agent.prompt_builder import clear_skills_system_prompt_cache
@@ -1414,6 +1482,14 @@ def skill_manage(
                     forget(name)
         except Exception:
             pass
+
+    from agent.macsoft_profile_mutations import finish_mutation
+
+    finish_mutation(
+        mutation_state,
+        success=bool(result.get("success")),
+        detail=str(result.get("error") or result.get("message") or ""),
+    )
 
     return json.dumps(result, ensure_ascii=False)
 

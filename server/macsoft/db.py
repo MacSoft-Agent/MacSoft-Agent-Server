@@ -212,6 +212,17 @@ def init_db(config: AppConfig) -> None:
                 FOREIGN KEY(user_id) REFERENCES users(user_id)
             );
 
+            CREATE TABLE IF NOT EXISTS device_profiles (
+                profile_id TEXT PRIMARY KEY,
+                device_id TEXT NOT NULL UNIQUE,
+                status TEXT NOT NULL,
+                profile_schema_version INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                last_used_at TEXT,
+                FOREIGN KEY(device_id) REFERENCES devices(device_id)
+            );
+
             CREATE TABLE IF NOT EXISTS pairing_codes (
                 pairing_code TEXT PRIMARY KEY,
                 user_id TEXT NOT NULL,
@@ -266,6 +277,65 @@ def init_db(config: AppConfig) -> None:
                 created_at TEXT NOT NULL,
                 FOREIGN KEY(session_id) REFERENCES sessions(session_id),
                 FOREIGN KEY(user_id) REFERENCES users(user_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS agent_runs (
+                run_id TEXT PRIMARY KEY,
+                device_id TEXT NOT NULL,
+                profile_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                completion_status TEXT NOT NULL,
+                learning_status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                completed_at TEXT,
+                FOREIGN KEY(device_id) REFERENCES devices(device_id),
+                FOREIGN KEY(profile_id) REFERENCES device_profiles(profile_id),
+                FOREIGN KEY(session_id) REFERENCES sessions(session_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS learning_events (
+                event_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                profile_id TEXT NOT NULL,
+                skill_id TEXT,
+                event_type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                detail TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(run_id) REFERENCES agent_runs(run_id),
+                FOREIGN KEY(profile_id) REFERENCES device_profiles(profile_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS curator_proposals (
+                proposal_id TEXT PRIMARY KEY,
+                profile_id TEXT NOT NULL,
+                device_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                target_id TEXT,
+                payload_json TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                decided_at TEXT,
+                FOREIGN KEY(profile_id) REFERENCES device_profiles(profile_id),
+                FOREIGN KEY(device_id) REFERENCES devices(device_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS skill_change_audit (
+                audit_id TEXT PRIMARY KEY,
+                profile_id TEXT NOT NULL,
+                device_id TEXT NOT NULL,
+                skill_id TEXT,
+                run_id TEXT,
+                proposal_id TEXT,
+                change_source TEXT NOT NULL,
+                previous_hash TEXT,
+                new_hash TEXT,
+                created_at TEXT NOT NULL,
+                result TEXT NOT NULL,
+                detail TEXT,
+                FOREIGN KEY(profile_id) REFERENCES device_profiles(profile_id),
+                FOREIGN KEY(device_id) REFERENCES devices(device_id),
+                FOREIGN KEY(proposal_id) REFERENCES curator_proposals(proposal_id)
             );
 
 
@@ -324,6 +394,10 @@ def init_db(config: AppConfig) -> None:
         if "deleted_at" not in session_columns:
             conn.execute("ALTER TABLE sessions ADD COLUMN deleted_at TEXT")
 
+        learning_event_columns = _table_columns(conn, "learning_events")
+        if "skill_id" not in learning_event_columns:
+            conn.execute("ALTER TABLE learning_events ADD COLUMN skill_id TEXT")
+
         conn.executescript(
             """
             CREATE INDEX IF NOT EXISTS idx_sessions_user_active
@@ -331,6 +405,39 @@ def init_db(config: AppConfig) -> None:
 
             CREATE INDEX IF NOT EXISTS idx_messages_session_user
             ON messages(session_id, user_id, created_at ASC);
+
+            CREATE INDEX IF NOT EXISTS idx_device_profiles_active
+            ON device_profiles(device_id, status, updated_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_agent_runs_profile_created
+            ON agent_runs(profile_id, created_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_learning_events_profile_created
+            ON learning_events(profile_id, created_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_curator_proposals_profile_status
+            ON curator_proposals(profile_id, status, created_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_skill_change_audit_profile_created
+            ON skill_change_audit(profile_id, created_at DESC);
+
+            CREATE TRIGGER IF NOT EXISTS freeze_profile_after_device_update
+            AFTER UPDATE OF status, revoked_at ON devices
+            WHEN NEW.status != 'active' OR NEW.revoked_at IS NOT NULL
+            BEGIN
+                UPDATE device_profiles
+                SET status = 'frozen', updated_at = CURRENT_TIMESTAMP
+                WHERE device_id = NEW.device_id;
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS reactivate_profile_after_device_update
+            AFTER UPDATE OF status, revoked_at ON devices
+            WHEN NEW.status = 'active' AND NEW.revoked_at IS NULL
+            BEGIN
+                UPDATE device_profiles
+                SET status = 'active', updated_at = CURRENT_TIMESTAMP
+                WHERE device_id = NEW.device_id AND status = 'frozen';
+            END;
 
             CREATE INDEX IF NOT EXISTS idx_uploaded_files_owner
             ON uploaded_files(owner_user_id, owner_device_id, created_at DESC);

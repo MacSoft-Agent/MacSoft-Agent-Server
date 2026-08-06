@@ -21,8 +21,10 @@ from macsoft.chat.result_formatter import (
 )
 from macsoft.gateway.routes_chat import (
     MAX_CHAT_MESSAGE_CHARS,
+    ChatInterruptRequest,
     ChatStreamRequest,
     chat_stream,
+    interrupt_chat,
 )
 from macsoft.gateway.routes_sessions import delete_session
 from macsoft.sessions.message_store import save_message as store_message
@@ -31,6 +33,8 @@ from macsoft.sessions.message_store import save_message as store_message
 SCHEMA = """
 CREATE TABLE users (user_id TEXT PRIMARY KEY, display_name TEXT, role TEXT, status TEXT, created_at TEXT, updated_at TEXT);
 CREATE TABLE devices (device_id TEXT PRIMARY KEY, user_id TEXT, device_token TEXT UNIQUE, client_name TEXT, client_version TEXT, display_name TEXT, role TEXT, status TEXT, paired_at TEXT, last_seen_at TEXT, revoked_at TEXT);
+CREATE TABLE device_profiles (profile_id TEXT PRIMARY KEY, device_id TEXT NOT NULL UNIQUE, status TEXT NOT NULL, profile_schema_version INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_used_at TEXT);
+CREATE TABLE agent_runs (run_id TEXT PRIMARY KEY, device_id TEXT NOT NULL, profile_id TEXT NOT NULL, session_id TEXT NOT NULL, completion_status TEXT NOT NULL, learning_status TEXT NOT NULL, created_at TEXT NOT NULL, completed_at TEXT);
 CREATE TABLE sessions (session_id TEXT PRIMARY KEY, user_id TEXT, owner_device_id TEXT, title TEXT, source TEXT, status TEXT, archived INTEGER, last_message_preview TEXT, hermes_stored_session_id TEXT, created_at TEXT, updated_at TEXT, deleted_at TEXT);
 CREATE TABLE messages (message_id TEXT PRIMARY KEY, session_id TEXT, user_id TEXT, role TEXT, content TEXT, status TEXT, model TEXT, created_at TEXT);
 CREATE TABLE client_skills (skill_id TEXT PRIMARY KEY, owner_user_id TEXT NOT NULL, owner_device_id TEXT, slug TEXT NOT NULL, name TEXT NOT NULL, description TEXT NOT NULL, content TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(owner_device_id, slug));
@@ -215,6 +219,27 @@ class ChatBoundaryTests(unittest.TestCase):
         self.assertFalse(
             get_active_chat_registry(self.request.app).is_active("session_1")
         )
+
+    def test_authenticated_interrupt_stops_the_profile_bound_upstream_run(self) -> None:
+        registry = get_active_chat_registry(self.request.app)
+        self.assertTrue(registry.reserve("session_1"))
+        self.assertFalse(registry.bind_run("session_1", "run_123"))
+
+        with patch(
+            "macsoft.gateway.routes_chat.interrupt_hermes_run", return_value=True
+        ) as stop:
+            result = interrupt_chat(
+                self.request,
+                ChatInterruptRequest(session_id="session_1"),
+                authorization="Bearer device-token",
+                x_device_id="device_1",
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["upstream_run_bound"])
+        self.assertRegex(stop.call_args.kwargs["profile_id"], r"^prof_[a-f0-9]{32}$")
+        self.assertEqual(stop.call_args.kwargs["run_id"], "run_123")
+        registry.release("session_1")
 
     def test_completed_reply_is_persisted_before_completion_event_disconnect(self) -> None:
         with patch(
@@ -414,6 +439,32 @@ class ChatBoundaryTests(unittest.TestCase):
         self.assertIn("Model/Provider", reply)
         self.assertNotIn("Hermes", reply)
         self.assertNotIn("unexpected error", reply.lower())
+
+    def test_interrupted_run_is_recorded_as_cancelled_and_not_learning_eligible(self) -> None:
+        def interrupted_stream(**kwargs):
+            kwargs["on_run_started"]("run_0123456789abcdef")
+            raise HermesApiError("interrupted", kind="interrupted")
+            yield  # pragma: no cover - keeps this a generator for the seam
+
+        with patch(
+            "macsoft.gateway.routes_chat.stream_hermes_reply_events",
+            side_effect=interrupted_stream,
+        ), patch("macsoft.gateway.routes_chat.interrupt_hermes_run", return_value=True):
+            response = self.chat(
+                ChatStreamRequest(session_id="session_1", message="Interrupt me")
+            )
+            events = parse_sse(asyncio.run(consume(response)))
+
+        self.assertFalse(events[-1][1]["ok"])
+        conn = sqlite3.connect(self.db_path)
+        try:
+            run = conn.execute(
+                "SELECT completion_status, learning_status FROM agent_runs WHERE run_id=?",
+                ("run_0123456789abcdef",),
+            ).fetchone()
+        finally:
+            conn.close()
+        self.assertEqual(run, ("cancelled", "skipped"))
 
 
 class StructuredErrorTests(unittest.TestCase):

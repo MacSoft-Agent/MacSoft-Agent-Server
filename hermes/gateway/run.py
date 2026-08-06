@@ -1410,7 +1410,7 @@ class MultiplexConfigError(RuntimeError):
 
 
 @_contextmanager
-def _profile_runtime_scope(profile_home: "Path"):
+def _profile_runtime_scope(profile_home: "Path", *, secret_home: "Path | None" = None):
     """Scope config/skills/memory AND credentials to a profile for one turn.
 
     Combines the two seams the multiplexer needs:
@@ -1436,7 +1436,8 @@ def _profile_runtime_scope(profile_home: "Path"):
     )
 
     home_token = set_hermes_home_override(str(profile_home))
-    secret_token = set_secret_scope(build_profile_secret_scope(Path(profile_home)))
+    secret_source = Path(secret_home) if secret_home is not None else Path(profile_home)
+    secret_token = set_secret_scope(build_profile_secret_scope(secret_source))
     try:
         yield
     finally:

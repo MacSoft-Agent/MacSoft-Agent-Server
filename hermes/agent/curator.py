@@ -30,7 +30,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, NamedTuple, Optional, Set
 
-from hermes_constants import get_hermes_home
+from hermes_constants import get_hermes_home, get_writable_skills_dir
 from tools import skill_usage
 from utils import atomic_json_write
 
@@ -69,7 +69,7 @@ DEFAULT_CONSOLIDATE = False
 # ---------------------------------------------------------------------------
 
 def _state_file() -> Path:
-    return get_hermes_home() / "skills" / ".curator_state"
+    return get_writable_skills_dir() / ".curator_state"
 
 
 def _default_state() -> Dict[str, Any]:

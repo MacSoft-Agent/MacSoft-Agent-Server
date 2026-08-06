@@ -3,6 +3,7 @@
 import ipaddress
 import os
 import secrets
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -12,6 +13,11 @@ from macsoft.gateway.errors import error_response
 from macsoft.identity.devices import create_or_replace_device, require_device
 from macsoft.identity.pairing import claim_pairing_code, get_or_create_dev_pairing_code
 from macsoft.identity.users import get_default_admin, get_user_by_id
+from macsoft.profiles.registry import (
+    ensure_device_profile,
+    require_device_profile,
+    resolve_profile_home,
+)
 
 router = APIRouter()
 
@@ -130,6 +136,11 @@ def pair_device(
             client_name=body.client_name or "Unknown Client",
             client_version=body.client_version or x_client_version or "dev",
         )
+        ensure_device_profile(
+            conn,
+            config=config,
+            device_id=str(device["device_id"]),
+        )
 
         return {
             "ok": True,
@@ -185,6 +196,53 @@ def get_current_client(
             ],
             "default_model": SERVER_HERMES_MODEL_ID,
             "allowed_skills": [],
+        }
+    finally:
+        conn.close()
+
+
+@router.get("/api/profile")
+def get_current_device_profile(
+    request: Request,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    x_device_id: str | None = Header(default=None, alias="X-Device-Id"),
+) -> dict:
+    """Return a safe profile display summary with no authority identifiers."""
+    config = request.app.state.config
+    conn = connect_db(config)
+    try:
+        try:
+            device = require_device(
+                conn,
+                authorization=authorization,
+                device_id=x_device_id,
+            )
+        except ValueError as error:
+            raise HTTPException(
+                status_code=401,
+                detail=error_response(
+                    "invalid_device_token",
+                    "Device token is invalid or revoked.",
+                ),
+            ) from error
+        profile = require_device_profile(
+            conn,
+            config=config,
+            device_id=str(device["device_id"]),
+        )
+        home = resolve_profile_home(config, profile_id=str(profile["profile_id"]))
+        mtimes = [
+            path.stat().st_mtime
+            for path in (home / "memories" / "USER.md", home / "memories" / "MEMORY.md")
+            if path.is_file()
+        ]
+        return {
+            "display_name": str(device["display_name"] or device["client_name"]),
+            "memory_updated_at": (
+                datetime.fromtimestamp(max(mtimes), timezone.utc).isoformat()
+                if mtimes
+                else None
+            ),
         }
     finally:
         conn.close()

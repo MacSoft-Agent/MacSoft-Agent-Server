@@ -54,6 +54,25 @@ class FirstRunInitializationTests(unittest.TestCase):
         self.assertEqual(self.paths.runtime_config.read_text("utf-8"), custom)
         self.assertIn("runtime\\config.yaml" if __import__('os').name == 'nt' else "runtime/config.yaml", second.preserved)
 
+    def test_upgrade_preserves_device_profile_tree_byte_for_byte(self) -> None:
+        initialize_product_data(self.paths, self.metadata)
+        profile = (
+            self.paths.runtime_root
+            / "profiles"
+            / "prof_0123456789abcdef0123456789abcdef"
+        )
+        memory = profile / "memories" / "MEMORY.md"
+        skill = profile / "skills" / "learned" / "reporting" / "SKILL.md"
+        memory.parent.mkdir(parents=True)
+        skill.parent.mkdir(parents=True)
+        memory.write_bytes(b"device memory\r\n")
+        skill.write_bytes(b"---\r\nname: reporting\r\n---\r\nlearned\r\n")
+        before = {memory: memory.read_bytes(), skill: skill.read_bytes()}
+
+        initialize_product_data(self.paths, self.metadata)
+
+        self.assertEqual({path: path.read_bytes() for path in before}, before)
+
     def test_upgrade_adds_read_only_skill_toolset_without_replacing_runtime_config(self) -> None:
         initialize_product_data(self.paths, self.metadata)
         runtime = self.paths.runtime_config.read_text("utf-8")

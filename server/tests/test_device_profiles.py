@@ -3,17 +3,19 @@ from __future__ import annotations
 import sqlite3
 import tempfile
 import unittest
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
 import yaml
 
 from macsoft.db import init_db
-from macsoft.profiles.registry import ensure_device_profile, resolve_profile_home
+from macsoft.profiles.registry import _configured_hermes_home, ensure_device_profile, resolve_profile_home
 
 
 class DeviceProfileTests(unittest.TestCase):
     def setUp(self) -> None:
+        self._inherited_hermes_home = os.environ.pop("HERMES_HOME", None)
         self.temp = tempfile.TemporaryDirectory()
         root = Path(self.temp.name)
         self.database = root / "server.db"
@@ -56,17 +58,17 @@ class DeviceProfileTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.conn.close()
         self.temp.cleanup()
+        if self._inherited_hermes_home is None:
+            os.environ.pop("HERMES_HOME", None)
+        else:
+            os.environ["HERMES_HOME"] = self._inherited_hermes_home
 
     def _with_profile_root(self):
-        import os
-
         previous = os.environ.get("MACSOFT_PROFILE_ROOT")
         os.environ["MACSOFT_PROFILE_ROOT"] = str(self.profile_root)
         return previous
 
     def _restore_profile_root(self, previous: str | None) -> None:
-        import os
-
         if previous is None:
             os.environ.pop("MACSOFT_PROFILE_ROOT", None)
         else:
@@ -110,6 +112,35 @@ class DeviceProfileTests(unittest.TestCase):
         finally:
             self._restore_profile_root(previous)
 
+    def test_profile_root_parent_is_the_server_owned_shared_runtime_fallback(self) -> None:
+        previous_profile_root = self._with_profile_root()
+        import os
+
+        previous_hermes_home = os.environ.pop("HERMES_HOME", None)
+        original_home = self.config.hermes.home
+        self.config.hermes.home = ""
+        try:
+            self.assertEqual(_configured_hermes_home(self.config), self.hermes_home.resolve())
+        finally:
+            self.config.hermes.home = original_home
+            if previous_hermes_home is not None:
+                os.environ["HERMES_HOME"] = previous_hermes_home
+            self._restore_profile_root(previous_profile_root)
+
+    def test_host_hermes_home_overrides_development_yaml_home(self) -> None:
+        import os
+
+        previous = os.environ.get("HERMES_HOME")
+        os.environ["HERMES_HOME"] = str(self.hermes_home)
+        try:
+            self.config.hermes.home = "../hermes"
+            self.assertEqual(_configured_hermes_home(self.config), self.hermes_home.resolve())
+        finally:
+            if previous is None:
+                os.environ.pop("HERMES_HOME", None)
+            else:
+                os.environ["HERMES_HOME"] = previous
+
     def test_device_revocation_freezes_and_reactivation_restores_same_profile(self) -> None:
         previous = self._with_profile_root()
         try:
@@ -148,6 +179,38 @@ class DeviceProfileTests(unittest.TestCase):
             self.assertEqual(restarted["profile_id"], profile["profile_id"])
             self.assertEqual(memory.read_text(encoding="utf-8"), "persistent memory")
             self.assertIn("persistent skill", skill.read_text(encoding="utf-8"))
+        finally:
+            self._restore_profile_root(previous)
+
+    def test_existing_profile_inherits_later_shared_model_selection(self) -> None:
+        previous = self._with_profile_root()
+        try:
+            profile = ensure_device_profile(self.conn, config=self.config, device_id="device-a")
+            home = self.profile_root / str(profile["profile_id"])
+            learned = home / "skills" / "learned" / "reconcile" / "SKILL.md"
+            learned.parent.mkdir(parents=True)
+            learned.write_text("---\nname: reconcile\n---\npersistent skill", encoding="utf-8")
+
+            (self.hermes_home / "config.yaml").write_text(
+                yaml.safe_dump(
+                    {
+                        "model": {
+                            "provider": "nous",
+                            "default": "inclusionai/ling-3.0-flash:free",
+                            "api_key": "do-not-copy",
+                        }
+                    },
+                    sort_keys=False,
+                ),
+                encoding="utf-8",
+            )
+
+            ensure_device_profile(self.conn, config=self.config, device_id="device-a")
+            profile_config = yaml.safe_load((home / "config.yaml").read_text(encoding="utf-8"))
+            self.assertEqual(profile_config["model"]["provider"], "nous")
+            self.assertEqual(profile_config["model"]["default"], "inclusionai/ling-3.0-flash:free")
+            self.assertNotIn("api_key", profile_config["model"])
+            self.assertIn("persistent skill", learned.read_text(encoding="utf-8"))
         finally:
             self._restore_profile_root(previous)
 

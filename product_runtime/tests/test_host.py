@@ -196,6 +196,7 @@ class HostTests(unittest.TestCase):
         specs = build_service_specs(self.paths, METADATA)
 
         self.assertEqual(specs["server"].environment["MACSOFT_HERMES_API_KEY"], "runtime-owned-key")
+        self.assertEqual(specs["server"].environment["HERMES_HOME"], str(self.paths.runtime_root))
         self.assertEqual(
             specs["server"].environment["MACSOFT_PROFILE_ROOT"],
             str(self.paths.runtime_root / "profiles"),

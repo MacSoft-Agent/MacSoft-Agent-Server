@@ -77,10 +77,27 @@ def _profile_home(profile_root: Path, profile_id: str) -> Path:
 
 def _configured_hermes_home(config: Any) -> Path | None:
     """Resolve the shared Server-owned Hermes runtime home, if configured."""
-    hermes = getattr(config, "hermes", None)
-    configured = str(getattr(hermes, "home", "")).strip()
+    # The Host owns the deployed runtime location.  Its environment must win
+    # over the development YAML default (typically ../hermes, the source tree)
+    # or existing device Profiles would inherit no model configuration.
+    configured = os.environ.get("HERMES_HOME", "").strip()
     if not configured:
-        configured = os.environ.get("HERMES_HOME", "").strip()
+        hermes = getattr(config, "hermes", None)
+        configured = str(getattr(hermes, "home", "")).strip()
+    if not configured:
+        # The Host always injects the profile root into the Server process.
+        # Its parent is the shared Hermes runtime, so this remains a
+        # Server-owned derivation rather than a Client-controlled path.  It
+        # also keeps existing Profiles able to inherit a later model switch
+        # when a service wrapper omitted HERMES_HOME from its environment.
+        profile_root = os.environ.get("MACSOFT_PROFILE_ROOT", "").strip()
+        if profile_root:
+            try:
+                root = Path(profile_root).expanduser().resolve()
+                if root.name == "profiles":
+                    return root.parent
+            except OSError:
+                pass
     if not configured:
         return None
 
@@ -179,13 +196,31 @@ def _initialize_profile_home(profile_home: Path, *, config: Any) -> None:
             encoding="utf-8",
         )
     else:
-        # Upgrade existing device profiles with newly required trusted shared
-        # Skill layers without replacing their learned state or copying secrets.
+        # Keep Server-owned behavioral settings current for existing device
+        # Profiles.  Credentials deliberately remain in the shared runtime,
+        # but model selection must not be frozen at the time a Profile was
+        # first paired: a later `hermes model` change applies to every device.
+        #
+        # Do not copy arbitrary shared config here.  Profile-local learning
+        # state stays local; this only synchronizes the non-secret model block
+        # and the shared read-only Skill layer that the Server owns.
         try:
             current = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
         except (OSError, UnicodeDecodeError, yaml.YAMLError):
             current = {}
         if isinstance(current, dict):
+            changed = False
+            shared_model = _initial_profile_config(config).get("model")
+            if isinstance(shared_model, dict):
+                if current.get("model") != shared_model:
+                    current["model"] = shared_model
+                    changed = True
+            elif "model" in current:
+                # The shared configuration is authoritative.  Removing a stale
+                # Profile-local model avoids silently using an old provider.
+                current.pop("model", None)
+                changed = True
+
             source_home = _configured_hermes_home(config)
             if source_home is not None:
                 skills = current.setdefault("skills", {})
@@ -199,10 +234,12 @@ def _initialize_profile_home(profile_home: Path, *, config: Any) -> None:
                     merged = [shared_skills, *(item for item in external if str(item) != shared_skills)]
                     if merged != external:
                         skills["external_dirs"] = merged
-                        config_path.write_text(
-                            yaml.safe_dump(_without_embedded_secrets(current), sort_keys=False),
-                            encoding="utf-8",
-                        )
+                        changed = True
+            if changed:
+                config_path.write_text(
+                    yaml.safe_dump(_without_embedded_secrets(current), sort_keys=False),
+                    encoding="utf-8",
+                )
 
 
 def _row_to_profile(row: sqlite3.Row) -> dict[str, str | int | None]:

@@ -110,6 +110,21 @@ def get_hermes_home() -> Path:
     return _get_platform_default_hermes_home()
 
 
+def get_writable_skills_dir() -> Path:
+    """Return the writable skill root for the active runtime scope."""
+    home = get_hermes_home()
+    macsoft_root = os.environ.get("MACSOFT_PROFILE_ROOT", "").strip()
+    if macsoft_root:
+        try:
+            resolved_home = home.resolve()
+            resolved_root = Path(macsoft_root).expanduser().resolve()
+            if resolved_home.parent == resolved_root and resolved_home.name.startswith("prof_"):
+                return resolved_home / "skills" / "learned"
+        except OSError:
+            pass
+    return home / "skills"
+
+
 def get_default_hermes_root() -> Path:
     """Return the root Hermes directory for profile-level operations.
 

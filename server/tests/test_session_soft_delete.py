@@ -25,6 +25,7 @@ from macsoft.sessions.message_store import save_message
 SCHEMA = """
 CREATE TABLE users (user_id TEXT PRIMARY KEY, display_name TEXT, role TEXT, status TEXT, created_at TEXT, updated_at TEXT);
 CREATE TABLE devices (device_id TEXT PRIMARY KEY, user_id TEXT, device_token TEXT UNIQUE, client_name TEXT, client_version TEXT, display_name TEXT, role TEXT, status TEXT, paired_at TEXT, last_seen_at TEXT, revoked_at TEXT);
+CREATE TABLE device_profiles (profile_id TEXT PRIMARY KEY, device_id TEXT NOT NULL UNIQUE, status TEXT NOT NULL, profile_schema_version INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_used_at TEXT);
 CREATE TABLE sessions (session_id TEXT PRIMARY KEY, user_id TEXT, owner_device_id TEXT, title TEXT, source TEXT, status TEXT, archived INTEGER, last_message_preview TEXT, hermes_stored_session_id TEXT, created_at TEXT, updated_at TEXT, deleted_at TEXT);
 CREATE TABLE messages (message_id TEXT PRIMARY KEY, session_id TEXT, user_id TEXT, role TEXT, content TEXT, status TEXT, model TEXT, created_at TEXT);
 """

@@ -197,6 +197,14 @@ class HostTests(unittest.TestCase):
 
         self.assertEqual(specs["server"].environment["MACSOFT_HERMES_API_KEY"], "runtime-owned-key")
         self.assertEqual(
+            specs["server"].environment["MACSOFT_PROFILE_ROOT"],
+            str(self.paths.runtime_root / "profiles"),
+        )
+        self.assertEqual(
+            specs["ai_service"].environment["MACSOFT_PROFILE_ROOT"],
+            str(self.paths.runtime_root / "profiles"),
+        )
+        self.assertEqual(
             specs["ai_service"].health_identity["macsoft_runtime"],
             {
                 "runtime": "hermes-agent",

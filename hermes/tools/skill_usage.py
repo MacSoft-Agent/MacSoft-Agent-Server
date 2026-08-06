@@ -33,7 +33,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from hermes_constants import get_hermes_home
+from hermes_constants import get_hermes_home, get_writable_skills_dir
 from agent.skill_utils import is_excluded_skill_path, is_external_skill_path
 
 logger = logging.getLogger(__name__)
@@ -79,7 +79,7 @@ def is_protected_builtin(skill_name: str) -> bool:
 
 
 def _skills_dir() -> Path:
-    return get_hermes_home() / "skills"
+    return get_writable_skills_dir()
 
 
 def _usage_file() -> Path:

@@ -892,9 +892,27 @@ def _run_review_in_thread(
                 except Exception:
                     pass
 
+        _lifecycle_cb = getattr(agent, "background_review_lifecycle_callback", None)
+        if _lifecycle_cb:
+            try:
+                _lifecycle_cb(
+                    "completed",
+                    "Background review completed with changes."
+                    if actions
+                    else "Background review completed; no learning change was needed.",
+                )
+            except Exception:
+                pass
+
     except Exception as e:
         logger.warning("Background memory/skill review failed: %s", e)
         agent._emit_auxiliary_failure("background review", e)
+        _lifecycle_cb = getattr(agent, "background_review_lifecycle_callback", None)
+        if _lifecycle_cb:
+            try:
+                _lifecycle_cb("failed", "Background review failed.")
+            except Exception:
+                pass
     finally:
         # Safety-net cleanup for the exception path.  Normal completion already
         # shut down inside the thread-scoped silence above.  Re-enter the

@@ -22,8 +22,8 @@ from macsoft.chat.capability_policy import (
 )
 from macsoft.chat.hermes_client import (
     HermesApiError,
-    request_hermes_reply,
-    stream_hermes_reply_events,
+    interrupt_hermes_run,
+    stream_interruptible_hermes_reply_events,
 )
 from macsoft.chat.result_formatter import (
     format_assistant_reply,
@@ -56,6 +56,40 @@ _HTML_DOCUMENT_RE = re.compile(
     r"^\s*<!doctype\s+html\s*>\s*<html\b[\s\S]*</html>\s*$",
     re.IGNORECASE,
 )
+from macsoft.profiles.registry import require_device_profile
+from macsoft.profiles.runs import record_run_finished, record_run_started
+
+# Keep the established test/extension seam name while routing it through the
+# structured Runs implementation.  This is not the legacy chat-completions
+# transport: the alias still starts /v1/runs and consumes its event stream.
+stream_hermes_reply_events = stream_interruptible_hermes_reply_events
+
+
+def request_hermes_reply(
+    *,
+    base_url: str,
+    api_key: str,
+    profile_id: str,
+    messages: list[dict],
+    session_id: str,
+    timeout_seconds: int,
+    on_run_started,
+) -> str:
+    parts: list[str] = []
+    for event in stream_hermes_reply_events(
+        base_url=base_url,
+        api_key=api_key,
+        profile_id=profile_id,
+        messages=messages,
+        session_id=session_id,
+        timeout_seconds=timeout_seconds,
+        on_run_started=on_run_started,
+    ):
+        if event.get("type") == "interrupted":
+            raise HermesApiError("MacSoft Agent run was interrupted.", kind="interrupted")
+        if event.get("type") == "text_delta":
+            parts.append(str(event.get("text") or ""))
+    return "".join(parts)
 
 
 def is_complete_html_document(content: str) -> bool:
@@ -70,6 +104,10 @@ class ChatStreamRequest(BaseModel):
     enabled_private_skills: list[dict] = Field(default_factory=list)
     uploaded_file_ids: list[str] = Field(default_factory=list)
     client_info: dict = Field(default_factory=dict)
+
+
+class ChatInterruptRequest(BaseModel):
+    session_id: str
 
 
 def error_response(code: str, message: str) -> dict:
@@ -116,6 +154,84 @@ def activity_sse(
         return None
 
 
+@router.post("/api/chat/interrupt")
+def interrupt_chat(
+    request: Request,
+    body: ChatInterruptRequest,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    x_device_id: str | None = Header(default=None, alias="X-Device-Id"),
+) -> dict:
+    """Stop only the authenticated device's active Hermes Run."""
+    config = request.app.state.config
+    conn = connect_db(config)
+    try:
+        try:
+            device = require_device(
+                conn, authorization=authorization, device_id=x_device_id
+            )
+        except ValueError as error:
+            raise HTTPException(
+                status_code=401,
+                detail=error_response(
+                    "invalid_device_token", "Device token is invalid or revoked."
+                ),
+            ) from error
+        device_id = str(device["device_id"])
+        try:
+            require_session_for_owner(
+                conn,
+                session_id=body.session_id,
+                user_id=str(device["user_id"]),
+                owner_device_id=device_id,
+            )
+        except ValueError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=error_response(
+                    "session_not_found",
+                    "Session does not exist or does not belong to this device.",
+                ),
+            ) from error
+        profile_id = str(
+            require_device_profile(conn, config=config, device_id=device_id)["profile_id"]
+        )
+    finally:
+        conn.close()
+
+    active, run_id = get_active_chat_registry(request.app).request_interrupt(
+        body.session_id
+    )
+    if not active:
+        raise HTTPException(
+            status_code=409,
+            detail=error_response(
+                "chat_run_not_active", "This session has no active reply."
+            ),
+        )
+    if run_id:
+        try:
+            interrupt_hermes_run(
+                base_url=config.hermes.api_base_url,
+                api_key=config.hermes.api_key,
+                profile_id=profile_id,
+                run_id=run_id,
+                timeout_seconds=config.hermes.request_timeout_seconds,
+            )
+        except HermesApiError as error:
+            raise HTTPException(
+                status_code=502,
+                detail=error_response(
+                    "chat_interrupt_failed", "The active Agent run could not be stopped."
+                ),
+            ) from error
+    return {
+        "ok": True,
+        "session_id": body.session_id,
+        "status": "interrupting",
+        "upstream_run_bound": run_id is not None,
+    }
+
+
 @router.post("/api/chat/stream")
 def chat_stream(
     request: Request,
@@ -151,6 +267,9 @@ def chat_stream(
 
         user_id = str(device["user_id"])
         device_id = str(device["device_id"])
+        profile_id = str(
+            require_device_profile(conn, config=config, device_id=device_id)["profile_id"]
+        )
 
         try:
             require_session_for_owner(
@@ -318,13 +437,48 @@ def chat_stream(
 
             assistant_message_id = new_id("msg_assistant")
             activity_enabled = supports_activity_v1(x_macsoft_client_capabilities)
+            run_state: dict[str, str | bool | None] = {"run_id": None, "finished": False}
+
+            def on_run_started(run_id: str) -> bool:
+                run_state["run_id"] = run_id
+                run_conn = connect_db(config)
+                try:
+                    record_run_started(
+                        run_conn,
+                        run_id=run_id,
+                        device_id=device_id,
+                        profile_id=profile_id,
+                        session_id=body.session_id,
+                    )
+                finally:
+                    run_conn.close()
+                return registry.bind_run(body.session_id, run_id)
+
+            def finish_run(*, completion_status: str, learning_status: str) -> None:
+                run_id = run_state["run_id"]
+                if not isinstance(run_id, str) or run_state["finished"]:
+                    return
+                run_conn = connect_db(config)
+                try:
+                    record_run_finished(
+                        run_conn,
+                        run_id=run_id,
+                        completion_status=completion_status,
+                        learning_status=learning_status,
+                    )
+                    run_state["finished"] = True
+                finally:
+                    run_conn.close()
 
             def request_final_reply() -> str:
                 raw_assistant_text = request_hermes_reply(
                     base_url=config.hermes.api_base_url,
                     api_key=config.hermes.api_key,
+                    profile_id=profile_id,
                     messages=hermes_messages,
+                    session_id=body.session_id,
                     timeout_seconds=config.hermes.request_timeout_seconds,
+                    on_run_started=on_run_started,
                 )
                 return enforce_capability_boundary(
                     user_message=body.message,
@@ -347,7 +501,14 @@ def chat_stream(
             if not activity_enabled:
                 try:
                     legacy_assistant_text = request_final_reply()
+                    finish_run(completion_status="completed", learning_status="eligible")
                 except HermesApiError as error:
+                    finish_run(
+                        completion_status=(
+                            "cancelled" if error.kind == "interrupted" else "failed"
+                        ),
+                        learning_status="skipped",
+                    )
                     readable_error = map_user_readable_error(
                         str(error),
                         service=error.service,
@@ -424,12 +585,20 @@ def chat_stream(
                             for internal_event in stream_hermes_reply_events(
                                 base_url=config.hermes.api_base_url,
                                 api_key=config.hermes.api_key,
+                                profile_id=profile_id,
                                 messages=hermes_messages,
+                                session_id=body.session_id,
                                 timeout_seconds=config.hermes.request_timeout_seconds,
+                                on_run_started=on_run_started,
                             ):
                                 if internal_event.get("type") == "text_delta":
                                     raw_parts.append(str(internal_event.get("text") or ""))
                                     continue
+                                if internal_event.get("type") == "interrupted":
+                                    raise HermesApiError(
+                                        "MacSoft Agent run was interrupted.",
+                                        kind="interrupted",
+                                    )
                                 try:
                                     mapped_activity = activity_mapper.observed_tool_event(
                                         internal_event,
@@ -457,7 +626,16 @@ def chat_stream(
                                 assistant_text = format_error_markdown(ai_response_error)
                             else:
                                 assistant_text = format_final_reply(raw_assistant_text)
+                                finish_run(completion_status="completed", learning_status="eligible")
                         except HermesApiError as error:
+                            finish_run(
+                                completion_status=(
+                                    "cancelled"
+                                    if error.kind == "interrupted"
+                                    else "failed"
+                                ),
+                                learning_status="skipped",
+                            )
                             request_ok = False
                             readable_error = map_user_readable_error(
                                 str(error),
@@ -602,6 +780,21 @@ def chat_stream(
                         },
                     )
                 finally:
+                    run_id = run_state["run_id"]
+                    if isinstance(run_id, str) and not run_state["finished"]:
+                        try:
+                            interrupt_hermes_run(
+                                base_url=config.hermes.api_base_url,
+                                api_key=config.hermes.api_key,
+                                profile_id=profile_id,
+                                run_id=run_id,
+                                timeout_seconds=config.hermes.request_timeout_seconds,
+                            )
+                        except HermesApiError:
+                            # The Run may have reached a terminal state between
+                            # disconnect detection and this best-effort stop.
+                            pass
+                    finish_run(completion_status="cancelled", learning_status="skipped")
                     registry.release(body.session_id)
 
             response = StreamingResponse(

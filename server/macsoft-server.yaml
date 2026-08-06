@@ -7,6 +7,7 @@ database:
 
 hermes:
   home: "../hermes"
+  profile_root: "./data/profiles"
   api_base_url: "http://127.0.0.1:8642"
   api_key: "macsoft-local-dev"
   request_timeout_seconds: 600

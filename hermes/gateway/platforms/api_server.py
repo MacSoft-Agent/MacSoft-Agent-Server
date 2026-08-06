@@ -42,6 +42,7 @@ import re
 import sqlite3
 import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -96,6 +97,92 @@ MAX_REQUEST_BYTES = 10_000_000  # 10 MB — accommodates long agent conversation
 CHAT_COMPLETIONS_SSE_KEEPALIVE_SECONDS = 30.0
 MAX_NORMALIZED_TEXT_LENGTH = 65_536  # 64 KB cap for normalized content parts
 MAX_CONTENT_LIST_SIZE = 1_000  # Max items when content is an array
+_MACSOFT_PROFILE_ID_RE = re.compile(r"^prof_[a-f0-9]{32}$")
+_MACSOFT_SKILL_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$")
+_MACSOFT_BACKUP_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,191}$")
+
+
+def _resolve_macsoft_profile_home(request: "web.Request") -> tuple[Optional[Path], Optional["web.Response"]]:
+    """Resolve the Server-issued device profile without accepting a path.
+
+    The header is only consumed after API-key authentication. Hermes still
+    derives the path from its own ``MACSOFT_PROFILE_ROOT`` configuration so a
+    caller can never select an arbitrary local directory.
+    """
+    profile_id = request.headers.get("X-MacSoft-Profile-Id", "").strip()
+    if not profile_id:
+        return None, None
+    if not _MACSOFT_PROFILE_ID_RE.fullmatch(profile_id):
+        return None, web.json_response(_openai_error("Invalid MacSoft profile"), status=400)
+    root_raw = os.environ.get("MACSOFT_PROFILE_ROOT", "").strip()
+    if not root_raw:
+        logger.error("MacSoft profile request rejected: MACSOFT_PROFILE_ROOT is not configured")
+        return None, web.json_response(_openai_error("MacSoft profile routing is unavailable"), status=503)
+    root = Path(root_raw).expanduser().resolve()
+    home = (root / profile_id).resolve()
+    if home.parent != root or not home.is_dir():
+        return None, web.json_response(_openai_error("MacSoft profile not found"), status=404)
+    return home, None
+
+
+@contextmanager
+def _macsoft_profile_scope(profile_home: Optional[Path]):
+    """Use Hermes' official context-local profile and secret scope for one turn."""
+    if profile_home is None:
+        yield
+        return
+    from gateway.run import _profile_runtime_scope
+
+    shared_runtime = os.environ.get("HERMES_HOME", "").strip()
+    if not shared_runtime:
+        raise RuntimeError("MacSoft profile routing requires HERMES_HOME")
+    with _profile_runtime_scope(profile_home, secret_home=Path(shared_runtime).resolve()):
+        yield
+
+
+def _clear_macsoft_skill_cache() -> None:
+    from agent.prompt_builder import clear_skills_system_prompt_cache
+
+    clear_skills_system_prompt_cache(clear_snapshot=True)
+
+
+def _write_macsoft_learning_event(
+    profile_home: Path, *, run_id: str, session_id: str, status: str, detail: str
+) -> None:
+    """Persist a profile-local native_after_run outcome without blocking SSE."""
+    event_dir = profile_home / "logs" / "learning-events"
+    event_dir.mkdir(parents=True, exist_ok=True)
+    target = event_dir / f"{run_id}.json"
+    temporary = event_dir / f".{run_id}.{uuid.uuid4().hex}.tmp"
+    payload = {
+        "run_id": run_id,
+        "session_id": session_id,
+        "status": status if status in {"completed", "failed"} else "failed",
+        "detail": str(detail)[:2000],
+        "created_at": time.time(),
+    }
+    temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    os.replace(temporary, target)
+
+
+def _run_audited_macsoft_mutation(source: str, skill_id: str | None, operation):
+    from agent.macsoft_profile_mutations import begin_mutation, finish_mutation
+
+    state = begin_mutation(source=source, skill_id=skill_id)
+    try:
+        result = operation()
+    except Exception as exc:
+        finish_mutation(state, success=False, detail=type(exc).__name__)
+        raise
+    succeeded = not (isinstance(result, dict) and result.get("ok") is False)
+    audit = finish_mutation(
+        state,
+        success=succeeded,
+        detail="native operation completed" if succeeded else "native operation rejected",
+    )
+    if audit is not None and isinstance(result, dict):
+        result["_macsoft_audit"] = audit
+    return result
 
 _HTML_DOCUMENT_RE = re.compile(
     r"^\s*(?:<!doctype\s+html\s*>)\s*<html\b[\s\S]*</html>\s*$",
@@ -916,6 +1003,10 @@ class APIServerAdapter(BasePlatformAdapter):
         self._active_run_tasks: Dict[str, "asyncio.Task"] = {}
         # Pollable run status for dashboards and external control-plane UIs.
         self._run_statuses: Dict[str, Dict[str, Any]] = {}
+        # A MacSoft run remains bound to the Server-derived Profile for its
+        # entire control-plane lifetime.  Events, status, approval and stop
+        # must not become cross-profile merely because a caller knows run_id.
+        self._run_profile_homes: Dict[str, Optional[Path]] = {}
         # Active approval session key for each run_id.  The approval core
         # resolves requests by session key, while API clients address the
         # in-flight run by run_id.
@@ -4108,6 +4199,7 @@ class APIServerAdapter(BasePlatformAdapter):
         agent_ref: Optional[list] = None,
         gateway_session_key: Optional[str] = None,
         route: Optional[Dict[str, Any]] = None,
+        profile_home: Optional[Path] = None,
     ) -> tuple:
         """
         Create an agent and run a conversation in a thread executor.
@@ -4129,44 +4221,34 @@ class APIServerAdapter(BasePlatformAdapter):
         def _run():
             from gateway.session_context import clear_session_vars
 
-            tokens = self._bind_api_server_session(
-                chat_id=session_id or "",
-                session_key=gateway_session_key or session_id or "",
-                session_id=session_id or "",
-            )
-            try:
-                agent = self._create_agent(
-                    ephemeral_system_prompt=ephemeral_system_prompt,
-                    session_id=session_id,
-                    stream_delta_callback=stream_delta_callback,
-                    tool_progress_callback=tool_progress_callback,
-                    tool_start_callback=tool_start_callback,
-                    tool_complete_callback=tool_complete_callback,
-                    gateway_session_key=gateway_session_key,
-                    route=route,
+            with _macsoft_profile_scope(profile_home):
+                tokens = self._bind_api_server_session(
+                    chat_id=session_id or "",
+                    session_key=gateway_session_key or session_id or "",
+                    session_id=session_id or "",
                 )
-                if agent_ref is not None:
-                    agent_ref[0] = agent
-                effective_task_id = session_id or str(uuid.uuid4())
-                result = agent.run_conversation(
-                    user_message=user_message,
-                    conversation_history=conversation_history,
-                    task_id=effective_task_id,
-                )
-                usage = {
-                    "input_tokens": getattr(agent, "session_prompt_tokens", 0) or 0,
-                    "output_tokens": getattr(agent, "session_completion_tokens", 0) or 0,
-                    "total_tokens": getattr(agent, "session_total_tokens", 0) or 0,
-                }
-                # Include the effective session ID in the result so callers
-                # (e.g. X-Hermes-Session-Id header) can track compression-
-                # triggered session rotations. (#16938)
-                _eff_sid = getattr(agent, "session_id", session_id)
-                if isinstance(_eff_sid, str) and _eff_sid:
-                    result["session_id"] = _eff_sid
-                return result, usage
-            finally:
-                clear_session_vars(tokens)
+                try:
+                    agent = self._create_agent(
+                        ephemeral_system_prompt=ephemeral_system_prompt,
+                        session_id=session_id,
+                        stream_delta_callback=stream_delta_callback,
+                        tool_progress_callback=tool_progress_callback,
+                        tool_start_callback=tool_start_callback,
+                        tool_complete_callback=tool_complete_callback,
+                        gateway_session_key=gateway_session_key,
+                        route=route,
+                    )
+                    if agent_ref is not None:
+                        agent_ref[0] = agent
+                    effective_task_id = session_id or str(uuid.uuid4())
+                    result = agent.run_conversation(user_message=user_message, conversation_history=conversation_history, task_id=effective_task_id)
+                    usage = {"input_tokens": getattr(agent, "session_prompt_tokens", 0) or 0, "output_tokens": getattr(agent, "session_completion_tokens", 0) or 0, "total_tokens": getattr(agent, "session_total_tokens", 0) or 0}
+                    _eff_sid = getattr(agent, "session_id", session_id)
+                    if isinstance(_eff_sid, str) and _eff_sid:
+                        result["session_id"] = _eff_sid
+                    return result, usage
+                finally:
+                    clear_session_vars(tokens)
 
         self._inflight_agent_runs += 1
         try:
@@ -4195,6 +4277,29 @@ class APIServerAdapter(BasePlatformAdapter):
         current.update(fields)
         self._run_statuses[run_id] = current
         return current
+
+    def _authorize_run_profile(
+        self, request: "web.Request", run_id: str
+    ) -> Optional["web.Response"]:
+        """Enforce the immutable Profile binding for a Runs subresource."""
+        expected = self._run_profile_homes.get(run_id)
+        supplied_header = request.headers.get("X-MacSoft-Profile-Id", "").strip()
+        if expected is None:
+            # Ordinary non-MacSoft Runs retain their existing API behavior,
+            # but a profiled request cannot claim one of those run IDs.
+            if supplied_header:
+                return web.json_response(
+                    _openai_error("Run not found", code="run_not_found"), status=404
+                )
+            return None
+        supplied, error = _resolve_macsoft_profile_home(request)
+        if error is not None:
+            return error
+        if supplied != expected:
+            return web.json_response(
+                _openai_error("Run not found", code="run_not_found"), status=404
+            )
+        return None
 
     def _make_run_event_callback(self, run_id: str, loop: "asyncio.AbstractEventLoop"):
         """Return a tool_progress_callback that pushes structured events to the run's SSE queue."""
@@ -4247,6 +4352,10 @@ class APIServerAdapter(BasePlatformAdapter):
         auth_err = self._check_auth(request)
         if auth_err:
             return auth_err
+
+        profile_home, profile_err = _resolve_macsoft_profile_home(request)
+        if profile_err is not None:
+            return profile_err
 
         # Long-term memory scope header (see chat_completions for details).
         gateway_session_key, key_err = self._parse_session_key_header(request)
@@ -4334,6 +4443,7 @@ class APIServerAdapter(BasePlatformAdapter):
         self._run_streams[run_id] = q
         self._run_streams_created[run_id] = created_at
         self._run_approval_sessions[run_id] = approval_session_key
+        self._run_profile_homes[run_id] = profile_home
 
         event_cb = self._make_run_event_callback(run_id, loop)
 
@@ -4363,17 +4473,9 @@ class APIServerAdapter(BasePlatformAdapter):
         route = self._resolve_route(body.get("model"))
 
         async def _run_and_close():
+            agent = None
             try:
                 self._set_run_status(run_id, "running")
-                agent = self._create_agent(
-                    ephemeral_system_prompt=ephemeral_system_prompt,
-                    session_id=session_id,
-                    stream_delta_callback=_text_cb,
-                    tool_progress_callback=event_cb,
-                    gateway_session_key=gateway_session_key,
-                    route=route,
-                )
-                self._active_run_agents[run_id] = agent
 
                 def _approval_notify(approval_data: Dict[str, Any]) -> None:
                     event = dict(approval_data or {})
@@ -4402,6 +4504,7 @@ class APIServerAdapter(BasePlatformAdapter):
                         pass
 
                 def _run_sync():
+                    nonlocal agent
                     from gateway.session_context import clear_session_vars
                     from tools.approval import (
                         register_gateway_notify,
@@ -4414,19 +4517,46 @@ class APIServerAdapter(BasePlatformAdapter):
                     approval_token = None
                     session_tokens = []
                     try:
-                        # Bind approval/session identity for this API run via
-                        # contextvars so concurrent runs do not share process
-                        # environment state.
-                        approval_token = set_current_session_key(approval_session_key)
-                        session_tokens = self._bind_api_server_session(
-                            session_key=approval_session_key,
-                        )
-                        register_gateway_notify(approval_session_key, _approval_notify)
-                        r = agent.run_conversation(
-                            user_message=user_message,
-                            conversation_history=conversation_history,
-                            task_id=effective_task_id,
-                        )
+                        # Profile scope must be entered inside this executor
+                        # thread: ContextVars do not cross into a new thread
+                        # implicitly. Agent construction initializes memory,
+                        # skills, and Curator services, so it is in scope too.
+                        with _macsoft_profile_scope(profile_home):
+                            agent = self._create_agent(
+                                ephemeral_system_prompt=ephemeral_system_prompt,
+                                session_id=session_id,
+                                stream_delta_callback=_text_cb,
+                                tool_progress_callback=event_cb,
+                                gateway_session_key=gateway_session_key,
+                                route=route,
+                            )
+                            if profile_home is not None:
+                                # The review itself is a daemon thread and must
+                                # never hold the foreground SSE open. Its native
+                                # callback persists a run-linked outcome under
+                                # the already-scoped profile for later Server
+                                # reconciliation.
+                                agent.background_review_lifecycle_callback = lambda status, message: _write_macsoft_learning_event(
+                                    profile_home,
+                                    run_id=run_id,
+                                    session_id=str(session_id),
+                                    status=str(status),
+                                    detail=str(message),
+                                )
+                            self._active_run_agents[run_id] = agent
+                            # Bind approval/session identity for this API run via
+                            # contextvars so concurrent runs do not share process
+                            # environment state.
+                            approval_token = set_current_session_key(approval_session_key)
+                            session_tokens = self._bind_api_server_session(
+                                session_key=approval_session_key,
+                            )
+                            register_gateway_notify(approval_session_key, _approval_notify)
+                            r = agent.run_conversation(
+                                user_message=user_message,
+                                conversation_history=conversation_history,
+                                task_id=effective_task_id,
+                            )
                     finally:
                         try:
                             unregister_gateway_notify(approval_session_key)
@@ -4560,6 +4690,9 @@ class APIServerAdapter(BasePlatformAdapter):
             return auth_err
 
         run_id = request.match_info["run_id"]
+        profile_error = self._authorize_run_profile(request, run_id)
+        if profile_error is not None:
+            return profile_error
         status = self._run_statuses.get(run_id)
         if status is None:
             return web.json_response(
@@ -4575,6 +4708,9 @@ class APIServerAdapter(BasePlatformAdapter):
             return auth_err
 
         run_id = request.match_info["run_id"]
+        profile_error = self._authorize_run_profile(request, run_id)
+        if profile_error is not None:
+            return profile_error
 
         # Allow subscribing slightly before the run is registered (race condition window)
         for _ in range(20):
@@ -4625,6 +4761,9 @@ class APIServerAdapter(BasePlatformAdapter):
             return auth_err
 
         run_id = request.match_info["run_id"]
+        profile_error = self._authorize_run_profile(request, run_id)
+        if profile_error is not None:
+            return profile_error
         status = self._run_statuses.get(run_id)
         if status is None:
             return web.json_response(
@@ -4713,6 +4852,9 @@ class APIServerAdapter(BasePlatformAdapter):
             return auth_err
 
         run_id = request.match_info["run_id"]
+        profile_error = self._authorize_run_profile(request, run_id)
+        if profile_error is not None:
+            return profile_error
         agent = self._active_run_agents.get(run_id)
         task = self._active_run_tasks.get(run_id)
 
@@ -4780,6 +4922,284 @@ class APIServerAdapter(BasePlatformAdapter):
             ]
             for run_id in stale_statuses:
                 self._run_statuses.pop(run_id, None)
+                self._run_profile_homes.pop(run_id, None)
+
+    def _macsoft_profile_request(
+        self, request: "web.Request"
+    ) -> tuple[Optional[Path], Optional["web.Response"]]:
+        """Authenticate an internal Server request and resolve its profile."""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return None, auth_err
+        profile_home, profile_err = _resolve_macsoft_profile_home(request)
+        if profile_err:
+            return None, profile_err
+        if profile_home is None:
+            return None, web.json_response(
+                _openai_error("MacSoft profile header is required"), status=400
+            )
+        return profile_home, None
+
+    async def _run_profile_operation(
+        self, profile_home: Path, operation
+    ) -> Any:
+        """Run profile filesystem work inside the executor-local Hermes scope."""
+        loop = asyncio.get_running_loop()
+
+        def scoped_operation():
+            with _macsoft_profile_scope(profile_home):
+                return operation()
+
+        return await loop.run_in_executor(None, scoped_operation)
+
+    async def _handle_macsoft_curator_dry_run(
+        self, request: "web.Request"
+    ) -> "web.Response":
+        profile_home, error = self._macsoft_profile_request(request)
+        if error:
+            return error
+        try:
+            result = await self._run_profile_operation(
+                profile_home,
+                lambda: __import__("agent.curator", fromlist=["run_curator_review"])
+                .run_curator_review(synchronous=True, dry_run=True),
+            )
+            audit = result.pop("_macsoft_audit", None) if isinstance(result, dict) else None
+            payload = {"result": result}
+            if isinstance(audit, dict):
+                payload["_macsoft_audit"] = audit
+            return web.json_response(payload)
+        except Exception:
+            logger.exception("MacSoft profile curator dry-run failed")
+            return web.json_response(
+                _openai_error("Curator dry-run failed", err_type="server_error"),
+                status=500,
+            )
+
+    async def _handle_macsoft_curator_run(
+        self, request: "web.Request"
+    ) -> "web.Response":
+        profile_home, error = self._macsoft_profile_request(request)
+        if error:
+            return error
+        try:
+            def operation():
+                from agent.curator import run_curator_review
+
+                result = run_curator_review(synchronous=True, dry_run=False)
+                _clear_macsoft_skill_cache()
+                return result
+
+            result = await self._run_profile_operation(
+                profile_home,
+                lambda: _run_audited_macsoft_mutation(
+                    "curator_approved_run", None, operation
+                ),
+            )
+            audit = result.pop("_macsoft_audit", None) if isinstance(result, dict) else None
+            payload = {"result": result}
+            if isinstance(audit, dict):
+                payload["_macsoft_audit"] = audit
+            return web.json_response(payload)
+        except Exception:
+            logger.exception("MacSoft profile curator run failed")
+            return web.json_response(
+                _openai_error("Curator run failed", err_type="server_error"), status=500
+            )
+
+    async def _handle_macsoft_skill_pin(
+        self, request: "web.Request"
+    ) -> "web.Response":
+        profile_home, error = self._macsoft_profile_request(request)
+        if error:
+            return error
+        skill_id = request.match_info.get("skill_id", "")
+        if not _MACSOFT_SKILL_ID_RE.fullmatch(skill_id):
+            return web.json_response(_openai_error("Invalid skill ID"), status=400)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        pinned = body.get("pinned", True) if isinstance(body, dict) else True
+        if not isinstance(pinned, bool):
+            return web.json_response(_openai_error("pinned must be boolean"), status=400)
+
+        def operation():
+            from tools import skill_usage
+
+            learned = profile_home / "skills" / "learned" / skill_id / "SKILL.md"
+            if not learned.is_file():
+                raise FileNotFoundError(skill_id)
+            usage = skill_usage.load_usage()
+            record = usage.get(skill_id, {}) if isinstance(usage, dict) else {}
+            if not isinstance(record, dict) or not (
+                record.get("created_by") == "agent"
+                or record.get("agent_created") is True
+            ):
+                raise PermissionError(skill_id)
+            skill_usage.set_pinned(skill_id, pinned)
+            usage = skill_usage.load_usage()
+            record = usage.get(skill_id, {}) if isinstance(usage, dict) else {}
+            return record if isinstance(record, dict) else {}
+
+        try:
+            result = await self._run_profile_operation(
+                profile_home,
+                lambda: _run_audited_macsoft_mutation("skill_pin", skill_id, operation),
+            )
+            return web.json_response({"skill_id": skill_id, "pinned": pinned, "usage": result})
+        except FileNotFoundError:
+            return web.json_response(_openai_error("Progress skill not found"), status=404)
+        except PermissionError:
+            return web.json_response(_openai_error("Skill is not agent-created"), status=403)
+        except Exception:
+            logger.exception("MacSoft profile skill pin failed")
+            return web.json_response(_openai_error("Skill pin failed", err_type="server_error"), status=500)
+
+    async def _handle_macsoft_skill_restore(
+        self, request: "web.Request"
+    ) -> "web.Response":
+        profile_home, error = self._macsoft_profile_request(request)
+        if error:
+            return error
+        skill_id = request.match_info.get("skill_id", "")
+        if not _MACSOFT_SKILL_ID_RE.fullmatch(skill_id):
+            return web.json_response(_openai_error("Invalid skill ID"), status=400)
+
+        def operation():
+            from tools import skill_usage
+
+            usage = skill_usage.load_usage()
+            record = usage.get(skill_id, {}) if isinstance(usage, dict) else {}
+            if not isinstance(record, dict) or not (
+                record.get("created_by") == "agent"
+                or record.get("agent_created") is True
+            ):
+                raise PermissionError(skill_id)
+            ok, message = skill_usage.restore_skill(skill_id)
+            if ok:
+                _clear_macsoft_skill_cache()
+            return {"ok": bool(ok), "message": str(message)}
+
+        try:
+            result = await self._run_profile_operation(
+                profile_home,
+                lambda: _run_audited_macsoft_mutation("skill_restore", skill_id, operation),
+            )
+            return web.json_response(result, status=200 if result["ok"] else 404)
+        except PermissionError:
+            return web.json_response(_openai_error("Skill is not agent-created"), status=403)
+        except Exception:
+            logger.exception("MacSoft profile skill restore failed")
+            return web.json_response(_openai_error("Skill restore failed", err_type="server_error"), status=500)
+
+    async def _handle_macsoft_backups(
+        self, request: "web.Request"
+    ) -> "web.Response":
+        profile_home, error = self._macsoft_profile_request(request)
+        if error:
+            return error
+
+        def operation():
+            from agent.curator_backup import list_backups
+
+            return [
+                {key: value for key, value in item.items() if key != "path"}
+                for item in list_backups()
+            ]
+
+        try:
+            backups = await self._run_profile_operation(profile_home, operation)
+            return web.json_response({"backups": backups})
+        except Exception:
+            logger.exception("MacSoft profile backup listing failed")
+            return web.json_response(_openai_error("Backup listing failed", err_type="server_error"), status=500)
+
+    async def _handle_macsoft_backup_snapshot(
+        self, request: "web.Request"
+    ) -> "web.Response":
+        profile_home, error = self._macsoft_profile_request(request)
+        if error:
+            return error
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        reason = str(body.get("reason") or "macsoft-audited-change")[:160]
+
+        def operation():
+            from agent.curator_backup import snapshot_skills
+
+            path = snapshot_skills(reason=reason)
+            return None if path is None else path.name
+
+        try:
+            backup_id = await self._run_profile_operation(profile_home, operation)
+            if backup_id is None:
+                return web.json_response(
+                    _openai_error("Required pre-change backup could not be created", err_type="server_error"),
+                    status=500,
+                )
+            return web.json_response({"backup_id": backup_id, "reason": reason})
+        except Exception:
+            logger.exception("MacSoft profile backup snapshot failed")
+            return web.json_response(_openai_error("Backup snapshot failed", err_type="server_error"), status=500)
+
+    async def _handle_macsoft_backup_rollback(
+        self, request: "web.Request"
+    ) -> "web.Response":
+        profile_home, error = self._macsoft_profile_request(request)
+        if error:
+            return error
+        backup_id = request.match_info.get("backup_id", "")
+        if not _MACSOFT_BACKUP_ID_RE.fullmatch(backup_id):
+            return web.json_response(_openai_error("Invalid backup ID"), status=400)
+
+        def operation():
+            from agent.curator_backup import rollback
+
+            ok, message, _path = rollback(backup_id)
+            if ok:
+                _clear_macsoft_skill_cache()
+            return {"ok": bool(ok), "message": str(message), "backup_id": backup_id}
+
+        try:
+            result = await self._run_profile_operation(
+                profile_home,
+                lambda: _run_audited_macsoft_mutation("rollback", None, operation),
+            )
+            return web.json_response(result, status=200 if result["ok"] else 404)
+        except Exception:
+            logger.exception("MacSoft profile rollback failed")
+            return web.json_response(_openai_error("Rollback failed", err_type="server_error"), status=500)
+
+    async def _handle_macsoft_learning_graph(
+        self, request: "web.Request"
+    ) -> "web.Response":
+        profile_home, error = self._macsoft_profile_request(request)
+        if error:
+            return error
+        try:
+            graph = await self._run_profile_operation(
+                profile_home,
+                lambda: __import__("agent.learning_graph", fromlist=["build_learning_graph"])
+                .build_learning_graph(),
+            )
+            # The Client receives a Journey topology, not raw MEMORY.md chunks.
+            # Keep safe labels/timestamps while stripping card bodies.
+            if isinstance(graph, dict) and isinstance(graph.get("memory"), list):
+                graph["memory"] = [
+                    {
+                        key: card.get(key)
+                        for key in ("source", "timestamp", "title")
+                    }
+                    for card in graph["memory"]
+                    if isinstance(card, dict)
+                ]
+            return web.json_response(graph)
+        except Exception:
+            logger.exception("MacSoft profile learning graph failed")
+            return web.json_response(_openai_error("Learning graph failed", err_type="server_error"), status=500)
 
     # ------------------------------------------------------------------
     # BasePlatformAdapter interface
@@ -4884,6 +5304,16 @@ class APIServerAdapter(BasePlatformAdapter):
             self._app.router.add_get("/v1/runs/{run_id}/events", self._handle_run_events)
             self._app.router.add_post("/v1/runs/{run_id}/approval", self._handle_run_approval)
             self._app.router.add_post("/v1/runs/{run_id}/stop", self._handle_stop_run)
+            # Internal MacSoft Server-only profile operations. These require
+            # both API_SERVER_KEY and a Server-derived profile header.
+            self._app.router.add_post("/v1/macsoft/profile/curator/dry-run", self._handle_macsoft_curator_dry_run)
+            self._app.router.add_post("/v1/macsoft/profile/curator/run", self._handle_macsoft_curator_run)
+            self._app.router.add_post("/v1/macsoft/profile/skills/{skill_id}/pin", self._handle_macsoft_skill_pin)
+            self._app.router.add_post("/v1/macsoft/profile/skills/{skill_id}/restore", self._handle_macsoft_skill_restore)
+            self._app.router.add_get("/v1/macsoft/profile/curator/backups", self._handle_macsoft_backups)
+            self._app.router.add_post("/v1/macsoft/profile/curator/backups", self._handle_macsoft_backup_snapshot)
+            self._app.router.add_post("/v1/macsoft/profile/curator/backups/{backup_id}/rollback", self._handle_macsoft_backup_rollback)
+            self._app.router.add_get("/v1/macsoft/profile/learning-graph", self._handle_macsoft_learning_graph)
             # Store the adapter after native routes are registered. Local Hermes-Relay
             # bootstrap shims use this key as a feature-detection hook; registering
             # native routes first lets those shims no-op instead of shadowing the

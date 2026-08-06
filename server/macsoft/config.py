@@ -22,6 +22,7 @@ class DatabaseSettings:
 @dataclass(frozen=True)
 class HermesSettings:
     home: str
+    profile_root: str
     api_base_url: str
     api_key: str
     request_timeout_seconds: int
@@ -93,6 +94,7 @@ def load_config(config_path: str | None = None) -> AppConfig:
         ),
         hermes=HermesSettings(
             home=str(hermes_data.get("home", "../hermes")),
+            profile_root=str(hermes_data.get("profile_root", "./data/profiles")),
             api_base_url=str(
                 hermes_data.get(
                     "api_base_url",

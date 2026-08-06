@@ -143,6 +143,7 @@ def build_service_specs(
             environment={
                 **shared_environment,
                 "HERMES_HOME": str(paths.runtime_root),
+                "MACSOFT_PROFILE_ROOT": str(paths.runtime_root / "profiles"),
                 "PYTHONPATH": str(paths.ai_program_root),
             },
             health_url=f"http://127.0.0.1:{ai_port}/health",
@@ -162,6 +163,11 @@ def build_service_specs(
                 "MACSOFT_SERVER_CONFIG": str(paths.server_config),
                 "MACSOFT_HERMES_API_KEY": ai_api_key,
                 "MACSOFT_HERMES_CONFIG_API_URL": f"http://127.0.0.1:{CONFIG_BACKEND_PORT}",
+                # Device-owned Hermes learning state must remain in the same
+                # ProgramData runtime tree as the shared Hermes configuration,
+                # never under the Server program payload or an arbitrary
+                # Client-supplied path.
+                "MACSOFT_PROFILE_ROOT": str(paths.runtime_root / "profiles"),
                 "PYTHONPATH": str(paths.server_program_root),
             },
             health_url=f"http://127.0.0.1:{server_port}/health",

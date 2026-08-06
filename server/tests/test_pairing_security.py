@@ -98,6 +98,19 @@ class PairingSecurityTests(unittest.TestCase):
         self.assertEqual(me.status_code, 200)
         self.assertEqual(me.json()["default_model"], "server-hermes-current")
 
+        profile = self.client.get(
+            "/api/profile",
+            headers={
+                "Authorization": f"Bearer {body['device_token']}",
+                "X-Device-Id": "device-a",
+            },
+        )
+        self.assertEqual(profile.status_code, 200)
+        self.assertEqual(profile.json()["display_name"], "MacSoft Admin")
+        self.assertNotIn("profile_id", body)
+        self.assertNotIn("profile_id", me.json())
+        self.assertNotIn("profile_id", profile.json())
+
     def test_invalid_and_reused_code_use_top_level_410_envelope(self) -> None:
         code = self._pairing_code()
         payload = {

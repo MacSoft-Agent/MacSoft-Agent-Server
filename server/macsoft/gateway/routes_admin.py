@@ -466,7 +466,9 @@ def delete_admin_session(
     run_key = f"admin:{session_id}"
     if registry.is_active(run_key):
         raise HTTPException(status_code=409, detail=_error("admin_session_busy", "Admin session has an active reply."))
-    request.app.state.global_learning_gate.disable(session_id)
+    gate = getattr(request.app.state, "global_learning_gate", None)
+    if gate is not None:
+        gate.disable(session_id)
     conn = connect_db(request.app.state.config)
     try:
         delete_admin_session_files(conn, request.app.state.config, session_id=session_id)

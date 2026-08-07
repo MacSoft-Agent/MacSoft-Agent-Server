@@ -6,6 +6,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import yaml
@@ -27,6 +28,7 @@ from macsoft.global_learning.homes import (
     ensure_global_training_home,
     ensure_server_hermes_homes,
     global_home,
+    read_approved_global_memory,
 )
 
 
@@ -113,8 +115,8 @@ class GlobalLearningTests(unittest.TestCase):
 
     def test_native_admin_global_and_staging_homes_are_isolated_without_secrets(self) -> None:
         homes = ensure_server_hermes_homes(self.config)
-        self.assertEqual(homes["global"], self.runtime / "global")
-        self.assertEqual(homes["admin"], self.runtime / "admin")
+        self.assertEqual(homes["global"], (self.runtime / "global").resolve())
+        self.assertEqual(homes["admin"], (self.runtime / "admin").resolve())
         canonical_memory = homes["global"] / "memories" / "MEMORY.md"
         global_user = homes["global"] / "memories" / "USER.md"
         self.assertIn("not to an individual user", global_user.read_text(encoding="utf-8"))
@@ -133,6 +135,14 @@ class GlobalLearningTests(unittest.TestCase):
         self.assertEqual(scoped_config["model"]["default"], "server-model")
         self.assertNotIn("api_key", scoped_config["model"])
         self.assertTrue((staging / "skills" / "learned").is_dir())
+
+    def test_approved_global_memory_is_optional_without_a_runtime_home(self) -> None:
+        config = SimpleNamespace(
+            database=SimpleNamespace(path=str(self.root / "legacy.db")),
+            hermes=SimpleNamespace(home=""),
+        )
+        with patch.dict(os.environ, {"HERMES_HOME": "", "MACSOFT_PROFILE_ROOT": ""}):
+            self.assertIsNone(read_approved_global_memory(config))
 
     def test_training_gate_is_restart_closed_and_restricted_to_training_sessions(self) -> None:
         normal = self.client.post(

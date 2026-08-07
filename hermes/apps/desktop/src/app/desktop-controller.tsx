@@ -743,12 +743,20 @@ export function DesktopController() {
       navigate(sessionRoute(existing.session_id))
       return
     }
-    const target = window.prompt(
-      'Global Training target: enter general or a Workflow ID (autocount-operations, macsoft-chart-dashboard, macsoft-chart-visualization, data-storytelling, web-design-engineer).',
-      'general'
-    )
-    if (!target) return
-    void createGlobalTrainingSession(target.trim()).then(sessionId => {
+    // Electron can disable/block window.prompt in the renderer. Treat an
+    // unavailable or cancelled prompt as the safe General target instead of
+    // silently returning before the IPC request is sent.
+    let target = 'general'
+    try {
+      const prompted = window.prompt(
+        'Global Training target: enter general or a Workflow ID (autocount-operations, macsoft-chart-dashboard, macsoft-chart-visualization, data-storytelling, web-design-engineer).',
+        'general'
+      )
+      if (prompted?.trim()) target = prompted.trim()
+    } catch {
+      // Keep the default General target when native prompts are unavailable.
+    }
+    void createGlobalTrainingSession(target).then(sessionId => {
       if (sessionId) navigate(sessionRoute(sessionId))
     })
   }, [createGlobalTrainingSession, macSoftAdminChat.sessions, macSoftCustomerRuntime, navigate])

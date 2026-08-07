@@ -186,7 +186,12 @@ def set_global_training_target(config: Any, session_id: str, workflow_target: st
 
 def read_approved_global_memory(config: Any) -> str | None:
     """Return canonical approved global context without exposing its path."""
-    home = global_home(config)
+    try:
+        home = global_home(config)
+    except RuntimeError:
+        # Global context is an optional additive layer for legacy/direct route
+        # callers. The real Server provisions its home during create_app().
+        return None
     sections: list[str] = []
     for label, relative in (
         ("Server-wide operating context", "memories/USER.md"),

@@ -1,4 +1,0 @@
-interface:
-  display_name: "AutoCount Schema Guard"
-  short_description: "Prevent unsafe AutoCount schema type guesses"
-  default_prompt: "Use $autocount-schema-guard to interpret the live AutoCount schema and build a safe payload."

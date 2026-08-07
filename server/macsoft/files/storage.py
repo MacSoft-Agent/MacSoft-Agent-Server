@@ -409,6 +409,67 @@ def require_admin_owned_files(
     return records
 
 
+def list_owned_files_for_message(
+    conn: sqlite3.Connection,
+    *,
+    message_id: str,
+    owner_user_id: str,
+    owner_device_id: str,
+) -> list[UploadedFileRecord]:
+    rows = conn.execute(
+        """
+        SELECT f.* FROM uploaded_files f
+        INNER JOIN message_attachments a ON a.file_id = f.file_id
+        INNER JOIN messages m ON m.message_id = a.message_id
+        INNER JOIN sessions s ON s.session_id = m.session_id
+        WHERE a.message_id = ? AND f.owner_user_id = ? AND f.owner_device_id = ?
+          AND m.user_id = ? AND s.user_id = ? AND s.owner_device_id = ?
+          AND s.status = 'active' AND s.deleted_at IS NULL
+        ORDER BY f.created_at ASC
+        """,
+        (message_id, owner_user_id, owner_device_id, owner_user_id, owner_user_id, owner_device_id),
+    ).fetchall()
+    return [UploadedFileRecord.from_row(row) for row in rows]
+
+
+def attach_owned_files_to_message(
+    conn: sqlite3.Connection,
+    *,
+    message_id: str,
+    owner_user_id: str,
+    owner_device_id: str,
+    file_ids: list[str],
+) -> None:
+    if not file_ids:
+        return
+    placeholders = ",".join("?" for _ in file_ids)
+    cursor = conn.execute(
+        f"INSERT OR IGNORE INTO message_attachments (message_id, file_id) SELECT ?, file_id FROM uploaded_files WHERE owner_user_id = ? AND owner_device_id = ? AND file_id IN ({placeholders})",
+        (message_id, owner_user_id, owner_device_id, *file_ids),
+    )
+    if cursor.rowcount != len(file_ids):
+        raise ValueError("uploaded_file_message_binding_failed")
+    conn.commit()
+
+
+def list_admin_files_for_message(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    message_id: str,
+) -> list[AdminUploadedFileRecord]:
+    rows = conn.execute(
+        """
+        SELECT f.* FROM admin_uploaded_files f
+        INNER JOIN admin_sessions s ON s.session_id = f.session_id
+        WHERE f.session_id = ? AND f.message_id = ? AND s.deleted_at IS NULL
+        ORDER BY f.created_at ASC
+        """,
+        (session_id, message_id),
+    ).fetchall()
+    return [AdminUploadedFileRecord.from_row(row) for row in rows]
+
+
 def delete_admin_owned_file(
     conn: sqlite3.Connection,
     config: AppConfig,

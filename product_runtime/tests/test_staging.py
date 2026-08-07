@@ -43,6 +43,38 @@ class StagingAuditTests(unittest.TestCase):
             self.assertTrue(any("Git metadata" in issue for issue in issues))
             self.assertTrue(any("Forbidden state" in issue for issue in issues))
 
+    def test_whatsapp_credentials_and_runtime_env_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            staging = Path(temp)
+            session = staging / "accidental-runtime" / "platforms" / "whatsapp" / "session"
+            session.mkdir(parents=True)
+            (session / "creds.json").write_text('{"private":"credential"}', encoding="utf-8")
+            (staging / "accidental-runtime" / ".env").write_text(
+                "WHATSAPP_ALLOWED_USERS=*\n",
+                encoding="utf-8",
+            )
+
+            issues = audit_staging(staging, Path("C:/MacSoft-Agent"))
+
+            self.assertTrue(any("WhatsApp credential" in issue for issue in issues))
+            self.assertTrue(any("Runtime environment file" in issue for issue in issues))
+
+    def test_runtime_databases_logs_and_pairing_state_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            staging = Path(temp)
+            runtime = staging / "accidental-runtime"
+            (runtime / "pairing").mkdir(parents=True)
+            (runtime / "logs").mkdir()
+            (runtime / "pairing" / "whatsapp-approved.json").write_text("[]", encoding="utf-8")
+            (runtime / "logs" / "gateway.log").write_text("private chat", encoding="utf-8")
+            (runtime / "response_store.db").write_bytes(b"customer state")
+
+            issues = audit_staging(staging, Path("C:/MacSoft-Agent"))
+
+            self.assertTrue(any("Pairing state" in issue for issue in issues))
+            self.assertTrue(any("Runtime log" in issue for issue in issues))
+            self.assertTrue(any("Runtime database" in issue for issue in issues))
+
     def test_editable_python_install_metadata_is_excluded_and_rejected(self) -> None:
         names = [
             "__editable__.hermes_agent-0.18.2.pth",

@@ -24,6 +24,12 @@ platform_toolsets:
   api_server:
     - macsoft_autocount
     - skills_readonly
+  whatsapp:
+    - macsoft_autocount
+    - skills_readonly
+
+plugin_extensible_platform_toolsets:
+  - whatsapp
 
 plugins:
   enabled:

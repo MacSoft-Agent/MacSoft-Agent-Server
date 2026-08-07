@@ -39,6 +39,13 @@ tools = sys.modules[f"{PACKAGE_NAME}.tools"]
 validator = sys.modules[f"{PACKAGE_NAME}.validator"]
 
 
+class AutoCountPolicyRoutingTests(unittest.TestCase):
+    def test_policy_is_injected_for_macsoft_api_and_whatsapp_only(self) -> None:
+        self.assertIsNotNone(plugin._inject_policy(platform="api_server"))
+        self.assertIsNotNone(plugin._inject_policy(platform="whatsapp"))
+        self.assertIsNone(plugin._inject_policy(platform="telegram"))
+
+
 CATALOG = {
     "modules": [
         {

@@ -208,6 +208,29 @@ class FileContractTests(unittest.TestCase):
         self.assertIn('"document_id": "msg_assistant', response.text)
         self.assertIn("event: message_done", response.text)
 
+    def test_chat_extracts_html_document_wrapped_in_markdown(self) -> None:
+        response_text = """Code\n```html
+<!doctype html><html><body><h1>Debtor dashboard</h1></body></html>
+```\n"""
+
+        with patch(
+            "macsoft.gateway.routes_chat.stream_hermes_reply_events",
+            return_value=iter([{"type": "text_delta", "text": response_text}]),
+        ):
+            response = self.client.post(
+                "/api/chat/stream",
+                headers={**self.headers_1, "X-MacSoft-Client-Capabilities": "activity-v1"},
+                json={
+                    "session_id": "session_1",
+                    "message": "Give me a debtor dashboard with a chart.",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("event: html_document", response.text)
+        self.assertIn('"html": "<!doctype html><html><body><h1>Debtor dashboard</h1></body></html>"', response.text)
+        self.assertNotIn('"html": "Code', response.text)
+
     def test_unsupported_content_is_rejected_even_when_extension_is_allowed(self) -> None:
         response = self.client.post(
             "/api/files",

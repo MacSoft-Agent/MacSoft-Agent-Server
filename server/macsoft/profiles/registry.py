@@ -153,6 +153,7 @@ def _initial_profile_config(config: Any) -> dict[str, Any]:
         skills["creation_nudge_interval"] = 1
         if source_home is not None:
             shared_skills = str((source_home / "skills").resolve())
+            global_skills = str((source_home / "global" / "skills" / "learned").resolve())
             configured_dirs = skills.get("external_dirs", [])
             if isinstance(configured_dirs, str):
                 configured_dirs = [configured_dirs]
@@ -160,7 +161,12 @@ def _initial_profile_config(config: Any) -> dict[str, Any]:
                 configured_dirs = []
             skills["external_dirs"] = [
                 shared_skills,
-                *(item for item in configured_dirs if str(item) != shared_skills),
+                global_skills,
+                *(
+                    item
+                    for item in configured_dirs
+                    if str(item) not in {shared_skills, global_skills}
+                ),
             ]
     curator = profile_config.setdefault("curator", {})
     if isinstance(curator, dict):
@@ -226,12 +232,21 @@ def _initialize_profile_home(profile_home: Path, *, config: Any) -> None:
                 skills = current.setdefault("skills", {})
                 if isinstance(skills, dict):
                     shared_skills = str((source_home / "skills").resolve())
+                    global_skills = str((source_home / "global" / "skills" / "learned").resolve())
                     external = skills.get("external_dirs", [])
                     if isinstance(external, str):
                         external = [external]
                     if not isinstance(external, list):
                         external = []
-                    merged = [shared_skills, *(item for item in external if str(item) != shared_skills)]
+                    merged = [
+                        shared_skills,
+                        global_skills,
+                        *(
+                            item
+                            for item in external
+                            if str(item) not in {shared_skills, global_skills}
+                        ),
+                    ]
                     if merged != external:
                         skills["external_dirs"] = merged
                         changed = True

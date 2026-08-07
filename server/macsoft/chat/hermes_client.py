@@ -241,6 +241,7 @@ def _run_headers(
     api_key: str,
     *,
     profile_id: str | None = None,
+    admin_scope: str | None = None,
     accept: str = "application/json",
 ) -> dict[str, str]:
     headers = {
@@ -253,6 +254,13 @@ def _run_headers(
         # exclusively from the authenticated device profile, never a Client
         # parameter or a filesystem path.
         headers["X-MacSoft-Profile-Id"] = profile_id
+    if admin_scope:
+        if profile_id:
+            raise HermesApiError(
+                "A Hermes run cannot use both device and Admin scopes.",
+                kind="invalid_request",
+            )
+        headers["X-MacSoft-Admin-Scope"] = admin_scope
     return headers
 
 
@@ -308,6 +316,7 @@ def _start_hermes_run(
     messages: list[dict[str, Any]],
     session_id: str,
     profile_id: str | None = None,
+    admin_scope: str | None = None,
     timeout_seconds: int,
 ) -> str:
     normalized = _normalized_messages(messages)
@@ -335,7 +344,7 @@ def _start_hermes_run(
     request = Request(
         url=f"{base_url.rstrip('/')}/v1/runs",
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        headers=_run_headers(api_key, profile_id=profile_id),
+        headers=_run_headers(api_key, profile_id=profile_id, admin_scope=admin_scope),
         method="POST",
     )
     try:
@@ -350,12 +359,18 @@ def _start_hermes_run(
 
 
 def interrupt_hermes_run(
-    *, base_url: str, api_key: str, profile_id: str | None = None, run_id: str, timeout_seconds: int
+    *,
+    base_url: str,
+    api_key: str,
+    profile_id: str | None = None,
+    admin_scope: str | None = None,
+    run_id: str,
+    timeout_seconds: int,
 ) -> bool:
     request = Request(
         url=f"{base_url.rstrip('/')}/v1/runs/{run_id}/stop",
         data=b"{}",
-        headers=_run_headers(api_key, profile_id=profile_id),
+        headers=_run_headers(api_key, profile_id=profile_id, admin_scope=admin_scope),
         method="POST",
     )
     try:
@@ -377,6 +392,7 @@ def stream_interruptible_hermes_reply_events(
     messages: list[dict[str, Any]],
     session_id: str,
     profile_id: str | None = None,
+    admin_scope: str | None = None,
     timeout_seconds: int,
     on_run_started: Callable[[str], bool],
 ) -> Iterator[dict[str, str]]:
@@ -387,6 +403,7 @@ def stream_interruptible_hermes_reply_events(
         messages=messages,
         session_id=session_id,
         profile_id=profile_id,
+        admin_scope=admin_scope,
         timeout_seconds=timeout_seconds,
     )
     if on_run_started(run_id):
@@ -394,13 +411,19 @@ def stream_interruptible_hermes_reply_events(
             base_url=base_url,
             api_key=api_key,
             profile_id=profile_id,
+            admin_scope=admin_scope,
             run_id=run_id,
             timeout_seconds=timeout_seconds,
         )
 
     request = Request(
         url=f"{base_url.rstrip('/')}/v1/runs/{run_id}/events",
-        headers=_run_headers(api_key, profile_id=profile_id, accept="text/event-stream"),
+        headers=_run_headers(
+            api_key,
+            profile_id=profile_id,
+            admin_scope=admin_scope,
+            accept="text/event-stream",
+        ),
         method="GET",
     )
     text_seen = False

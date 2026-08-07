@@ -53,7 +53,7 @@ For every AutoCount request:
 
 def _inject_policy(platform: str = "", **kwargs):
     del kwargs
-    if platform and platform != "api_server":
+    if platform and platform not in {"api_server", "whatsapp"}:
         return None
     return {"context": _AUTOCOUNT_POLICY}
 

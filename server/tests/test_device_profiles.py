@@ -103,6 +103,10 @@ class DeviceProfileTests(unittest.TestCase):
                 profile_config["skills"]["external_dirs"][0],
                 str((self.hermes_home / "skills").resolve()),
             )
+            self.assertEqual(
+                profile_config["skills"]["external_dirs"][1],
+                str((self.hermes_home / "global" / "skills" / "learned").resolve()),
+            )
 
     def test_profile_path_rejects_untrusted_or_malformed_ids(self) -> None:
         previous = self._with_profile_root()

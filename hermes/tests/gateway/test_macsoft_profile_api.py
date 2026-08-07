@@ -10,16 +10,32 @@ import unittest
 from pathlib import Path
 
 from gateway.config import PlatformConfig
-from gateway.platforms.api_server import APIServerAdapter
-from hermes_constants import get_hermes_home
+from gateway.platforms.api_server import (
+    APIServerAdapter,
+    _configure_global_training_review,
+    _resolve_macsoft_profile_home,
+)
+from hermes_constants import get_hermes_home, get_writable_skills_dir
+from tools.skill_manager_tool import skill_manage
 
 
 class _Request:
-    def __init__(self, *, api_key: str, profile_id: str, match_info=None, body=None):
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        profile_id: str = "",
+        admin_scope: str = "",
+        match_info=None,
+        body=None,
+    ):
         self.headers = {
             "Authorization": f"Bearer {api_key}",
-            "X-MacSoft-Profile-Id": profile_id,
         }
+        if profile_id:
+            self.headers["X-MacSoft-Profile-Id"] = profile_id
+        if admin_scope:
+            self.headers["X-MacSoft-Admin-Scope"] = admin_scope
         self.match_info = match_info or {}
         self._body = body or {}
         self.remote = "127.0.0.1"
@@ -32,8 +48,8 @@ class MacSoftProfileApiTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         root = Path(self.temp.name)
-        self.profile_root = root / "profiles"
         self.shared_home = root / "shared"
+        self.profile_root = self.shared_home / "profiles"
         self.shared_home.mkdir(parents=True)
         (self.shared_home / "config.yaml").write_text("{}\n", encoding="utf-8")
         self.profile_ids = [
@@ -50,6 +66,12 @@ class MacSoftProfileApiTests(unittest.IsolatedAsyncioTestCase):
         self.old_hermes_home = os.environ.get("HERMES_HOME")
         os.environ["MACSOFT_PROFILE_ROOT"] = str(self.profile_root)
         os.environ["HERMES_HOME"] = str(self.shared_home)
+        (self.shared_home / "admin").mkdir()
+        self.training_session_id = "admin_sess_0123456789abcdef0123456789abcdef"
+        self.training_home = self.shared_home / "global-staging" / self.training_session_id
+        (self.training_home / "skills" / "learned").mkdir(parents=True)
+        (self.training_home / "memories").mkdir()
+        (self.training_home / "config.yaml").write_text("{}\n", encoding="utf-8")
         self.adapter = APIServerAdapter(
             PlatformConfig(enabled=True, extra={"key": "internal-secret"})
         )
@@ -65,6 +87,17 @@ class MacSoftProfileApiTests(unittest.IsolatedAsyncioTestCase):
         else:
             os.environ["HERMES_HOME"] = self.old_hermes_home
         self.temp.cleanup()
+
+    def test_global_training_overrides_only_its_native_review_prompts(self) -> None:
+        global_agent = type("Agent", (), {})()
+        _configure_global_training_review(global_agent, self.training_home)
+        self.assertIn("Server-wide Global Training", global_agent._COMBINED_REVIEW_PROMPT)
+        self.assertIn("not facts about the person who raised it", global_agent._COMBINED_REVIEW_PROMPT)
+        self.assertIn("make no change", global_agent._MEMORY_REVIEW_PROMPT)
+
+        device_agent = type("Agent", (), {})()
+        _configure_global_training_review(device_agent, self.profile_root / self.profile_ids[0])
+        self.assertFalse(hasattr(device_agent, "_COMBINED_REVIEW_PROMPT"))
 
     async def test_executor_scopes_are_isolated_under_concurrency(self) -> None:
         barrier = threading.Barrier(2)
@@ -102,6 +135,76 @@ class MacSoftProfileApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((homes[1] / "memories" / "MEMORY.md").read_text(), "B")
         self.assertFalse((homes[0] / "skills" / "learned" / "skill-B").exists())
         self.assertFalse((homes[1] / "skills" / "learned" / "skill-A").exists())
+
+    async def test_admin_scope_is_derived_and_global_staging_is_server_overlay_only(self) -> None:
+        admin, admin_error = _resolve_macsoft_profile_home(
+            _Request(api_key="internal-secret", admin_scope="admin")
+        )
+        self.assertIsNone(admin_error)
+        self.assertEqual(admin, self.shared_home / "admin")
+
+        training, training_error = _resolve_macsoft_profile_home(
+            _Request(
+                api_key="internal-secret",
+                admin_scope=f"global-training:{self.training_session_id}",
+            )
+        )
+        self.assertIsNone(training_error)
+        self.assertEqual(training, self.training_home)
+
+        writable = await self.adapter._run_profile_operation(
+            self.training_home,
+            lambda: get_writable_skills_dir(),
+        )
+        self.assertEqual(
+            writable,
+            self.training_home / "skills" / "learned" / "workflow-improvements",
+        )
+
+    async def test_targeted_training_rejects_a_different_workflow_category(self) -> None:
+        (self.training_home / "config.yaml").write_text(
+            "macsoft_global_workflow_target: autocount-operations\n", encoding="utf-8"
+        )
+        result = await self.adapter._run_profile_operation(
+            self.training_home,
+            lambda: skill_manage(
+                action="create",
+                name="dashboard-improvement",
+                category="macsoft-chart-dashboard",
+                content="---\nname: dashboard-improvement\ndescription: test\n---\nTest.",
+            ),
+        )
+        self.assertIn("locked to workflow 'autocount-operations'", result)
+
+    async def test_scope_headers_conflict_and_run_binding_cannot_cross_scope(self) -> None:
+        _home, conflict = _resolve_macsoft_profile_home(
+            _Request(
+                api_key="internal-secret",
+                profile_id=self.profile_ids[0],
+                admin_scope="admin",
+            )
+        )
+        self.assertEqual(conflict.status, 400)
+
+        run_id = "run_global_training_scope"
+        self.adapter._run_profile_homes[run_id] = self.training_home
+        self.adapter._set_run_status(run_id, "running")
+        wrong = await self.adapter._handle_get_run(
+            _Request(
+                api_key="internal-secret",
+                admin_scope="admin",
+                match_info={"run_id": run_id},
+            )
+        )
+        self.assertEqual(wrong.status, 404)
+        owned = await self.adapter._handle_get_run(
+            _Request(
+                api_key="internal-secret",
+                admin_scope=f"global-training:{self.training_session_id}",
+                match_info={"run_id": run_id},
+            )
+        )
+        self.assertEqual(owned.status, 200)
 
     async def test_pin_only_accepts_learned_skill(self) -> None:
         profile_id = self.profile_ids[0]

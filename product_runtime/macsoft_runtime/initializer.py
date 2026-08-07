@@ -93,46 +93,86 @@ def _ensure_yaml_list_item(path: Path, key_path: tuple[str, ...], value: str) ->
     without replacing the user's model, provider, or other configuration.
     """
     lines = path.read_text(encoding="utf-8-sig").splitlines(keepends=True)
-    target_indent = None
-    list_start = None
-    list_end = None
+    newline = "\r\n" if any(line.endswith("\r\n") for line in lines) else "\n"
+    if len(key_path) == 1:
+        target_index = None
+        target_end = len(lines)
+        for index, line in enumerate(lines):
+            match = _YAML_KEY_LINE.match(line)
+            if not match or len(match.group(1).expandtabs(8)) != 0:
+                continue
+            if target_index is None:
+                if match.group(2) == key_path[0]:
+                    target_index = index
+                continue
+            target_end = index
+            break
+        if target_index is None:
+            if lines and lines[-1].strip():
+                lines.append(newline)
+            lines.extend((f"{key_path[0]}:{newline}", f"  - {value}{newline}"))
+            _atomic_write(path, "".join(lines).encode("utf-8"))
+            return True
+        if any(re.search(rf"^\s*-\s*{re.escape(value)}\s*(?:#.*)?$", line) for line in lines[target_index + 1:target_end]):
+            return False
+        lines.insert(target_end, f"  - {value}{newline}")
+        _atomic_write(path, "".join(lines).encode("utf-8"))
+        return True
+    if len(key_path) != 2:
+        raise ValueError(f"Unsupported YAML list path: {'.'.join(key_path)}")
 
+    parent_index = None
+    parent_end = len(lines)
     for index, line in enumerate(lines):
         match = _YAML_KEY_LINE.match(line)
         if not match:
             continue
-        prefix, key, remainder, _newline = match.groups()
+        prefix, key, _remainder, _newline = match.groups()
         indent = len(prefix.expandtabs(8))
-        if target_indent is None:
-            if key != key_path[-1] or indent != 2:
-                continue
-            parents = []
-            for prior in lines[:index]:
-                prior_match = _YAML_KEY_LINE.match(prior)
-                if prior_match:
-                    prior_prefix, prior_key, prior_remainder, _ = prior_match.groups()
-                    prior_indent = len(prior_prefix.expandtabs(8))
-                    while parents and parents[-1][0] >= prior_indent:
-                        parents.pop()
-                    if not (prior_remainder or "").strip() or (prior_remainder or "").lstrip().startswith("#"):
-                        parents.append((prior_indent, prior_key))
-            if tuple(item[1] for item in parents) != key_path[:-1]:
-                continue
-            target_indent = indent
-            list_start = index + 1
-            list_end = list_start
+        if parent_index is None:
+            if indent == 0 and key == key_path[0]:
+                parent_index = index
             continue
-        if indent <= target_indent and line.strip() and not line.lstrip().startswith("#"):
+        if indent == 0:
+            parent_end = index
+            break
+
+    if parent_index is None:
+        raise ValueError(f"{path.name} is missing required mapping: {key_path[0]}")
+
+    target_index = None
+    for index in range(parent_index + 1, parent_end):
+        match = _YAML_KEY_LINE.match(lines[index])
+        if not match:
+            continue
+        prefix, key, _remainder, _newline = match.groups()
+        if len(prefix.expandtabs(8)) == 2 and key == key_path[1]:
+            target_index = index
+            break
+
+    if target_index is None:
+        insertion = [
+            f"  {key_path[1]}:{newline}",
+            f"    - {value}{newline}",
+        ]
+        lines[parent_end:parent_end] = insertion
+        _atomic_write(path, "".join(lines).encode("utf-8"))
+        return True
+
+    target_indent = 2
+    list_start = target_index + 1
+    list_end = list_start
+    for index in range(list_start, parent_end):
+        line = lines[index]
+        match = _YAML_KEY_LINE.match(line)
+        if match and len(match.group(1).expandtabs(8)) <= target_indent:
             list_end = index
             break
         list_end = index + 1
 
-    if list_start is None:
-        raise ValueError(f"{path.name} is missing required list: {'.'.join(key_path)}")
     if any(re.search(rf"^\s*-\s*{re.escape(value)}\s*(?:#.*)?$", line) for line in lines[list_start:list_end]):
         return False
 
-    newline = "\r\n" if any(line.endswith("\r\n") for line in lines) else "\n"
     lines.insert(list_end, f"{' ' * (target_indent + 2)}- {value}{newline}")
     _atomic_write(path, "".join(lines).encode("utf-8"))
     return True
@@ -331,6 +371,17 @@ def initialize_product_data(paths: ProductPaths, metadata: ProductMetadata) -> I
         paths.runtime_config,
         ("platform_toolsets", "api_server"),
         "skills_readonly",
+    )
+    for toolset in ("macsoft_autocount", "skills_readonly"):
+        _ensure_yaml_list_item(
+            paths.runtime_config,
+            ("platform_toolsets", "whatsapp"),
+            toolset,
+        )
+    _ensure_yaml_list_item(
+        paths.runtime_config,
+        ("plugin_extensible_platform_toolsets",),
+        "whatsapp",
     )
     if paths.is_packaged:
         _synchronize_yaml_scalar(

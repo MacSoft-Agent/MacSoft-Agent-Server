@@ -1717,6 +1717,8 @@ def _apply_yaml_config(yaml_cfg: dict, whatsapp_cfg: dict) -> dict | None:
     take precedence over YAML. Returns None — everything flows through env.
     """
     import json as _json
+    if "mode" in whatsapp_cfg and not os.getenv("WHATSAPP_MODE"):
+        os.environ["WHATSAPP_MODE"] = str(whatsapp_cfg["mode"]).lower()
     if "require_mention" in whatsapp_cfg and not os.getenv("WHATSAPP_REQUIRE_MENTION"):
         os.environ["WHATSAPP_REQUIRE_MENTION"] = str(whatsapp_cfg["require_mention"]).lower()
     if "mention_patterns" in whatsapp_cfg and not os.getenv("WHATSAPP_MENTION_PATTERNS"):

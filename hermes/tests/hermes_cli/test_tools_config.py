@@ -468,6 +468,25 @@ def test_get_platform_tools_handles_null_platform_toolsets():
     assert enabled
 
 
+def test_plugin_extensible_platform_keeps_named_and_plugin_toolsets(monkeypatch):
+    monkeypatch.setattr(
+        "hermes_cli.tools_config._get_plugin_toolset_keys",
+        lambda: {"macsoft_autocount", "unexpected_plugin"},
+    )
+    config = {
+        "platform_toolsets": {
+            "whatsapp": ["macsoft_autocount", "skills_readonly"],
+        },
+        "plugin_extensible_platform_toolsets": ["whatsapp"],
+    }
+
+    assert _get_platform_tools(config, "whatsapp") == {
+        "macsoft_autocount",
+        "skills_readonly",
+        "unexpected_plugin",
+    }
+
+
 def test_platform_toolset_summary_uses_explicit_platform_list():
     config = {}
 

@@ -1902,6 +1902,18 @@ def _get_platform_tools(
         disabled_set = {str(ts) for ts in disabled_toolsets}
         enabled_toolsets -= disabled_set
 
+    # Product runtimes can keep an externally reachable platform narrow while
+    # still allowing capabilities delivered by current and future plugins.
+    # This removes Hermes-recovered native/core toolsets that were not named by
+    # the product, but preserves plugin toolsets under the normal plugin enable
+    # and default-off rules above.
+    plugin_extensible_platforms = config.get("plugin_extensible_platform_toolsets") or []
+    if (
+        isinstance(plugin_extensible_platforms, list)
+        and platform in {str(item) for item in plugin_extensible_platforms}
+    ):
+        enabled_toolsets &= set(toolset_names) | plugin_ts_keys
+
     # #38798: if this platform was explicitly configured but every toolset name
     # is invalid (e.g. a migration or hand-edit left `hermes` instead of
     # `hermes-cli`), resolve_toolset() returns [] for each and the platform ends

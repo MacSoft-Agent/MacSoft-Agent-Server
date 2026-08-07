@@ -61,8 +61,13 @@ _HTML_DOCUMENT_RE = re.compile(
     r"^\s*<!doctype\s+html\s*>\s*<html\b[\s\S]*</html>\s*$",
     re.IGNORECASE,
 )
+_HTML_DOCUMENT_EXTRACT_RE = re.compile(
+    r"(<!doctype\s+html\s*>\s*<html\b[\s\S]*</html\s*>)",
+    re.IGNORECASE,
+)
 from macsoft.profiles.registry import require_device_profile
 from macsoft.profiles.runs import record_run_finished, record_run_started
+from macsoft.global_learning.homes import read_approved_global_memory
 
 # Keep the established test/extension seam name while routing it through the
 # structured Runs implementation.  This is not the legacy chat-completions
@@ -100,6 +105,23 @@ def request_hermes_reply(
 def is_complete_html_document(content: str) -> bool:
     """Match the raw HTML document contract consumed by the Client."""
     return isinstance(content, str) and bool(_HTML_DOCUMENT_RE.match(content))
+
+
+def extract_complete_html_document(content: str) -> str | None:
+    """Extract one complete HTML document from a model response.
+
+    Models sometimes add a short explanation, a ``Code`` label, or a Markdown
+    code fence around an otherwise valid dashboard.  The Client dashboard
+    renderer must receive only the document, while the normal assistant text
+    remains unchanged for transcript compatibility.
+    """
+    if not isinstance(content, str):
+        return None
+    match = _HTML_DOCUMENT_EXTRACT_RE.search(content)
+    if match is None:
+        return None
+    document = match.group(1).strip()
+    return document if is_complete_html_document(document) else None
 
 
 class ChatStreamRequest(BaseModel):
@@ -460,6 +482,7 @@ def chat_stream(
                     "role": "system",
                     "content": build_protected_system_instruction(
                         client_skill_instruction,
+                        global_learning_instruction=read_approved_global_memory(config),
                     ),
                 },
             )
@@ -773,7 +796,8 @@ def chat_stream(
                         },
                     )
 
-                    if is_complete_html_document(assistant_text):
+                    html_document = extract_complete_html_document(assistant_text)
+                    if html_document is not None:
                         yield sse_event(
                             "html_document",
                             {
@@ -782,7 +806,7 @@ def chat_stream(
                                 "message_id": assistant_message_id,
                                 "session_id": body.session_id,
                                 "mime_type": "text/html",
-                                "html": assistant_text,
+                                "html": html_document,
                             },
                         )
 

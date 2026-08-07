@@ -1,6 +1,11 @@
-import { useCallback, useEffect, useReducer, useRef } from 'react'
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 
-import type { MacSoftAdminMessage, MacSoftAdminSession, MacSoftAdminStreamEvent } from '@/global'
+import type {
+  MacSoftAdminMessage,
+  MacSoftAdminSession,
+  MacSoftAdminStreamEvent,
+  MacSoftGlobalLearningProposal
+} from '@/global'
 import {
   appendAssistantTextPart,
   assistantTextPart,
@@ -288,6 +293,12 @@ export function useMacSoftAdminChat(enabled: boolean, serverReady: boolean) {
   const messagesBySessionRef = useRef(new Map<string, ChatMessage[]>())
   const runsBySessionRef = useRef(new Map<string, ActiveRun>())
   const reconcileGenerationRef = useRef(new Map<string, number>())
+  const [globalLearningEnabled, setGlobalLearningEnabled] = useState(false)
+  const [globalLearningBusy, setGlobalLearningBusy] = useState(false)
+  const [globalProposals, setGlobalProposals] = useState<MacSoftGlobalLearningProposal[]>([])
+
+  const selectedSession = state.sessions.find(session => session.session_id === state.selectedSessionId) ?? null
+  const globalTrainingSession = selectedSession?.session_type === 'global_training'
 
   const updateSessionMessages = useCallback(
     (sessionId: string, update: (messages: ChatMessage[]) => ChatMessage[]) => {
@@ -378,6 +389,17 @@ export function useMacSoftAdminChat(enabled: boolean, serverReady: boolean) {
         return true
       }
 
+      const previousSessionId = selectedSessionRef.current
+      if (previousSessionId && globalLearningEnabled) {
+        const previous = sessionsRef.current.find(session => session.session_id === previousSessionId)
+        if (previous?.session_type === 'global_training') {
+          await window.hermesDesktop.macSoftAdminChat
+            .toggleGlobalLearning({ sessionId: previousSessionId, enabled: false })
+            .catch(() => undefined)
+          setGlobalLearningEnabled(false)
+        }
+      }
+
       selectedSessionRef.current = sessionId
       localStorage.setItem('macsoft.admin.selected-session', sessionId)
       syncSelectedView(sessionId)
@@ -410,8 +432,106 @@ export function useMacSoftAdminChat(enabled: boolean, serverReady: boolean) {
         return false
       }
     },
-    [readHistory, syncSelectedView]
+    [globalLearningEnabled, readHistory, syncSelectedView]
   )
+
+  const createGlobalTrainingSession = useCallback(async (workflowTarget?: string) => {
+    if (selectedSessionRef.current && runsBySessionRef.current.has(selectedSessionRef.current)) {
+      return null
+    }
+    setGlobalLearningBusy(true)
+    try {
+      const session = await window.hermesDesktop.macSoftAdminChat.createGlobalTrainingSession(workflowTarget)
+      sessionsRef.current = [...sessionsRef.current, session]
+      messagesBySessionRef.current.set(session.session_id, [])
+      selectedSessionRef.current = session.session_id
+      localStorage.setItem('macsoft.admin.selected-session', session.session_id)
+      dispatch({ type: 'sessions', selectedSessionId: session.session_id, sessions: sessionsRef.current })
+      syncSelectedView(session.session_id)
+      setGlobalLearningEnabled(false)
+      setGlobalProposals(await window.hermesDesktop.macSoftAdminChat.listGlobalLearningProposals())
+      return session.session_id
+    } catch {
+      dispatch({ type: 'error', message: 'Global Training session could not be created.' })
+      return null
+    } finally {
+      setGlobalLearningBusy(false)
+    }
+  }, [syncSelectedView])
+
+  const toggleGlobalLearning = useCallback(async (next: boolean) => {
+    const sessionId = selectedSessionRef.current
+    const session = sessionsRef.current.find(item => item.session_id === sessionId)
+    if (!sessionId || session?.session_type !== 'global_training' || runsBySessionRef.current.has(sessionId)) {
+      return false
+    }
+    if (next && !window.confirm(
+      'Enable Global Training? Accepted learning proposals may affect every paired Client.'
+    )) {
+      return false
+    }
+    setGlobalLearningBusy(true)
+    try {
+      const result = await window.hermesDesktop.macSoftAdminChat.toggleGlobalLearning({
+        sessionId,
+        enabled: next
+      })
+      setGlobalLearningEnabled(result.enabled)
+      return result.enabled === next
+    } catch {
+      dispatch({ type: 'error', message: 'Global Learning state could not be changed.' })
+      return false
+    } finally {
+      setGlobalLearningBusy(false)
+    }
+  }, [])
+
+  const refreshGlobalProposals = useCallback(async () => {
+    const sessionId = selectedSessionRef.current
+    if (!sessionId) return
+    try {
+      await window.hermesDesktop.macSoftAdminChat.refreshGlobalLearningProposal(sessionId)
+      setGlobalProposals(await window.hermesDesktop.macSoftAdminChat.listGlobalLearningProposals())
+    } catch {
+      // Native review is asynchronous; a later refresh can reconcile it.
+    }
+  }, [])
+
+  const decideGlobalProposal = useCallback(async (
+    proposalId: string,
+    decision: 'approve' | 'reject'
+  ) => {
+    setGlobalLearningBusy(true)
+    try {
+      await window.hermesDesktop.macSoftAdminChat.decideGlobalLearningProposal({ proposalId, decision })
+      setGlobalProposals(await window.hermesDesktop.macSoftAdminChat.listGlobalLearningProposals())
+      setGlobalLearningEnabled(false)
+      return true
+    } catch {
+      dispatch({ type: 'error', message: `Global Learning proposal could not be ${decision}d.` })
+      return false
+    } finally {
+      setGlobalLearningBusy(false)
+    }
+  }, [])
+
+  const restoreGlobalProposal = useCallback(async (proposalId: string) => {
+    if (!window.confirm('Restore the Global Home state from before this approved proposal?')) {
+      return false
+    }
+    setGlobalLearningBusy(true)
+    try {
+      await window.hermesDesktop.macSoftAdminChat.restoreGlobalLearningProposal(proposalId)
+      setGlobalProposals(await window.hermesDesktop.macSoftAdminChat.listGlobalLearningProposals())
+      setGlobalLearningEnabled(false)
+      return true
+    } catch {
+      dispatch({ type: 'error', message: 'Global Learning proposal could not be restored.' })
+      return false
+    } finally {
+      setGlobalLearningBusy(false)
+    }
+  }, [])
 
   const createSession = useCallback(async () => {
     if (selectedSessionRef.current && runsBySessionRef.current.has(selectedSessionRef.current)) {
@@ -712,18 +832,68 @@ export function useMacSoftAdminChat(enabled: boolean, serverReady: boolean) {
         }
 
         scheduleHistoryReconcile(sessionId)
+        if (!failed && sessionsRef.current.some(
+          session => session.session_id === sessionId && session.session_type === 'global_training'
+        )) {
+          window.setTimeout(() => void refreshGlobalProposals(), 750)
+        }
       }
     })
-  }, [enabled, scheduleHistoryReconcile, syncSelectedView, updateSessionMessages])
+  }, [enabled, refreshGlobalProposals, scheduleHistoryReconcile, syncSelectedView, updateSessionMessages])
+
+  useEffect(() => {
+    if (!globalTrainingSession || !state.selectedSessionId) {
+      setGlobalLearningEnabled(false)
+      return
+    }
+    let cancelled = false
+    void Promise.all([
+      window.hermesDesktop.macSoftAdminChat.getGlobalLearningStatus(state.selectedSessionId),
+      window.hermesDesktop.macSoftAdminChat.listGlobalLearningProposals()
+    ]).then(([status, proposals]) => {
+      if (!cancelled) {
+        setGlobalLearningEnabled(status.enabled)
+        setGlobalProposals(proposals)
+      }
+    }).catch(() => undefined)
+    return () => { cancelled = true }
+  }, [globalTrainingSession, state.selectedSessionId])
+
+  useEffect(() => {
+    if (!globalTrainingSession || !state.selectedSessionId || !globalLearningEnabled) {
+      return
+    }
+    const sessionId = state.selectedSessionId
+    const heartbeat = () => {
+      void window.hermesDesktop.macSoftAdminChat.getGlobalLearningStatus(sessionId)
+        .then(status => setGlobalLearningEnabled(status.enabled))
+        .catch(() => setGlobalLearningEnabled(false))
+    }
+    const timer = window.setInterval(heartbeat, 10_000)
+    return () => window.clearInterval(timer)
+  }, [globalLearningEnabled, globalTrainingSession, state.selectedSessionId])
 
   return {
     ...state,
     createSession,
+    createGlobalTrainingSession,
+    decideGlobalProposal,
+    restoreGlobalProposal,
     deleteSession,
     selectSession,
+    selectedSession,
     startFreshDraft,
     stop,
     submit,
-    ...macSoftAdminPromptCapabilities(state, serverReady)
+    toggleGlobalLearning,
+    refreshGlobalProposals,
+    globalLearningBusy,
+    globalLearningEnabled,
+    globalProposals,
+    globalTrainingSession,
+    ...macSoftAdminPromptCapabilities(state, serverReady),
+    canSubmitPrompt:
+      macSoftAdminPromptCapabilities(state, serverReady).canSubmitPrompt
+      && (!globalTrainingSession || globalLearningEnabled)
   }
 }

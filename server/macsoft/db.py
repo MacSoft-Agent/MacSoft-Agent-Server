@@ -356,6 +356,8 @@ def init_db(config: AppConfig) -> None:
             CREATE TABLE IF NOT EXISTS admin_sessions (
                 session_id TEXT PRIMARY KEY,
                 title TEXT NOT NULL,
+                session_type TEXT NOT NULL DEFAULT 'chat',
+                workflow_target TEXT NOT NULL DEFAULT 'general',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 deleted_at TEXT
@@ -392,11 +394,70 @@ def init_db(config: AppConfig) -> None:
                 created_at TEXT NOT NULL,
                 FOREIGN KEY(session_id) REFERENCES admin_sessions(session_id)
             );
+
+            CREATE TABLE IF NOT EXISTS global_learning_proposals (
+                proposal_id TEXT PRIMARY KEY,
+                training_session_id TEXT NOT NULL,
+                run_id TEXT,
+                kind TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                decided_at TEXT,
+                FOREIGN KEY(training_session_id) REFERENCES admin_sessions(session_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS global_learning_audit (
+                audit_id TEXT PRIMARY KEY,
+                proposal_id TEXT,
+                training_session_id TEXT NOT NULL,
+                run_id TEXT,
+                workflow_target TEXT NOT NULL DEFAULT 'general',
+                final_target TEXT,
+                change_source TEXT NOT NULL,
+                previous_hash TEXT,
+                new_hash TEXT,
+                result TEXT NOT NULL,
+                detail TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(proposal_id) REFERENCES global_learning_proposals(proposal_id),
+                FOREIGN KEY(training_session_id) REFERENCES admin_sessions(session_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS global_skill_versions (
+                version_id TEXT PRIMARY KEY,
+                skill_id TEXT NOT NULL,
+                proposal_id TEXT,
+                previous_hash TEXT,
+                new_hash TEXT NOT NULL,
+                workflow_target TEXT NOT NULL DEFAULT 'general',
+                snapshot_path TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(proposal_id) REFERENCES global_learning_proposals(proposal_id)
+            );
             """
         )
         admin_file_columns = {row["name"] for row in conn.execute("PRAGMA table_info(admin_uploaded_files)")}
         if "message_id" not in admin_file_columns:
             conn.execute("ALTER TABLE admin_uploaded_files ADD COLUMN message_id TEXT")
+
+        admin_session_columns = _table_columns(conn, "admin_sessions")
+        if "session_type" not in admin_session_columns:
+            conn.execute(
+                "ALTER TABLE admin_sessions ADD COLUMN session_type TEXT NOT NULL DEFAULT 'chat'"
+            )
+        if "workflow_target" not in admin_session_columns:
+            conn.execute(
+                "ALTER TABLE admin_sessions ADD COLUMN workflow_target TEXT NOT NULL DEFAULT 'general'"
+            )
+        global_audit_columns = _table_columns(conn, "global_learning_audit")
+        if "workflow_target" not in global_audit_columns:
+            conn.execute("ALTER TABLE global_learning_audit ADD COLUMN workflow_target TEXT NOT NULL DEFAULT 'general'")
+        if "final_target" not in global_audit_columns:
+            conn.execute("ALTER TABLE global_learning_audit ADD COLUMN final_target TEXT")
+        global_version_columns = _table_columns(conn, "global_skill_versions")
+        if "workflow_target" not in global_version_columns:
+            conn.execute("ALTER TABLE global_skill_versions ADD COLUMN workflow_target TEXT NOT NULL DEFAULT 'general'")
 
         session_columns = _table_columns(conn, "sessions")
         if "deleted_at" not in session_columns:
@@ -464,6 +525,18 @@ def init_db(config: AppConfig) -> None:
 
             CREATE INDEX IF NOT EXISTS idx_admin_uploaded_files_message
             ON admin_uploaded_files(message_id, created_at ASC);
+
+            CREATE INDEX IF NOT EXISTS idx_admin_sessions_type_active
+            ON admin_sessions(session_type, deleted_at, updated_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_global_learning_proposals_status
+            ON global_learning_proposals(status, created_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_global_learning_audit_created
+            ON global_learning_audit(created_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_global_skill_versions_skill_created
+            ON global_skill_versions(skill_id, created_at DESC);
             """
         )
 

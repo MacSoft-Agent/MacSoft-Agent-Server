@@ -372,6 +372,14 @@ def init_db(config: AppConfig) -> None:
                 FOREIGN KEY(session_id) REFERENCES admin_sessions(session_id)
             );
 
+            CREATE TABLE IF NOT EXISTS message_attachments (
+                message_id TEXT NOT NULL,
+                file_id TEXT NOT NULL,
+                PRIMARY KEY(message_id, file_id),
+                FOREIGN KEY(message_id) REFERENCES messages(message_id),
+                FOREIGN KEY(file_id) REFERENCES uploaded_files(file_id)
+            );
+
             CREATE TABLE IF NOT EXISTS admin_uploaded_files (
                 file_id TEXT PRIMARY KEY,
                 session_id TEXT NOT NULL,
@@ -441,6 +449,9 @@ def init_db(config: AppConfig) -> None:
 
             CREATE INDEX IF NOT EXISTS idx_uploaded_files_owner
             ON uploaded_files(owner_user_id, owner_device_id, created_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_message_attachments_file
+            ON message_attachments(file_id, message_id);
 
             CREATE INDEX IF NOT EXISTS idx_admin_sessions_active
             ON admin_sessions(deleted_at, updated_at DESC);

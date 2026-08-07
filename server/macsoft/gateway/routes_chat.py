@@ -34,7 +34,12 @@ from macsoft.chat.result_formatter import (
 )
 from macsoft.db import connect_db
 from macsoft.files.content import AttachmentContentError, build_hermes_user_content
-from macsoft.files.storage import UploadValidationError, require_owned_files
+from macsoft.files.storage import (
+    UploadValidationError,
+    attach_owned_files_to_message,
+    list_owned_files_for_message,
+    require_owned_files,
+)
 from macsoft.identity.devices import require_device
 from macsoft.security import new_id
 from macsoft.sessions.message_store import (
@@ -394,6 +399,13 @@ def chat_stream(
                 content=body.message,
                 model=None,
             )
+            attach_owned_files_to_message(
+                conn,
+                message_id=str(user_message["message_id"]),
+                owner_user_id=user_id,
+                owner_device_id=device_id,
+                file_ids=body.uploaded_file_ids,
+            )
 
             context_window = list_ai_context_messages_for_session(
                 conn,
@@ -405,6 +417,7 @@ def chat_stream(
 
             hermes_messages = [
                 {
+                    "message_id": str(message["message_id"]),
                     "role": str(message["role"]),
                     "content": str(message["content"]),
                 }
@@ -415,6 +428,22 @@ def chat_stream(
                     if message["role"] == "user":
                         message["content"] = current_user_content
                         break
+            else:
+                for message in hermes_messages:
+                    if message["role"] != "user":
+                        continue
+                    historical_files = list_owned_files_for_message(
+                        conn,
+                        message_id=str(message["message_id"]),
+                        owner_user_id=user_id,
+                        owner_device_id=device_id,
+                    )
+                    if historical_files:
+                        message["content"] = build_hermes_user_content(
+                            config,
+                            message=str(message["content"]),
+                            files=historical_files,
+                        )
 
             selected_client_skills = resolve_selected_client_skills(
                 conn,

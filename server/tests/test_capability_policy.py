@@ -104,6 +104,20 @@ class CapabilityPolicyTests(unittest.TestCase):
             sorted(combined.index(label) for label in labels),
         )
 
+    def test_approved_global_learning_is_read_only_and_precedes_private_device_guidance(self) -> None:
+        combined = build_protected_system_instruction(
+            "Private device preference",
+            "Company workflow instruction",
+            "Approved reusable validation method",
+        )
+        self.assertIn("[APPROVED SERVER-GLOBAL LEARNING]", combined)
+        self.assertIn("Approved reusable validation method", combined)
+        self.assertIn("read-only, general guidance", combined)
+        self.assertLess(
+            combined.index("[APPROVED SERVER-GLOBAL LEARNING]"),
+            combined.index("[PRIVATE DEVICE PREFERENCES]"),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

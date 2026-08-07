@@ -606,7 +606,7 @@ def _find_skill(name: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def _macsoft_progress_skill_guard(name: str) -> Optional[Dict[str, Any]]:
+def _macsoft_progress_skill_guard(name: str, category: str | None = None) -> Optional[Dict[str, Any]]:
     """Reject writes outside a MacSoft Profile's learned skill collection."""
     macsoft_root = os.environ.get("MACSOFT_PROFILE_ROOT", "").strip()
     if not macsoft_root:
@@ -614,10 +614,44 @@ def _macsoft_progress_skill_guard(name: str) -> Optional[Dict[str, Any]]:
     try:
         home = get_hermes_home().resolve()
         root = Path(macsoft_root).expanduser().resolve()
-        if home.parent != root or not home.name.startswith("prof_"):
+        device_profile = home.parent == root and home.name.startswith("prof_")
+        global_staging = (
+            home.parent == (root.parent / "global-staging").resolve()
+            and home.name.startswith("admin_sess_")
+        )
+        if not device_profile and not global_staging:
             return None
     except OSError:
         return {"success": False, "error": "MacSoft Profile skill root could not be resolved."}
+
+    if global_staging:
+        allowed_targets = {
+            "autocount-operations", "macsoft-chart-dashboard",
+            "macsoft-chart-visualization", "data-storytelling",
+            "web-design-engineer",
+        }
+        if category not in allowed_targets:
+            return {
+                "success": False,
+                "error": "Global Workflow Improvements must use exactly one approved workflow category.",
+            }
+        target = "general"
+        try:
+            config_text = (home / "config.yaml").read_text(encoding="utf-8")
+            match = re.search(
+                r"^macsoft_global_workflow_target:\s*['\"]?([a-z0-9._-]+)",
+                config_text,
+                re.MULTILINE,
+            )
+            if match:
+                target = match.group(1)
+        except (OSError, UnicodeDecodeError):
+            pass
+        if target != "general" and category != target:
+            return {
+                "success": False,
+                "error": f"This Global Training session is locked to workflow '{target}'.",
+            }
 
     existing = _find_skill(name)
     if existing is None:
@@ -638,7 +672,7 @@ def _macsoft_progress_skill_guard(name: str) -> Optional[Dict[str, Any]]:
                     return {
                         "success": False,
                         "error": (
-                            "MacSoft device Profiles cannot shadow Core, Company, "
+                            "MacSoft learning scopes cannot shadow Core, Company, "
                             "Workflow, or other shared Skills."
                         ),
                     }
@@ -651,7 +685,7 @@ def _macsoft_progress_skill_guard(name: str) -> Optional[Dict[str, Any]]:
     except (ValueError, OSError):
         return {
             "success": False,
-            "error": "MacSoft device Profiles may modify only Progress Skills in skills/learned.",
+            "error": "MacSoft Global learning may modify only Server-owned workflow-improvements overlays.",
         }
     return None
 
@@ -1393,7 +1427,7 @@ def skill_manage(
         return json.dumps(preflight, ensure_ascii=False)
 
     if action in {"create", "edit", "patch", "delete", "write_file", "remove_file"}:
-        progress_guard = _macsoft_progress_skill_guard(name)
+        progress_guard = _macsoft_progress_skill_guard(name, category)
         if progress_guard is not None:
             return json.dumps(progress_guard, ensure_ascii=False)
 

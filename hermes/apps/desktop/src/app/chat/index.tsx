@@ -495,6 +495,93 @@ export function ChatView({
         selectedSessionId={selectedSessionId}
       />
 
+      {macSoftCustomerRuntime && adminChat?.globalTrainingSession && (
+        <section
+          aria-label="Global Training controls"
+          className={cn(
+            'relative z-10 border-b px-4 py-2 text-xs',
+            adminChat.globalLearningEnabled
+              ? 'border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-100'
+              : 'border-(--ui-stroke-tertiary) bg-(--ui-sidebar-surface-background) text-(--ui-text-secondary)'
+          )}
+        >
+          <div className="flex flex-wrap items-center gap-2">
+              <strong className="text-[0.8125rem] text-foreground">
+                GLOBAL TRAINING MODE · {adminChat.selectedSession?.workflow_target || 'general'}
+              </strong>
+            <span>
+              {adminChat.globalLearningEnabled
+                ? 'ON — this session may propose improvements affecting every Client.'
+                : 'OFF — no Global Training message can run.'}
+            </span>
+            <Button
+              className="ml-auto"
+              disabled={adminChat.globalLearningBusy || adminChat.streaming}
+              onClick={() => void adminChat.toggleGlobalLearning(!adminChat.globalLearningEnabled)}
+              size="sm"
+              variant={adminChat.globalLearningEnabled ? 'destructive' : 'outline'}
+            >
+              {adminChat.globalLearningEnabled ? 'Disable Training' : 'Enable Training'}
+            </Button>
+            <Button
+              disabled={adminChat.globalLearningBusy || adminChat.streaming}
+              onClick={() => void adminChat.refreshGlobalProposals()}
+              size="sm"
+              variant="outline"
+            >
+              Refresh Proposals
+            </Button>
+          </div>
+          {adminChat.globalProposals.filter(proposal => proposal.status === 'pending').map(proposal => (
+            <div
+              className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-(--ui-stroke-tertiary) bg-(--ui-chat-surface-background) px-2 py-1.5"
+              key={proposal.proposal_id}
+            >
+                <span className="font-medium text-foreground">
+                  {proposal.kind.replaceAll('_', ' ')} · {proposal.workflow_target || 'general'}
+                </span>
+              <span>{proposal.changes.length} native file change(s)</span>
+              <Button
+                className="ml-auto"
+                disabled={adminChat.globalLearningBusy}
+                onClick={() => void adminChat.decideGlobalProposal(proposal.proposal_id, 'approve')}
+                size="sm"
+                variant="outline"
+              >
+                Approve
+              </Button>
+              <Button
+                disabled={adminChat.globalLearningBusy}
+                onClick={() => void adminChat.decideGlobalProposal(proposal.proposal_id, 'reject')}
+                size="sm"
+                variant="ghost"
+              >
+                Reject
+              </Button>
+            </div>
+          ))}
+          {adminChat.globalProposals.filter(proposal => proposal.status === 'approved').map(proposal => (
+            <div
+              className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-(--ui-stroke-tertiary) bg-(--ui-chat-surface-background) px-2 py-1.5"
+              key={proposal.proposal_id}
+            >
+              <span className="font-medium text-foreground">
+                Approved: {proposal.kind.replaceAll('_', ' ')} · {proposal.workflow_target || 'general'}
+              </span>
+              <Button
+                className="ml-auto"
+                disabled={adminChat.globalLearningBusy || adminChat.streaming}
+                onClick={() => void adminChat.restoreGlobalProposal(proposal.proposal_id)}
+                size="sm"
+                variant="ghost"
+              >
+                Restore previous version
+              </Button>
+            </div>
+          ))}
+        </section>
+      )}
+
       <PromptOverlays />
 
       <ChatRuntimeBoundary

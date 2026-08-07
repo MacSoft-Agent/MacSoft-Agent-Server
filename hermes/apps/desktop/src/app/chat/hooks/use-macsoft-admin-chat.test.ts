@@ -17,6 +17,8 @@ const session = (id: string): MacSoftAdminSession => ({
   created_at: '2026-07-21T00:00:00Z',
   id,
   session_id: id,
+  session_type: 'chat',
+  workflow_target: 'general',
   title: `Admin ${id}`,
   updated_at: '2026-07-21T00:00:00Z'
 })

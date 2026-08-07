@@ -661,6 +661,7 @@ export function DesktopController() {
   const startFreshMacSoftAdminDraft = macSoftAdminChat.startFreshDraft
   const selectMacSoftAdminSession = macSoftAdminChat.selectSession
   const deleteMacSoftAdminSession = macSoftAdminChat.deleteSession
+  const createGlobalTrainingSession = macSoftAdminChat.createGlobalTrainingSession
   const macSoftRouteOpenRef = useRef<string | null>(null)
   const macSoftDraftTransitionRef = useRef(false)
 
@@ -734,6 +735,23 @@ export function DesktopController() {
     },
     [macSoftCustomerRuntime, selectSidebarItem, startFreshSessionForRuntime]
   )
+
+  const openGlobalTraining = useCallback(() => {
+    if (!macSoftCustomerRuntime) return
+    const existing = macSoftAdminChat.sessions.find(session => session.session_type === 'global_training')
+    if (existing) {
+      navigate(sessionRoute(existing.session_id))
+      return
+    }
+    const target = window.prompt(
+      'Global Training target: enter general or a Workflow ID (autocount-operations, macsoft-chart-dashboard, macsoft-chart-visualization, data-storytelling, web-design-engineer).',
+      'general'
+    )
+    if (!target) return
+    void createGlobalTrainingSession(target.trim()).then(sessionId => {
+      if (sessionId) navigate(sessionRoute(sessionId))
+    })
+  }, [createGlobalTrainingSession, macSoftAdminChat.sessions, macSoftCustomerRuntime, navigate])
 
   const removeSessionForRuntime = useCallback(
     async (sessionId: string) => {
@@ -1232,6 +1250,7 @@ export function DesktopController() {
         navigate(CRON_ROUTE)
       }}
       onNavigate={handleSidebarNavigate}
+      onOpenGlobalTraining={openGlobalTraining}
       onNewSessionInWorkspace={startSessionInWorkspace}
       onResumeSession={sessionId => navigate(sessionRoute(sessionId))}
       onTriggerCronJob={jobId => {

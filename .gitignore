@@ -41,6 +41,7 @@ hermes/apps/*/src/**/*.js
 docs/hermes-bridge-probe.txt
 server/autocount-api-result.txt
 server/macsoft-hermes-bridge-input.txt
+tmp/
 
 # ============================================================
 # Runtime data and databases

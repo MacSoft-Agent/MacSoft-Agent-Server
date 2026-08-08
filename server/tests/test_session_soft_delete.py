@@ -231,7 +231,7 @@ class SessionSoftDeleteTests(unittest.TestCase):
                 x_device_id="device_a",
             )
         self.assertEqual(unauthorized.exception.status_code, 401)
-        self.assertEqual(unauthorized.exception.detail["error"]["code"], "invalid_device_token")
+        self.assertEqual(unauthorized.exception.detail["error"]["code"], "device_credentials_rejected")
 
         conn = sqlite3.connect(self.db_path)
         try:

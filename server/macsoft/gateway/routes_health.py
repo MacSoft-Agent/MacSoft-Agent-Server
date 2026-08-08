@@ -15,6 +15,7 @@ def health(request: Request) -> dict:
         "ok": True,
         "status": "ok",
         "server": "MacSoft Server",
+        "server_id": request.app.state.server_id,
         "version": request.app.state.product_version,
         "host": config.server.host,
         "port": config.server.port,

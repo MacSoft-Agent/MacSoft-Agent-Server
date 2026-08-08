@@ -125,6 +125,34 @@ class PairingSecurityTests(unittest.TestCase):
         self.assertEqual(reused.json()["error"]["code"], "invalid_pairing_code")
         self.assertNotIn("detail", reused.json())
 
+    def test_rejected_device_credentials_have_a_server_specific_error(self) -> None:
+        paired = self.client.post(
+            "/api/client/pair",
+            headers={"X-Device-Id": "device-a"},
+            json={
+                "pairing_code": self._pairing_code(),
+                "device_id": "device-a",
+                "client_name": "MacSoft Client",
+                "client_version": "2.0",
+            },
+        ).json()
+
+        for headers in (
+            {"Authorization": "Bearer unknown", "X-Device-Id": "device-a"},
+            {"Authorization": f"Bearer {paired['device_token']}", "X-Device-Id": "device-b"},
+        ):
+            with self.subTest(headers=headers):
+                response = self.client.get("/api/client/me", headers=headers)
+                self.assertEqual(response.status_code, 401)
+                self.assertEqual(
+                    response.json()["error"],
+                    {
+                        "code": "device_credentials_rejected",
+                        "message": "This device credential is not accepted by this Server.",
+                        "details": {},
+                    },
+                )
+
     def test_validation_error_is_top_level_and_does_not_echo_input(self) -> None:
         secret = "secret-value-that-must-not-echo"
         response = self.client.post(

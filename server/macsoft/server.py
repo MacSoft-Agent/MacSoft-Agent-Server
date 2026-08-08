@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from macsoft.config import load_config
 from macsoft.chat.active_runs import ActiveChatRunRegistry
 from macsoft.admin.auth import AdminAccessRegistry
-from macsoft.db import init_db
+from macsoft.db import get_server_id, init_db
 from macsoft.gateway.errors import register_exception_handlers
 from macsoft.gateway.routes_chat import router as chat_router
 from macsoft.gateway.routes_audio import router as audio_router
@@ -48,6 +48,7 @@ def create_app() -> FastAPI:
     )
 
     app.state.config = config
+    app.state.server_id = get_server_id(config)
     app.state.product_version = product_version()
     app.state.active_chat_runs = ActiveChatRunRegistry()
     app.state.admin_access_registry = AdminAccessRegistry()

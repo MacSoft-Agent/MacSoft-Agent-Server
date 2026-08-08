@@ -3,6 +3,7 @@
 import logging
 import sqlite3
 from pathlib import Path
+from uuid import uuid4
 
 from macsoft.config import AppConfig
 from macsoft.security import utc_now_iso
@@ -182,6 +183,34 @@ def connect_db(config: AppConfig) -> sqlite3.Connection:
     return conn
 
 
+def _ensure_server_id(conn: sqlite3.Connection) -> str:
+    """Return the durable public identity of this Server database."""
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO server_identity (singleton, server_id, created_at)
+        VALUES (1, ?, ?)
+        """,
+        (str(uuid4()), utc_now_iso()),
+    )
+    row = conn.execute(
+        "SELECT server_id FROM server_identity WHERE singleton = 1"
+    ).fetchone()
+    if row is None:
+        raise RuntimeError("Server identity could not be provisioned.")
+    return str(row["server_id"])
+
+
+def get_server_id(config: AppConfig) -> str:
+    """Read the durable public identity owned by the configured database."""
+    conn = connect_db(config)
+    try:
+        server_id = _ensure_server_id(conn)
+        conn.commit()
+        return server_id
+    finally:
+        conn.close()
+
+
 def init_db(config: AppConfig) -> None:
     conn = connect_db(config)
 
@@ -210,6 +239,12 @@ def init_db(config: AppConfig) -> None:
                 last_seen_at TEXT,
                 revoked_at TEXT,
                 FOREIGN KEY(user_id) REFERENCES users(user_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS server_identity (
+                singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                server_id TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS device_profiles (
@@ -530,6 +565,8 @@ def init_db(config: AppConfig) -> None:
         )
 
         now = utc_now_iso()
+
+        _ensure_server_id(conn)
 
         conn.execute(
             """

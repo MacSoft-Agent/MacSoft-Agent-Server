@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from macsoft.chat.active_runs import get_active_chat_registry
 from macsoft.db import connect_db
+from macsoft.gateway.errors import device_credentials_rejected_error
 from macsoft.identity.devices import require_device
 from macsoft.sessions.message_store import list_messages_for_session
 from macsoft.sessions.session_store import (
@@ -23,6 +24,8 @@ class CreateSessionRequest(BaseModel):
 
 
 def error_response(code: str, message: str) -> dict:
+    if code == "invalid_device_token":
+        return device_credentials_rejected_error()
     return {
         "ok": False,
         "error": {

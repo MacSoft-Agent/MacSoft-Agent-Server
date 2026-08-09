@@ -201,6 +201,7 @@ function searchResultToSession(result: SessionSearchResult): SessionInfo {
 interface ChatSidebarProps extends React.ComponentProps<typeof Sidebar> {
   currentView: AppView
   macSoftCustomerRuntime?: boolean
+  macSoftSourceTestRuntime?: boolean
   onNavigate: (item: SidebarNavItem) => void
   onOpenGlobalTraining?: () => void
   onLoadMoreSessions: () => Promise<void> | void
@@ -218,6 +219,7 @@ interface ChatSidebarProps extends React.ComponentProps<typeof Sidebar> {
 export function ChatSidebar({
   currentView,
   macSoftCustomerRuntime = false,
+  macSoftSourceTestRuntime = false,
   onNavigate,
   onOpenGlobalTraining,
   onLoadMoreSessions,
@@ -1051,7 +1053,12 @@ export function ChatSidebar({
         <SidebarGroup className="shrink-0 p-0 pb-2 pt-[calc(var(--titlebar-height)+0.375rem)]">
           <SidebarGroupContent>
             <SidebarMenu className="gap-px">
-              {SIDEBAR_NAV.filter(item => !macSoftCustomerRuntime || item.id === 'new-session').map(item => {
+              {SIDEBAR_NAV.filter(
+                item =>
+                  !macSoftCustomerRuntime ||
+                  item.id === 'new-session' ||
+                  (macSoftSourceTestRuntime && item.id === 'messaging')
+              ).map(item => {
                 const isInteractive = Boolean(item.action) || Boolean(item.route)
 
                 const active =

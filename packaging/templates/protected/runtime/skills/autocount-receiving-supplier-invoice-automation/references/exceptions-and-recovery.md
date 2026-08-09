@@ -10,6 +10,8 @@
 - Archive failure: retain managed evidence if available and report incomplete archive.
 - AutoCount unavailable: preserve Case and next required live read.
 - Duplicate supplier invoice: compare stable evidence and live PI before any write.
+- Lookup schema mismatch: preserve the displayed identifier, resolve an internal key only through an executed authoritative read, and report unresolved rather than absent when no mapping capability exists.
+- Workflow approval/context rejection without a command ID: the write was not submitted; complete or refresh the approval handshake instead of blaming or retrying the connector.
 
 ## Stale approval
 
@@ -27,3 +29,10 @@ Persist stable action ID/execution-started event first. After timeout:
 6. otherwise escalate for manual verification.
 
 Never create a second PO or PI just because the first response was lost.
+
+## Failure classification
+
+- No command ID and no queued/submitted response: pre-submission failure; do not claim AutoCount executed it.
+- Command ID plus final failed status: connector/AutoCount execution failure; report the returned error.
+- Command ID plus timeout or missing final response: uncertain; read back before any retry.
+- Approval or action-digest mismatch: regenerate the preview/approval only when the underlying facts changed; otherwise complete the missing active-contract handshake without duplicating business reads.

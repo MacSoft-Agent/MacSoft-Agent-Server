@@ -86,4 +86,34 @@ describe('MessagingView setup-guide link', () => {
 
     await waitFor(() => expect(openExternalLink).toHaveBeenCalledWith(docsUrl))
   })
+
+  it('shows the current value for a non-secret messaging setting', async () => {
+    getMessagingPlatforms.mockResolvedValue({
+      platforms: [
+        platform({
+          env_vars: [
+            {
+              advanced: true,
+              current_value: 'self-chat',
+              description: 'WhatsApp bridge mode',
+              is_password: false,
+              is_set: true,
+              key: 'WHATSAPP_MODE',
+              prompt: 'Bridge mode',
+              redacted_value: '***',
+              required: false,
+              url: null
+            }
+          ],
+          id: 'whatsapp',
+          name: 'WhatsApp'
+        })
+      ]
+    })
+
+    renderMessaging()
+
+    fireEvent.click(await screen.findByText('Advanced (1)'))
+    expect(await screen.findByDisplayValue('self-chat')).toBeTruthy()
+  })
 })

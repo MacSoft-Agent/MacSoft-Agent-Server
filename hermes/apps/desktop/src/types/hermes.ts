@@ -147,6 +147,7 @@ export interface MemoryProviderConfig {
 
 export interface MessagingEnvVarInfo {
   advanced: boolean
+  current_value?: string
   description: string
   is_password: boolean
   is_set: boolean

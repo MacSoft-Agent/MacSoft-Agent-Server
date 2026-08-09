@@ -55,3 +55,25 @@ class TestBinaryDocumentNote:
         # The text path claims content is inlined; the binary path must not.
         assert "included below" in text_note
         assert "included below" not in pdf_note
+
+    def test_preprocessed_pdf_note_does_not_tell_agent_to_use_missing_tools(self):
+        note = _build_document_context_note(
+            "invoice.pdf",
+            "/cache/invoice.pdf",
+            "application/pdf",
+            text_available=True,
+        )
+
+        assert "extracted content has been included below" in note
+        assert "terminal tool" not in note
+
+    def test_rendered_pdf_note_directs_agent_to_attached_page_images(self):
+        note = _build_document_context_note(
+            "scan.pdf",
+            "/cache/scan.pdf",
+            "application/pdf",
+            images_available=True,
+        )
+
+        assert "page images are attached" in note
+        assert "terminal tool" not in note

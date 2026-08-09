@@ -164,6 +164,13 @@ class TestFormatMessage:
 class TestMessageLimits:
     """WhatsApp message length limits."""
 
+    def test_default_reply_prefix_uses_macsoft_customer_brand(self):
+        from plugins.platforms.whatsapp.adapter import WhatsAppAdapter
+
+        assert WhatsAppAdapter.DEFAULT_REPLY_PREFIX == (
+            "⚕ *Mac Soft AI Agent*\n────────────\n"
+        )
+
     def test_max_message_length_is_practical(self):
         from plugins.platforms.whatsapp.adapter import WhatsAppAdapter
         assert WhatsAppAdapter.MAX_MESSAGE_LENGTH == 4096
@@ -264,6 +271,25 @@ class TestSendChunking:
         call_args = adapter._http_session.post.call_args
         payload = call_args.kwargs.get("json") or call_args[1].get("json")
         assert payload["message"] == "*bold text*"
+
+    @pytest.mark.asyncio
+    async def test_customer_visible_hermes_brand_is_replaced(self):
+        adapter = _make_adapter()
+        resp = MagicMock(status=200)
+        resp.json = AsyncMock(return_value={"messageId": "msg1"})
+        adapter._http_session.post = MagicMock(return_value=_AsyncCM(resp))
+
+        await adapter.send(
+            "chat1",
+            "Hermes Gateway is ready. Run `hermes gateway restart` only from the server.",
+        )
+
+        call_args = adapter._http_session.post.call_args
+        payload = call_args.kwargs.get("json") or call_args[1].get("json")
+        assert payload["message"] == (
+            "Mac Soft AI Agent Gateway is ready. "
+            "Run `hermes gateway restart` only from the server."
+        )
 
     @pytest.mark.asyncio
     async def test_reply_to_only_on_first_chunk(self):

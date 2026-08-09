@@ -36,6 +36,26 @@ catalog, API key, connector policy, account book, and AutoCount license allow.
 10. Wait for the final command result.
 11. Report real identifiers and official errors accurately.
 
+## Identifier and payload resolution
+
+The live command schema is authoritative for accepted payload shape and type, but a type requirement does not prove that two business identifiers are equivalent.
+
+| Identifier | Meaning | Rule |
+|---|---|---|
+| `docNo` / displayed document number | Human-visible value such as `PO-000001` | Preserve the complete value, including prefix, punctuation, and leading zeroes. |
+| `docKey` / `autoKey` | Internal numeric record key | Use only a value returned by an authoritative live read for that exact record. |
+| line/detail key | Internal line identity | Use only the key returned with the resolved parent document and line. |
+
+When evidence supplies a displayed identifier but a detail command accepts only a numeric internal key:
+
+1. do not strip the prefix, parse the numeric suffix, hash, truncate, or otherwise coerce the displayed value;
+2. execute an available official list/search/read command that accepts compatible criteria;
+3. exact-match the returned displayed identifier and relevant company/account-book context;
+4. use only the internal key returned by that matched record;
+5. if no supported command establishes the mapping, report the record as unresolved because of an interface limitation, not absent.
+
+Reading `autocount_get_command_schema` discovers capability; it does not query business records. Passing `autocount_validate_command` proves payload conformance only; it does not prove identifier meaning, record existence, or business correctness. Never claim a search ran after only reading or validating its schema.
+
 ## Official discovery sources
 
 When general AutoCount documentation is too broad, consult these exact official
@@ -84,6 +104,9 @@ connector mismatch and do not force the field into a write.
   establish the meaning, say so and do not guess.
 - Prefer official read/list commands to resolve internal codes. Ask for the
   business choice only when AutoCount cannot resolve it safely.
+- Treat document numbers, record keys, and line keys as opaque and distinct.
+  Never change an identifier merely to satisfy a schema type. Resolve any
+  mapping through an executed authoritative read.
 - Present multiple business records as a Markdown table or bullet list. Never
   use bare newline-separated records because Markdown renderers may collapse
   them into one paragraph. Use customer-readable business labels and, when

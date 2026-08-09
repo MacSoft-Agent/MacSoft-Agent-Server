@@ -26,8 +26,11 @@ test('MacSoft source test mode is explicit and restricted to the Vite developmen
 test('MacSoft source test runtime restores the original Hermes Messaging navigation', () => {
   const controller = fs.readFileSync(new URL('../src/app/desktop-controller.tsx', import.meta.url), 'utf8')
   const sidebar = fs.readFileSync(new URL('../src/app/chat/sidebar/index.tsx', import.meta.url), 'utf8')
+  const systemActions = fs.readFileSync(new URL('../src/store/system-actions.ts', import.meta.url), 'utf8')
   assert.match(controller, /macSoftSourceTestRuntime=\{macSoftSourceTestRuntime\}/)
   assert.match(sidebar, /item\.id === 'messaging'/)
+  assert.match(systemActions, /macSoftCustomerRuntime/)
+  assert.match(systemActions, /macSoftHost\.serviceAction\('ai_service', 'restart'\)/)
 })
 
 test('packaged customer runtime cannot enter the bootstrap downloader', () => {

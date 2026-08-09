@@ -30,6 +30,12 @@ For every AutoCount request:
 6. If required business data is missing, ask for it. When possible, use
    official read/list commands to resolve codes from AutoCount instead of
    asking the user to know internal codes.
+   Treat displayed document numbers, internal record keys, and line keys as
+   opaque and distinct. Never strip prefixes or leading zeroes, parse a numeric
+   suffix, or otherwise change an identifier merely to satisfy a schema type.
+   Use an internal key only when an executed authoritative read maps it to the
+   exact displayed identifier. Reading or validating a schema is not a business
+   record query; an unresolved mapping is not proof that a record is absent.
 7. Once the request is unambiguous and the required data is complete, execute
    it directly. Do not add a second confirmation step.
 8. MacSoft adds no extra command allowlist. The official AutoCount API key,

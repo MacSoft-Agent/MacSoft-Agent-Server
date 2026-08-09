@@ -1,5 +1,9 @@
 # PO Creation and Correction
 
+## Resolve before declaring absence
+
+Keep the supplier's displayed PO number unchanged. A formatted document number and an AutoCount internal numeric key are different identifiers unless a live result maps them. If direct lookup cannot accept the displayed value, execute a supported list/search operation and exact-match its returned document-number field; only then use the returned internal key. Reading a schema does not query business data. An incompatible interface means unresolved, not missing.
+
 ## No PO
 
 Tell the user no suitable live PO was found and ask whether AI should prepare one. If the user declines, preserve the Case for manual PO creation or later information.
@@ -12,9 +16,10 @@ If accepted:
 4. omit an unresolved optional field, but stop and report a missing required code rather than guessing it;
 5. validate the exact PO payload;
 6. preview header, every line, totals, source evidence, and assumptions;
-7. obtain fresh approval tied to Case version/digest/action ID;
-8. create the PO once;
-9. read back PO number, status, lines, and totals.
+7. obtain fresh user approval tied to the exact preview;
+8. when required by the active Tool contract, use its exposed approval capability (currently `workflow_approve_autocount_action` when available) and pass the returned Case version, action ID, action digest, scope, and other required values unchanged as execution `workflow_context`;
+9. create the PO once; do not execute if required workflow context is absent or the payload differs from the approved payload;
+10. read back PO number, status, lines, and totals.
 
 ## Existing PO correction
 

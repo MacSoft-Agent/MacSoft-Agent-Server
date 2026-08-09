@@ -37,6 +37,7 @@ sys.modules[PACKAGE_NAME] = plugin
 spec.loader.exec_module(plugin)
 tools = sys.modules[f"{PACKAGE_NAME}.tools"]
 validator = sys.modules[f"{PACKAGE_NAME}.validator"]
+workflow_tools = sys.modules[f"{PACKAGE_NAME}.workflow_tools"]
 
 
 class AutoCountPolicyRoutingTests(unittest.TestCase):
@@ -279,6 +280,89 @@ class AutoCountValidatorTests(unittest.TestCase):
         self.assertNotIn(("POST", "/v1/commands"), calls)
         self.assertFalse(any("connectors" in path for _, path in calls))
 
+    def test_valid_existing_command_execution_keeps_non_workflow_path(self) -> None:
+        calls: list[tuple[str, str]] = []
+
+        def execute_api(method: str, path: str, **kwargs):
+            calls.append((method, path))
+            if path in {"/v1/schema/modules", "/v1/schema/commands/create-sales-invoice"}:
+                return api_side_effect(method, path, **kwargs)
+            if method == "GET" and path == "/v1/connectors/connector/status":
+                return {"online": True}
+            if method == "POST" and path == "/v1/commands":
+                return {"status": "queued"}
+            if method == "GET" and path.startswith("/v1/commands/macsoft-create-sales-invoice-"):
+                return {"status": "done", "result": {"docNo": "IV-1"}}
+            raise AssertionError(f"Unexpected API call: {method} {path}")
+
+        config = {
+            "baseUrl": "https://autocount.invalid",
+            "apiKey": "test-key",
+            "connectorId": "connector",
+            "companyId": "company",
+            "pollIntervalSeconds": 1,
+            "commandTimeoutSeconds": 5,
+        }
+        params = {
+            "command_type": "create-sales-invoice",
+            "payload": {
+                "debtorCode": "D-001",
+                "lines": [{"itemCode": "ITEM-001", "qty": 1, "uom": "UNIT"}],
+            },
+        }
+        with patch.object(tools, "_request_json", side_effect=execute_api), patch.object(
+            tools, "_load_config", return_value=config
+        ), patch.object(tools.time, "sleep"):
+            result = json.loads(tools.autocount_execute_command(params))
+        self.assertTrue(result["ok"], result)
+        self.assertIn(("POST", "/v1/commands"), calls)
+
+    def test_approved_workflow_reuses_stable_action_id_without_blind_resubmit(self) -> None:
+        config = {
+            "connectorId": "connector",
+            "companyId": "company",
+            "pollIntervalSeconds": 1,
+            "commandTimeoutSeconds": 5,
+        }
+        context = {
+            "case_type": "payment",
+            "case_id": "case-1",
+            "case_version": 1,
+            "company_id": "company",
+            "account_book_id": "book",
+            "action_type": "payment_knockoff",
+            "action_id": "payment-case-1-v1-action",
+            "action_digest": "digest",
+        }
+        params = {
+            "command_type": "create-ar-payment",
+            "payload": {"amount": 200},
+            "workflow_context": context,
+        }
+        calls: list[tuple[str, str]] = []
+
+        def api(method: str, path: str, **kwargs):
+            calls.append((method, path))
+            if path == "/v1/connectors/connector/status":
+                return {"online": True}
+            if method == "GET" and path == "/v1/commands/payment-case-1-v1-action":
+                return {"status": "done", "result": {"docNo": "OR-1"}}
+            raise AssertionError(f"Unexpected API call: {method} {path}")
+
+        with patch.object(tools, "_load_exact_command_schema", return_value=({}, {})), patch.object(
+            tools, "validate_command_payload", return_value={"valid": True}
+        ), patch.object(tools, "_load_config", return_value=config), patch.object(
+            workflow_tools,
+            "verify_execution_context",
+            return_value={**context, "verified_action_id": context["action_id"]},
+        ), patch.object(
+            workflow_tools, "append_execution_event", side_effect=[({}, False), ({}, True)]
+        ), patch.object(tools, "_request_json", side_effect=api):
+            result = json.loads(tools.autocount_execute_command(params))
+        self.assertTrue(result["ok"], result)
+        self.assertNotIn(("POST", "/v1/commands"), calls)
+        self.assertEqual(calls.count(("GET", "/v1/commands/payment-case-1-v1-action")), 2)
+
     def test_transport_retry_is_bounded_and_post_is_never_retried(self) -> None:
         config = {
             "baseUrl": "https://autocount.invalid",
@@ -296,6 +380,9 @@ class AutoCountValidatorTests(unittest.TestCase):
         ) as opened:
             self.assertEqual(tools._request_json("GET", "/test"), {"ok": True})
             self.assertEqual(opened.call_count, 2)
+            self.assertTrue(
+                all(call.kwargs["timeout"] >= 120 for call in opened.call_args_list)
+            )
 
         with patch.object(tools, "_load_config", return_value=config), patch.object(
             tools,
@@ -321,7 +408,14 @@ class AutoCountValidatorTests(unittest.TestCase):
 
     def test_plugin_has_no_command_specific_python_file(self) -> None:
         names = {path.name for path in PLUGIN_DIR.glob("*.py")}
-        self.assertEqual(names, {"__init__.py", "schemas.py", "tools.py", "validator.py"})
+        self.assertEqual(
+            names,
+            {
+                "__init__.py", "schemas.py", "tools.py", "validator.py",
+                "workflow_evidence.py", "workflow_logic.py", "workflow_schemas.py",
+                "workflow_store.py", "workflow_tools.py",
+            },
+        )
 
     def test_plugin_registers_one_generic_validator_tool(self) -> None:
         class Context:
@@ -343,7 +437,7 @@ class AutoCountValidatorTests(unittest.TestCase):
         context = Context()
         plugin.register(context)
         self.assertEqual(context.tools.count("autocount_validate_command"), 1)
-        self.assertEqual(len(context.tools), 5)
+        self.assertEqual(len(context.tools), 11)
         self.assertEqual(context.skills, ["autocount-operations"])
         manifest = yaml.safe_load((PLUGIN_DIR / "plugin.yaml").read_text(encoding="utf-8"))
         self.assertEqual(set(manifest["provides_tools"]), set(context.tools))

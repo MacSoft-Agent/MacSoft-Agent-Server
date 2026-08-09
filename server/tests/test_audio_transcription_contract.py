@@ -103,7 +103,7 @@ class AudioTranscriptionContractTests(unittest.TestCase):
         self.assertEqual(post.call_args.args[0], "http://127.0.0.1:9999/api/audio/transcribe")
         self.assertEqual(post.call_args.kwargs["headers"]["X-Hermes-Session-Token"], "host-secret")
         self.assertEqual(post.call_args.kwargs["json"], self.payload)
-        self.assertEqual(post.call_args.kwargs["timeout"], 90.0)
+        self.assertEqual(post.call_args.kwargs["timeout"], 120.0)
 
     def test_unsupported_language_is_rejected_before_forwarding(self) -> None:
         with patch("macsoft.gateway.routes_audio.httpx.post") as post:

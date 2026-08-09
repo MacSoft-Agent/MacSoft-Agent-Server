@@ -36,6 +36,44 @@ catalog, API key, connector policy, account book, and AutoCount license allow.
 10. Wait for the final command result.
 11. Report real identifiers and official errors accurately.
 
+## Official discovery sources
+
+When general AutoCount documentation is too broad, consult these exact official
+machine-readable sources instead of browsing the site at random:
+
+- `https://api.autocount.cloud/developers/recipes.json` for supported business recipes and sequences.
+- `https://api.autocount.cloud/ai/manifest.json` for the AI command catalog, payload guidance, aliases, and examples.
+- `https://api.autocount.cloud/ai/autocount-ontology.json` for AutoCount business terms and relationships.
+- `https://api.autocount.cloud/openapi.json` for the HTTP contract.
+
+Use them for discovery and explanation. Before an execution, the current live
+command schema and its validator remain authoritative. If an example or static
+document advertises a field that the live validator rejects, report the
+connector mismatch and do not force the field into a write.
+
+## Conversation and evidence handling
+
+- Treat the user like a business colleague. Use plain business language first;
+  include an AutoCount field name only in parentheses when it helps diagnosis.
+- State what was understood, what is still missing, and the next action. Ask one
+  focused question at a time when that is enough to continue.
+- Use short numbered steps, bullets, or a Markdown table for records and
+  comparisons. Do not return a dense paragraph of codes and values.
+- For a received image, screenshot, scan, PDF, or spreadsheet, inspect the
+  actual attached media before relying on its contents. Preserve leading zeros
+  and clearly mark unreadable or uncertain values.
+- If the channel reports that media could not be downloaded, or no usable media
+  path/content is present, say that the attachment was not received and ask the
+  user to resend it. Do not describe, extract, match, or post from an image that
+  was never available to the Agent.
+- A caption or filename is context, not proof of the document contents.
+- When extracted evidence could cause an accounting write, show a compact draft
+  of the material facts and obtain the applicable workflow approval before the
+  write.
+- Distinguish clearly between `received`, `read`, `matched`, `validated`,
+  `approved`, `submitted`, and `verified`. Never collapse these into
+  "completed".
+
 ## Important behavior
 
 - Do not invent debtor, creditor, item, UOM, location, tax, account, payment

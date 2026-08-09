@@ -14,6 +14,40 @@ from tools import skill_usage
 
 
 class MacSoftProgressSkillTests(unittest.TestCase):
+    def test_protected_workflow_skill_cannot_be_created_in_profile_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_root:
+            root = Path(raw_root) / "profiles"
+            home = root / "prof_0123456789abcdef0123456789abcdef"
+            (home / "skills" / "learned").mkdir(parents=True)
+            (home / "config.yaml").write_text("{}\n", encoding="utf-8")
+            previous = os.environ.get("MACSOFT_PROFILE_ROOT")
+            os.environ["MACSOFT_PROFILE_ROOT"] = str(root)
+            token = set_hermes_home_override(home)
+            try:
+                protected_name = "autocount-payment-knockoff-automation"
+                guard = skill_manager_tool._macsoft_progress_skill_guard(protected_name)
+                self.assertIsNotNone(guard)
+                self.assertFalse(guard["success"])
+                result = json.loads(
+                    skill_manager_tool.skill_manage(
+                        action="create",
+                        name=protected_name,
+                        content=(
+                            f"---\nname: {protected_name}\n"
+                            "description: shadow\n---\nshadow"
+                        ),
+                    )
+                )
+                self.assertFalse(result["success"])
+                self.assertIn("protected MacSoft workflow Skill", result["error"])
+                self.assertFalse((home / "skills" / "learned" / protected_name).exists())
+            finally:
+                reset_hermes_home_override(token)
+                if previous is None:
+                    os.environ.pop("MACSOFT_PROFILE_ROOT", None)
+                else:
+                    os.environ["MACSOFT_PROFILE_ROOT"] = previous
+
     def test_device_profile_writes_use_learned_root_and_reject_private_skill_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as raw_root:
             root = Path(raw_root) / "profiles"

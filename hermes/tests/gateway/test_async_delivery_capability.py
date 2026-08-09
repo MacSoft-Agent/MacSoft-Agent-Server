@@ -109,13 +109,36 @@ class TestAdapterCapabilityFlag:
         from gateway.session_context import clear_session_vars, get_session_env
 
         tokens = APIServerAdapter._bind_api_server_session(
-            chat_id="c1", session_key="sk1", session_id="sid1"
+            chat_id="c1",
+            session_key="sk1",
+            session_id="sid1",
+            actor_identity={"user_id": "user-1", "device_id": "device-1", "role": "Accountant"},
+            macsoft_media=[
+                {
+                    "file_id": "file-1",
+                    "path": r"C:\trusted\payment-slip.pdf",
+                    "media_type": "application/pdf",
+                    "original_name": "payment-slip.pdf",
+                }
+            ],
         )
         try:
             assert async_delivery_supported() is False
             assert get_session_env("HERMES_SESSION_PLATFORM") == "api_server"
+            assert get_session_env("HERMES_SESSION_USER_ID") == "user-1"
+            assert get_session_env("MACSOFT_SESSION_DEVICE_ID") == "device-1"
+            assert get_session_env("MACSOFT_SESSION_USER_ROLE") == "Accountant"
+            assert json.loads(get_session_env("MACSOFT_SESSION_MEDIA_JSON")) == [
+                {
+                    "file_id": "file-1",
+                    "path": r"C:\trusted\payment-slip.pdf",
+                    "media_type": "application/pdf",
+                    "original_name": "payment-slip.pdf",
+                }
+            ]
         finally:
             clear_session_vars(tokens)
+        assert get_session_env("MACSOFT_SESSION_USER_ROLE") == ""
 
     def test_api_server_binding_does_not_outlive_turn(self):
         """The no-delivery decision is request-scoped, NOT stuck to the session.

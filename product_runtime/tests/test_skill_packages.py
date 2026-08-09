@@ -7,6 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SKILLS_ROOT = ROOT / "packaging" / "templates" / "protected" / "runtime" / "skills"
+MUTABLE_SKILLS_ROOT = ROOT / "packaging" / "templates" / "runtime" / "skills"
 
 
 def read_frontmatter(path: Path) -> tuple[str, str]:
@@ -62,7 +63,14 @@ class SkillPackageTests(unittest.TestCase):
             text = skill_md.read_text(encoding="utf-8")
             for relative_path in set(re.findall(r"`(references/[A-Za-z0-9_./-]+)`", text)):
                 referenced = skill_md.parent / relative_path
-                self.assertTrue(referenced.is_file() or referenced.is_dir(), relative_path)
+                mutable_reference = MUTABLE_SKILLS_ROOT / skill_md.parent.name / relative_path
+                self.assertTrue(
+                    referenced.is_file()
+                    or referenced.is_dir()
+                    or mutable_reference.is_file()
+                    or mutable_reference.is_dir(),
+                    relative_path,
+                )
 
     def test_provenance_records_fixed_sources(self) -> None:
         provenance = ROOT / "third_party" / "agent-skills" / "THIRD_PARTY_SKILLS.md"

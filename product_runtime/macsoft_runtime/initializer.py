@@ -353,6 +353,29 @@ def initialize_product_data(paths: ProductPaths, metadata: ProductMetadata) -> I
         ),
         (paths.templates_root / "server" / "macsoft-server.yaml", paths.server_config),
     )
+    company_reference_names = (
+        "contacts-and-escalation.md",
+        "account-books.md",
+        "paths-and-storage.md",
+        "whatsapp-channels.md",
+    )
+    company_template_root = (
+        paths.templates_root
+        / "runtime"
+        / "skills"
+        / "pharmarise-company-configuration"
+        / "references"
+    )
+    company_runtime_root = (
+        paths.runtime_root
+        / "skills"
+        / "pharmarise-company-configuration"
+        / "references"
+    )
+    mutable_templates += tuple(
+        (company_template_root / name, company_runtime_root / name)
+        for name in company_reference_names
+    )
     for source, destination in mutable_templates:
         if _copy_template_once(source, destination, replacements):
             result.created.append(str(destination.relative_to(paths.data_root)))

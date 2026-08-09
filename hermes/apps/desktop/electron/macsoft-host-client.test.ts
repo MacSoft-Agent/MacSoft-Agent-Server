@@ -26,7 +26,7 @@ test('host client uses only loopback and keeps the token in Electron main', asyn
 })
 
 test('host control timeout covers the Host service health window', () => {
-  assert.ok(HOST_CONTROL_TIMEOUT_MS > 60_000)
+  assert.ok(HOST_CONTROL_TIMEOUT_MS > 120_000)
 })
 
 test('pairing code is obtained only through authenticated Host Control', async () => {

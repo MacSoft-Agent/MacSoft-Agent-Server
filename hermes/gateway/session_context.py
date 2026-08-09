@@ -92,6 +92,9 @@ _SESSION_UI_SESSION_ID: ContextVar = ContextVar("HERMES_UI_SESSION_ID", default=
 _SESSION_MESSAGE_ID: ContextVar = ContextVar("HERMES_SESSION_MESSAGE_ID", default=_UNSET)
 
 _SESSION_PROFILE: ContextVar = ContextVar("HERMES_SESSION_PROFILE", default=_UNSET)
+_MACSOFT_USER_ROLE: ContextVar = ContextVar("MACSOFT_SESSION_USER_ROLE", default=_UNSET)
+_MACSOFT_DEVICE_ID: ContextVar = ContextVar("MACSOFT_SESSION_DEVICE_ID", default=_UNSET)
+_MACSOFT_MEDIA_JSON: ContextVar = ContextVar("MACSOFT_SESSION_MEDIA_JSON", default=_UNSET)
 
 # Whether the current session's delivery channel can route an ASYNC completion
 # back to the agent AFTER the current turn ends (i.e. wake a fresh turn).
@@ -133,6 +136,9 @@ _VAR_MAP = {
     "HERMES_UI_SESSION_ID": _SESSION_UI_SESSION_ID,
     "HERMES_SESSION_MESSAGE_ID": _SESSION_MESSAGE_ID,
     "HERMES_SESSION_PROFILE": _SESSION_PROFILE,
+    "MACSOFT_SESSION_USER_ROLE": _MACSOFT_USER_ROLE,
+    "MACSOFT_SESSION_DEVICE_ID": _MACSOFT_DEVICE_ID,
+    "MACSOFT_SESSION_MEDIA_JSON": _MACSOFT_MEDIA_JSON,
     "HERMES_CRON_AUTO_DELIVER_PLATFORM": _CRON_AUTO_DELIVER_PLATFORM,
     "HERMES_CRON_AUTO_DELIVER_CHAT_ID": _CRON_AUTO_DELIVER_CHAT_ID,
     "HERMES_CRON_AUTO_DELIVER_THREAD_ID": _CRON_AUTO_DELIVER_THREAD_ID,
@@ -169,6 +175,9 @@ def set_session_vars(
     cwd: str = "",
     async_delivery: bool = True,
     ui_session_id: str = "",
+    macsoft_user_role: str = "",
+    macsoft_device_id: str = "",
+    macsoft_media_json: str = "",
 ) -> list:
     """Set all session context variables and return reset tokens.
 
@@ -203,6 +212,9 @@ def set_session_vars(
         _SESSION_UI_SESSION_ID.set(ui_session_id),
         _SESSION_MESSAGE_ID.set(message_id),
         _SESSION_PROFILE.set(profile),
+        _MACSOFT_USER_ROLE.set(macsoft_user_role),
+        _MACSOFT_DEVICE_ID.set(macsoft_device_id),
+        _MACSOFT_MEDIA_JSON.set(macsoft_media_json),
         _SESSION_ASYNC_DELIVERY.set(bool(async_delivery)),
     ]
     try:
@@ -238,6 +250,9 @@ def clear_session_vars(tokens: list) -> None:
         _SESSION_UI_SESSION_ID,
         _SESSION_MESSAGE_ID,
         _SESSION_PROFILE,
+        _MACSOFT_USER_ROLE,
+        _MACSOFT_DEVICE_ID,
+        _MACSOFT_MEDIA_JSON,
     ):
         var.set("")
     # Reset async-delivery capability to the "never set" sentinel rather than a

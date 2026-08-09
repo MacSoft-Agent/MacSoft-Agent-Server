@@ -19,7 +19,7 @@ router = APIRouter(prefix="/api/client/audio", tags=["client-audio"])
 
 MAX_TRANSCRIPTION_DATA_URL_CHARS = 35_000_000
 DEFAULT_CONFIG_API_URL = "http://127.0.0.1:8643"
-TRANSCRIPTION_TIMEOUT_SECONDS = 90.0
+TRANSCRIPTION_TIMEOUT_SECONDS = 120.0
 
 
 def error_response(code: str, message: str) -> dict:

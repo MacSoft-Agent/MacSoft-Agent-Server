@@ -48,6 +48,7 @@ function makeFakeChild(): FakeChildProcess {
 
 test('default is cold-start tolerant (> the historical 45s floor)', () => {
   assert.equal(resolvePortAnnounceTimeoutMs({}), DEFAULT_PORT_ANNOUNCE_TIMEOUT_MS)
+  assert.ok(DEFAULT_PORT_ANNOUNCE_TIMEOUT_MS >= 120_000)
   assert.ok(
     DEFAULT_PORT_ANNOUNCE_TIMEOUT_MS > MIN_PORT_ANNOUNCE_TIMEOUT_MS,
     'cold-start default must exceed the warm-start floor'

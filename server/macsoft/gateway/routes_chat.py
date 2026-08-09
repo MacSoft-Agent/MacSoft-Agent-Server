@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import re
@@ -40,6 +40,7 @@ from macsoft.files.storage import (
     attach_owned_files_to_message,
     list_owned_files_for_message,
     require_owned_files,
+    stored_path,
 )
 from macsoft.identity.devices import require_device
 from macsoft.security import new_id
@@ -85,6 +86,8 @@ def request_hermes_reply(
     session_id: str,
     timeout_seconds: int,
     on_run_started,
+    actor_identity: dict[str, str] | None = None,
+    macsoft_media: list[dict[str, str]] | None = None,
 ) -> str:
     parts: list[str] = []
     for event in stream_hermes_reply_events(
@@ -95,6 +98,8 @@ def request_hermes_reply(
         session_id=session_id,
         timeout_seconds=timeout_seconds,
         on_run_started=on_run_started,
+        actor_identity=actor_identity,
+        macsoft_media=macsoft_media,
     ):
         if event.get("type") == "interrupted":
             raise HermesApiError("MacSoft Agent run was interrupted.", kind="interrupted")
@@ -408,6 +413,16 @@ def chat_stream(
 
             current_model = SERVER_HERMES_MODEL_ID
 
+            trusted_media = [
+                {
+                    "file_id": record.file_id,
+                    "path": str(stored_path(config, record).resolve()),
+                    "media_type": record.media_type,
+                    "original_name": record.original_name,
+                }
+                for record in uploaded_files
+            ]
+
             if body.preferred_model_id:
                 print(
                     "[MACSOFT_CHAT] preferred_model_id ignored; "
@@ -534,6 +549,13 @@ def chat_stream(
                     session_id=body.session_id,
                     timeout_seconds=config.hermes.request_timeout_seconds,
                     on_run_started=on_run_started,
+                    actor_identity={
+                        "user_id": user_id,
+                        "device_id": device_id,
+                        "role": str(device["role"]),
+                        "message_id": str(user_message["message_id"]),
+                    },
+                    macsoft_media=trusted_media,
                 )
                 return enforce_capability_boundary(
                     user_message=body.message,
@@ -645,6 +667,13 @@ def chat_stream(
                                 session_id=body.session_id,
                                 timeout_seconds=config.hermes.request_timeout_seconds,
                                 on_run_started=on_run_started,
+                                actor_identity={
+                                    "user_id": user_id,
+                                    "device_id": device_id,
+                                    "role": str(device["role"]),
+                                    "message_id": str(user_message["message_id"]),
+                                },
+                                macsoft_media=trusted_media,
                             ):
                                 if internal_event.get("type") == "text_delta":
                                     raw_parts.append(str(internal_event.get("text") or ""))

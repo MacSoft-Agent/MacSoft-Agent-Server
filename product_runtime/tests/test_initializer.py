@@ -54,6 +54,26 @@ class FirstRunInitializationTests(unittest.TestCase):
         self.assertEqual(self.paths.runtime_config.read_text("utf-8"), custom)
         self.assertIn("runtime\\config.yaml" if __import__('os').name == 'nt' else "runtime/config.yaml", second.preserved)
 
+    def test_company_configuration_references_are_created_once_and_preserved(self) -> None:
+        first = initialize_product_data(self.paths, self.metadata)
+        reference = (
+            self.paths.runtime_root
+            / "skills"
+            / "pharmarise-company-configuration"
+            / "references"
+            / "account-books.md"
+        )
+        relative = reference.relative_to(self.paths.data_root).as_posix()
+        self.assertTrue(reference.is_file())
+        self.assertIn(relative, {Path(item).as_posix() for item in first.created})
+
+        customer_value = "# Account books\n\n- company_id: customer-company\n"
+        reference.write_text(customer_value, encoding="utf-8")
+        second = initialize_product_data(self.paths, self.metadata)
+
+        self.assertEqual(reference.read_text(encoding="utf-8"), customer_value)
+        self.assertIn(relative, {Path(item).as_posix() for item in second.preserved})
+
     def test_upgrade_preserves_device_profile_tree_byte_for_byte(self) -> None:
         initialize_product_data(self.paths, self.metadata)
         profile = (
@@ -136,6 +156,7 @@ class FirstRunInitializationTests(unittest.TestCase):
         self.assertEqual(target.read_text("utf-8"), "# administrator change\n")
 
     def test_protected_skill_directory_syncs_and_reconciles_safely(self) -> None:
+        base_version = self.metadata.protected_resource_version
         source_root = (
             self.program
             / "templates"
@@ -157,11 +178,11 @@ class FirstRunInitializationTests(unittest.TestCase):
         source_file.write_text("version two\n", encoding="utf-8")
         manifest_path = self.program / "templates" / "protected-resources.json"
         manifest = json.loads(manifest_path.read_text("utf-8"))
-        manifest["version"] = 4
+        manifest["version"] = base_version + 1
         manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
         second = initialize_product_data(
             self.paths,
-            replace(self.metadata, protected_resource_version=4),
+            replace(self.metadata, protected_resource_version=base_version + 1),
         )
         self.assertIn("runtime/skills/fixture-skill/SKILL.md", second.updated_protected)
         self.assertEqual(target_file.read_text("utf-8"), "version two\n")
@@ -174,11 +195,11 @@ class FirstRunInitializationTests(unittest.TestCase):
         # A local edit creates a conflict and is never overwritten.
         target_file.write_text("local edit\n", encoding="utf-8")
         source_file.write_text("version three\n", encoding="utf-8")
-        manifest["version"] = 5
+        manifest["version"] = base_version + 2
         manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
         third = initialize_product_data(
             self.paths,
-            replace(self.metadata, protected_resource_version=5),
+            replace(self.metadata, protected_resource_version=base_version + 2),
         )
         self.assertIn("runtime/skills/fixture-skill/SKILL.md", third.conflicts)
         self.assertEqual(target_file.read_text("utf-8"), "local edit\n")
@@ -186,11 +207,11 @@ class FirstRunInitializationTests(unittest.TestCase):
 
         # A later product update must continue to preserve the unresolved edit.
         source_file.write_text("version four\n", encoding="utf-8")
-        manifest["version"] = 6
+        manifest["version"] = base_version + 3
         manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
         conflicted_update = initialize_product_data(
             self.paths,
-            replace(self.metadata, protected_resource_version=6),
+            replace(self.metadata, protected_resource_version=base_version + 3),
         )
         self.assertIn("runtime/skills/fixture-skill/SKILL.md", conflicted_update.conflicts)
         self.assertEqual(target_file.read_text("utf-8"), "local edit\n")
@@ -199,11 +220,11 @@ class FirstRunInitializationTests(unittest.TestCase):
         # the source file can safely remove the obsolete managed runtime file.
         target_file.write_text("version four\n", encoding="utf-8")
         source_file.unlink()
-        manifest["version"] = 7
+        manifest["version"] = base_version + 4
         manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
         fourth = initialize_product_data(
             self.paths,
-            replace(self.metadata, protected_resource_version=7),
+            replace(self.metadata, protected_resource_version=base_version + 4),
         )
         self.assertIn("runtime/skills/fixture-skill/SKILL.md", fourth.removed_protected)
         self.assertFalse(target_file.exists())

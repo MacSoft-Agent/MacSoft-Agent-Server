@@ -3,7 +3,10 @@
   "apiKey": "replace-with-autocount-api-key",
   "connectorId": "replace-with-connector-id",
   "companyId": "replace-with-company-id",
-  "requestTimeoutSeconds": 30,
+  "requestTimeoutSeconds": 120,
   "commandTimeoutSeconds": 120,
-  "pollIntervalSeconds": 2
+  "pollIntervalSeconds": 2,
+  "workflowPostgresDsn": "",
+  "workflowPostgresConnectTimeoutSeconds": 10,
+  "workflowEvidenceRoot": ""
 }

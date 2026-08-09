@@ -681,6 +681,7 @@ def _find_all_skills(*, skip_disabled: bool = False) -> List[Dict[str, Any]]:
     signature changes (dir/category mtimes or the disabled-set) and expires
     after a short TTL to bound staleness from in-place SKILL.md edits.
     """
+    from agent.macsoft_protected_skills import is_protected_skill_name
     from agent.skill_utils import get_external_skills_dirs, iter_skill_index_files
 
     cache_key = _SKILLS_CACHE_KEY_DISABLED if skip_disabled else _SKILLS_CACHE_KEY_FILTERED
@@ -696,7 +697,22 @@ def _find_all_skills(*, skip_disabled: bool = False) -> List[Dict[str, Any]]:
     active_skills_dir = _skills_dir()
     if active_skills_dir.exists():
         dirs_to_scan.append(active_skills_dir)
-    dirs_to_scan.extend(get_external_skills_dirs())
+    external_skills_dirs = get_external_skills_dirs()
+    dirs_to_scan.extend(external_skills_dirs)
+
+    protected_external_names: set[str] = set()
+    for external_dir in external_skills_dirs:
+        for external_skill_md in iter_skill_index_files(external_dir, "SKILL.md"):
+            try:
+                external_content = external_skill_md.read_text(encoding="utf-8")[:4000]
+                external_frontmatter, _ = _parse_frontmatter(external_content)
+                external_name = str(
+                    external_frontmatter.get("name", external_skill_md.parent.name)
+                )
+                if is_protected_skill_name(external_name):
+                    protected_external_names.add(external_name)
+            except (OSError, UnicodeDecodeError):
+                continue
 
     signature = _skills_scan_signature(dirs_to_scan, disabled)
     now = time.monotonic()
@@ -735,6 +751,16 @@ def _find_all_skills(*, skip_disabled: bool = False) -> List[Dict[str, Any]]:
                     continue
 
                 name = frontmatter.get("name", skill_dir.name)[:MAX_NAME_LENGTH]
+                if (
+                    scan_dir == active_skills_dir
+                    and name in protected_external_names
+                ):
+                    logger.warning(
+                        "Ignoring profile-local collision for protected MacSoft Skill '%s': %s",
+                        name,
+                        skill_md,
+                    )
+                    continue
                 if name in seen_names:
                     continue
                 if name in disabled:
@@ -1178,6 +1204,24 @@ def skill_view(
                     found_md
                 ):
                     _record(None, found_md)
+
+        from agent.macsoft_protected_skills import is_protected_skill_name
+        from agent.skill_utils import is_external_skill_path
+
+        if is_protected_skill_name(name):
+            protected_candidates = [
+                candidate
+                for candidate in candidates
+                if is_external_skill_path(candidate[1])
+            ]
+            if protected_candidates:
+                if len(candidates) > len(protected_candidates):
+                    logging.getLogger(__name__).warning(
+                        "Ignoring %d profile-local collision(s) for protected MacSoft Skill '%s'.",
+                        len(candidates) - len(protected_candidates),
+                        name,
+                    )
+                candidates = protected_candidates
 
         if len(candidates) > 1:
             paths = [str(smd) for _, smd in candidates]

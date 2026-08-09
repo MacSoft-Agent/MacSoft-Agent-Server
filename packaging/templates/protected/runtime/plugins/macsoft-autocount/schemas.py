@@ -131,6 +131,29 @@ AUTOCOUNT_EXECUTE_COMMAND = {
                 "maximum": 600,
                 "description": "Optional total wait time for the final result.",
             },
+            "workflow_context": {
+                "type": "object",
+                "description": (
+                    "Required for consequential PharmaRise financial and Batch-control writes. "
+                    "Use the exact actionId and actionDigest returned by "
+                    "workflow_approve_autocount_action."
+                ),
+                "properties": {
+                    "case_type": {"type": "string", "enum": ["payment", "receiving"]},
+                    "case_id": {"type": "string"},
+                    "case_version": {"type": "integer", "minimum": 1},
+                    "company_id": {"type": "string"},
+                    "account_book_id": {"type": "string"},
+                    "action_type": {"type": "string"},
+                    "action_id": {"type": "string"},
+                    "action_digest": {"type": "string"},
+                },
+                "required": [
+                    "case_type", "case_id", "case_version", "company_id",
+                    "account_book_id", "action_type", "action_id", "action_digest"
+                ],
+                "additionalProperties": False,
+            },
         },
         "required": ["command_type", "payload"],
         "additionalProperties": False,

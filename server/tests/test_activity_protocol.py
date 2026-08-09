@@ -14,7 +14,7 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 from macsoft.chat.activity import ActivityKind, ActivityMapper, ActivityStatus, MAX_ACTIVITY_EVENTS
-from macsoft.chat.hermes_client import HermesApiError, stream_hermes_reply_events
+from macsoft.chat.hermes_client import HermesApiError, _run_headers, stream_hermes_reply_events
 from macsoft.chat.result_formatter import format_assistant_reply
 from macsoft.gateway.routes_chat import ChatStreamRequest, chat_stream
 from macsoft.gateway.routes_client import (
@@ -405,6 +405,67 @@ class ChatProtocolTests(unittest.TestCase):
             )
         self.assertEqual(caught.exception.status_code, 401)
 
+    def test_authenticated_upload_is_forwarded_as_trusted_hermes_media(self) -> None:
+        uploads = self.db_path.parent / "uploads"
+        uploads.mkdir()
+        stored_name = "file_trusted.txt"
+        (uploads / stored_name).write_text("trusted test evidence", encoding="utf-8")
+        conn = sqlite3.connect(self.db_path)
+        try:
+            conn.execute(
+                "INSERT INTO uploaded_files VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "file_trusted",
+                    "user_1",
+                    "device_1",
+                    "payment-slip.txt",
+                    stored_name,
+                    "text/plain",
+                    21,
+                    "0" * 64,
+                    "2026-07-14T00:00:00+00:00",
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        self.body.uploaded_file_ids = ["file_trusted"]
+        captured: dict = {}
+
+        def stream(**kwargs):
+            captured.update(kwargs)
+            return iter([{"type": "text_delta", "text": "Evidence received."}])
+
+        with patch(
+            "macsoft.gateway.routes_chat.stream_hermes_reply_events",
+            side_effect=stream,
+        ):
+            response = chat_stream(
+                self.request,
+                self.body,
+                authorization="Bearer device-token",
+                x_device_id="device_1",
+                x_macsoft_client_capabilities="activity-v1",
+            )
+            events = parse_sse(asyncio.run(consume(response)))
+
+        self.assertEqual(events[-1][0], "message_done")
+        self.assertEqual(captured["actor_identity"]["user_id"], "user_1")
+        self.assertEqual(captured["actor_identity"]["device_id"], "device_1")
+        self.assertEqual(captured["actor_identity"]["role"], "Admin")
+        self.assertEqual(
+            captured["macsoft_media"],
+            [
+                {
+                    "file_id": "file_trusted",
+                    "path": str((uploads / stored_name).resolve()),
+                    "media_type": "text/plain",
+                    "original_name": "payment-slip.txt",
+                }
+            ],
+        )
+
     def test_pairing_and_server_owned_model_contract_remain_compatible(self) -> None:
         with patch.dict(os.environ, {"MACSOFT_HOST_CONTROL_TOKEN": "host-token"}):
             pairing = get_host_pairing_code(
@@ -533,6 +594,23 @@ class MapperAndFormatterTests(unittest.TestCase):
 
 
 class HermesClientStreamTests(unittest.TestCase):
+    def test_profiled_run_headers_carry_complete_server_actor_identity(self) -> None:
+        headers = _run_headers(
+            "internal-secret",
+            profile_id="profile_1",
+            actor_identity={"user_id": "user_1", "device_id": "device_1", "role": "Accountant"},
+        )
+        self.assertEqual(headers["X-MacSoft-User-Id"], "user_1")
+        self.assertEqual(headers["X-MacSoft-Device-Id"], "device_1")
+        self.assertEqual(headers["X-MacSoft-User-Role"], "Accountant")
+
+    def test_actor_identity_cannot_be_sent_without_device_profile(self) -> None:
+        with self.assertRaises(HermesApiError):
+            _run_headers(
+                "internal-secret",
+                actor_identity={"user_id": "user_1", "device_id": "device_1", "role": "Admin"},
+            )
+
     def test_internal_sse_parser_keeps_only_controlled_tool_fields(self) -> None:
         body = (
             'event: hermes.tool.progress\n'

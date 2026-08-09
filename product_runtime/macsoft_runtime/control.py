@@ -44,6 +44,12 @@ class HostControlServer:
         server = host.specs.get("server")
         if server is not None:
             server.environment["MACSOFT_HOST_CONTROL_TOKEN"] = self.token
+        ai_service = host.specs.get("ai_service")
+        if ai_service is not None:
+            # The native WhatsApp Gateway uses this localhost-only secret to
+            # resolve an approved identifier mapping through the existing
+            # MacSoft user/role authority. The token is never exposed to LLMs.
+            ai_service.environment["MACSOFT_HOST_CONTROL_TOKEN"] = self.token
         owner = self
 
         class Handler(BaseHTTPRequestHandler):

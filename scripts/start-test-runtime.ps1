@@ -12,6 +12,7 @@ $DesktopOutput = Join-Path $ProjectRoot 'logs\test-desktop.out.log'
 $DesktopError = Join-Path $ProjectRoot 'logs\test-desktop.err.log'
 $DesktopUserData = Join-Path $ProjectRoot 'runtime\desktop-test-user-data'
 $RequiredPorts = @(8766, 8643, 8642, 8787, 5174)
+$InstalledHostServiceName = 'MacSoftAgentHost'
 
 function Normalize-ProcessPath {
     $pathValues = @(
@@ -46,6 +47,104 @@ function Get-ListeningPortRecords {
                 }
         )
     }
+}
+
+function Get-DescendantProcessIds {
+    param([int]$RootProcessId)
+
+    $all = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+    $result = New-Object 'System.Collections.Generic.HashSet[int]'
+    $queue = New-Object 'System.Collections.Generic.Queue[int]'
+    $queue.Enqueue($RootProcessId)
+    while ($queue.Count -gt 0) {
+        $parent = $queue.Dequeue()
+        foreach ($process in $all | Where-Object { [int]$_.ParentProcessId -eq $parent }) {
+            $childId = [int]$process.ProcessId
+            if ($result.Add($childId)) {
+                $queue.Enqueue($childId)
+            }
+        }
+    }
+    return @($result)
+}
+
+function Get-ServiceExecutablePath {
+    param([string]$PathName)
+
+    $value = $PathName.Trim()
+    if ($value.StartsWith('"')) {
+        $closingQuote = $value.IndexOf('"', 1)
+        if ($closingQuote -gt 1) {
+            return $value.Substring(1, $closingQuote - 1)
+        }
+    }
+    return ($value -split '\s+', 2)[0]
+}
+
+function Stop-ControlledInstalledHost {
+    param([object[]]$OccupiedPorts)
+
+    $service = Get-CimInstance Win32_Service -Filter "Name='$InstalledHostServiceName'" -ErrorAction SilentlyContinue
+    if (-not $service -or [int]$service.ProcessId -le 0) {
+        return $false
+    }
+
+    $executablePath = Get-ServiceExecutablePath -PathName ([string]$service.PathName)
+    $normalizedExecutable = $executablePath.Replace('/', '\')
+    if (
+        [IO.Path]::GetFileName($normalizedExecutable) -ine 'pythonservice.exe' -or
+        $normalizedExecutable -inotmatch '\\MacSoft Agent\\python\\pythonservice\.exe$'
+    ) {
+        return $false
+    }
+
+    $ownedProcessIds = New-Object 'System.Collections.Generic.HashSet[int]'
+    [void]$ownedProcessIds.Add([int]$service.ProcessId)
+    foreach ($childProcessId in @(Get-DescendantProcessIds -RootProcessId ([int]$service.ProcessId))) {
+        [void]$ownedProcessIds.Add([int]$childProcessId)
+    }
+    foreach ($listener in $OccupiedPorts) {
+        if (-not $ownedProcessIds.Contains([int]$listener.OwningProcess)) {
+            return $false
+        }
+    }
+
+    Write-Host "Installed MacSoft Agent Host owns the development ports; requesting a controlled service stop."
+    $serviceController = Join-Path $env:SystemRoot 'System32\sc.exe'
+    $isAdministrator = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+        [Security.Principal.WindowsBuiltInRole]::Administrator
+    )
+    if ($isAdministrator) {
+        $output = & $serviceController stop $InstalledHostServiceName 2>&1
+        if ($LASTEXITCODE -notin @(0, 1062)) {
+            throw "Windows could not stop $InstalledHostServiceName (exit $LASTEXITCODE): $output"
+        }
+    } else {
+        try {
+            $stopProcess = Start-Process -FilePath $serviceController -ArgumentList @('stop', $InstalledHostServiceName) -Verb RunAs -Wait -PassThru -WindowStyle Hidden
+        } catch {
+            throw "Administrator approval is required to stop the installed MacSoft Agent Host for development mode. $($_.Exception.Message)"
+        }
+        if ($stopProcess.ExitCode -notin @(0, 1062)) {
+            throw "Windows could not stop $InstalledHostServiceName (exit $($stopProcess.ExitCode))."
+        }
+    }
+
+    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    do {
+        $remaining = @(
+            Get-ListeningPortRecords |
+                Where-Object { $RequiredPorts -contains $_.LocalPort }
+        )
+        $currentService = Get-Service -Name $InstalledHostServiceName -ErrorAction SilentlyContinue
+        if ($remaining.Count -eq 0 -and (-not $currentService -or $currentService.Status -eq 'Stopped')) {
+            return $true
+        }
+        Start-Sleep -Milliseconds 250
+    } while ([DateTime]::UtcNow -lt $deadline)
+
+    $summary = ($remaining | ForEach-Object { "$($_.LocalPort):$($_.OwningProcess)" }) -join ', '
+    throw "The installed MacSoft Agent Host did not release the development ports within 30 seconds: $summary"
 }
 
 function Assert-CurrentGitDesktopSource {
@@ -111,8 +210,15 @@ $occupied = @(
         Where-Object { $RequiredPorts -contains $_.LocalPort }
 )
 if ($occupied.Count -gt 0) {
-    $summary = ($occupied | ForEach-Object { "$($_.LocalPort):$($_.OwningProcess)" }) -join ', '
-    throw "MacSoft Agent test ports are already occupied: $summary"
+    [void](Stop-ControlledInstalledHost -OccupiedPorts $occupied)
+    $occupied = @(
+        Get-ListeningPortRecords |
+            Where-Object { $RequiredPorts -contains $_.LocalPort }
+    )
+    if ($occupied.Count -gt 0) {
+        $summary = ($occupied | ForEach-Object { "$($_.LocalPort):$($_.OwningProcess)" }) -join ', '
+        throw "MacSoft Agent test ports are occupied by an unknown or mixed process owner: $summary"
+    }
 }
 
 New-Item -ItemType Directory -Force -Path $StateDirectory | Out-Null

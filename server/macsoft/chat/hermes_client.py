@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 from collections.abc import Iterator
@@ -242,6 +242,7 @@ def _run_headers(
     *,
     profile_id: str | None = None,
     admin_scope: str | None = None,
+    actor_identity: dict[str, str] | None = None,
     accept: str = "application/json",
 ) -> dict[str, str]:
     headers = {
@@ -261,6 +262,19 @@ def _run_headers(
                 kind="invalid_request",
             )
         headers["X-MacSoft-Admin-Scope"] = admin_scope
+    if actor_identity:
+        if not profile_id or admin_scope:
+            raise HermesApiError("A MacSoft actor identity requires a device Profile scope.", kind="invalid_request")
+        required = {"user_id", "device_id", "role"}
+        if required - set(actor_identity) or any(not str(actor_identity[name]).strip() for name in required):
+            raise HermesApiError("MacSoft actor identity is incomplete.", kind="invalid_request")
+        headers.update({
+            "X-MacSoft-User-Id": str(actor_identity["user_id"]).strip(),
+            "X-MacSoft-Device-Id": str(actor_identity["device_id"]).strip(),
+            "X-MacSoft-User-Role": str(actor_identity["role"]).strip(),
+        })
+        if str(actor_identity.get("message_id", "")).strip():
+            headers["X-MacSoft-Message-Id"] = str(actor_identity["message_id"]).strip()
     return headers
 
 
@@ -317,6 +331,8 @@ def _start_hermes_run(
     session_id: str,
     profile_id: str | None = None,
     admin_scope: str | None = None,
+    actor_identity: dict[str, str] | None = None,
+    macsoft_media: list[dict[str, str]] | None = None,
     timeout_seconds: int,
 ) -> str:
     normalized = _normalized_messages(messages)
@@ -341,10 +357,12 @@ def _start_hermes_run(
         "instructions": instructions,
         "session_id": session_id,
     }
+    if macsoft_media:
+        payload["macsoft_media"] = macsoft_media
     request = Request(
         url=f"{base_url.rstrip('/')}/v1/runs",
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        headers=_run_headers(api_key, profile_id=profile_id, admin_scope=admin_scope),
+        headers=_run_headers(api_key, profile_id=profile_id, admin_scope=admin_scope, actor_identity=actor_identity),
         method="POST",
     )
     try:
@@ -393,6 +411,8 @@ def stream_interruptible_hermes_reply_events(
     session_id: str,
     profile_id: str | None = None,
     admin_scope: str | None = None,
+    actor_identity: dict[str, str] | None = None,
+    macsoft_media: list[dict[str, str]] | None = None,
     timeout_seconds: int,
     on_run_started: Callable[[str], bool],
 ) -> Iterator[dict[str, str]]:
@@ -404,6 +424,8 @@ def stream_interruptible_hermes_reply_events(
         session_id=session_id,
         profile_id=profile_id,
         admin_scope=admin_scope,
+        actor_identity=actor_identity,
+        macsoft_media=macsoft_media,
         timeout_seconds=timeout_seconds,
     )
     if on_run_started(run_id):

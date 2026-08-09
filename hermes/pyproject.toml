@@ -156,6 +156,7 @@ macsoft-server = [
   "httpx2==2.7.0",
   "psutil==7.2.2",
   "pywin32==311; sys_platform == 'win32'",
+  "psycopg[binary]==3.3.4",
 ]
 # Native Anthropic provider — only needed when provider=anthropic (not via
 # OpenRouter or other aggregators).

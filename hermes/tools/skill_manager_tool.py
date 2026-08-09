@@ -594,8 +594,24 @@ def _find_skill(name: str) -> Optional[Dict[str, Any]]:
     external dirs configured via skills.external_dirs.  Returns
     {"path": Path} or None.
     """
-    from agent.skill_utils import get_all_skills_dirs, is_excluded_skill_path
-    for skills_dir in get_all_skills_dirs():
+    from agent.macsoft_protected_skills import is_protected_skill_name
+    from agent.skill_utils import (
+        get_all_skills_dirs,
+        get_external_skills_dirs,
+        is_excluded_skill_path,
+    )
+
+    skills_dirs = get_all_skills_dirs()
+    if is_protected_skill_name(name):
+        external_dirs = get_external_skills_dirs()
+        external_resolved = {directory.resolve() for directory in external_dirs}
+        skills_dirs = external_dirs + [
+            directory
+            for directory in skills_dirs
+            if directory.resolve() not in external_resolved
+        ]
+
+    for skills_dir in skills_dirs:
         if not skills_dir.exists():
             continue
         for skill_md in skills_dir.rglob("SKILL.md"):
@@ -623,6 +639,17 @@ def _macsoft_progress_skill_guard(name: str, category: str | None = None) -> Opt
             return None
     except OSError:
         return {"success": False, "error": "MacSoft Profile skill root could not be resolved."}
+
+    from agent.macsoft_protected_skills import is_protected_skill_name
+
+    if is_protected_skill_name(name):
+        return {
+            "success": False,
+            "error": (
+                f"Skill '{name}' is a protected MacSoft workflow Skill and "
+                "cannot be created or modified in a personal learning scope."
+            ),
+        }
 
     if global_staging:
         allowed_targets = {

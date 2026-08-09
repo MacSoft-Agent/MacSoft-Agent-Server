@@ -32,7 +32,7 @@ interface ControlConfiguration {
   token: string
 }
 
-export const HOST_CONTROL_TIMEOUT_MS = 75_000
+export const HOST_CONTROL_TIMEOUT_MS = 135_000
 export const MACSOFT_CONFIG_BACKEND_PORT = 8643
 
 function stoppedService(name: MacSoftServiceName): MacSoftServiceStatus {

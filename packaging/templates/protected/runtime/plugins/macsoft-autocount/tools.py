@@ -20,6 +20,9 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+
+MIN_REQUEST_TIMEOUT_SECONDS = 120
+
 from .validator import validate_command_payload
 
 
@@ -80,10 +83,13 @@ def _request_json(
     config = _load_config()
     base_url = str(config["baseUrl"]).rstrip("/")
     url = f"{base_url}{path}"
-    timeout = int(
-        timeout_seconds
-        if timeout_seconds is not None
-        else config.get("requestTimeoutSeconds", 30)
+    timeout = max(
+        MIN_REQUEST_TIMEOUT_SECONDS,
+        int(
+            timeout_seconds
+            if timeout_seconds is not None
+            else config.get("requestTimeoutSeconds", MIN_REQUEST_TIMEOUT_SECONDS)
+        ),
     )
 
     headers = {
@@ -499,6 +505,9 @@ def autocount_execute_command(
 
     command_type = str(params.get("command_type", "")).strip()
     payload = params.get("payload", {})
+    workflow_context = params.get("workflow_context")
+    verified_workflow: dict[str, Any] = {}
+    execution_started = False
 
     try:
         if not command_type:
@@ -546,10 +555,19 @@ def autocount_execute_command(
                 "AutoCount connector is offline. Command was not queued."
             )
 
-        command_id = (
-            f"macsoft-{re.sub(r'[^a-z0-9]+', '-', command_type.lower()).strip('-')}"
-            f"-{int(time.time())}-{uuid.uuid4().hex[:10]}"
+        from .workflow_tools import append_execution_event, verify_execution_context
+
+        verified_workflow = verify_execution_context(
+            command_type=command_type,
+            payload=payload,
+            context=workflow_context if isinstance(workflow_context, dict) else None,
         )
+        command_id = str(verified_workflow.get("verified_action_id") or "")
+        if not command_id:
+            command_id = (
+                f"macsoft-{re.sub(r'[^a-z0-9]+', '-', command_type.lower()).strip('-')}"
+                f"-{int(time.time())}-{uuid.uuid4().hex[:10]}"
+            )
 
         request_body = {
             "commandId": command_id,
@@ -559,11 +577,23 @@ def autocount_execute_command(
             "payload": payload,
         }
 
-        queued_response = _request_json(
-            "POST",
-            "/v1/commands",
-            body=request_body,
-        )
+        if verified_workflow:
+            _, execution_started = append_execution_event(
+                verified_workflow,
+                "execution_started",
+                {"command_type": command_type, "command_id": command_id},
+            )
+        if verified_workflow and not execution_started:
+            queued_response = _request_json(
+                "GET",
+                f"/v1/commands/{quote(command_id, safe='')}",
+            )
+        else:
+            queued_response = _request_json(
+                "POST",
+                "/v1/commands",
+                body=request_body,
+            )
 
         timeout_seconds = max(
             5,
@@ -592,6 +622,16 @@ def autocount_execute_command(
             status = _command_status(last_response)
 
             if status in _FINAL_STATUSES:
+                if verified_workflow:
+                    append_execution_event(
+                        verified_workflow,
+                        "execution_completed",
+                        {
+                            "command_type": command_type,
+                            "command_id": command_id,
+                            "status": status,
+                        },
+                    )
                 return _success(
                     last_response,
                     commandId=command_id,
@@ -601,6 +641,16 @@ def autocount_execute_command(
 
             time.sleep(poll_interval)
 
+        if verified_workflow:
+            append_execution_event(
+                verified_workflow,
+                "execution_uncertain",
+                {
+                    "command_type": command_type,
+                    "command_id": command_id,
+                    "reason": "timeout",
+                },
+            )
         return _json_text(
             {
                 "ok": False,
@@ -624,6 +674,21 @@ def autocount_execute_command(
             submitted=False,
         )
     except Exception as exc:
+        if verified_workflow and execution_started:
+            try:
+                from .workflow_tools import append_execution_event
+
+                append_execution_event(
+                    verified_workflow,
+                    "execution_uncertain",
+                    {
+                        "command_type": command_type,
+                        "command_id": str(verified_workflow.get("verified_action_id", "")),
+                        "reason": type(exc).__name__,
+                    },
+                )
+            except Exception:
+                pass
         return _failure(
             exc,
             commandType=command_type or None,

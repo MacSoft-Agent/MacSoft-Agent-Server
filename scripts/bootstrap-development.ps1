@@ -79,4 +79,8 @@ finally {
     Pop-Location
 }
 
+if (-not (Get-Service -Name 'postgresql*' -ErrorAction SilentlyContinue)) {
+    Write-Warning 'PostgreSQL is not installed. Core development can continue, but PharmaRise Module 1/2 requires PostgreSQL 17 and scripts\setup-pharmarise-postgres.ps1.'
+}
+
 Write-Host 'Development dependencies are ready.'

@@ -15,6 +15,7 @@ from unittest import skipUnless
 from macsoft_runtime.control import HostControlServer
 from macsoft_runtime.host import (
     CONFIG_BACKEND_PORT,
+    HEALTH_TIMEOUT_SECONDS,
     LOG_BACKUP_COUNT,
     LOG_MAX_BYTES,
     HostInstanceLock,
@@ -205,6 +206,8 @@ class HostTests(unittest.TestCase):
             specs["ai_service"].environment["MACSOFT_PROFILE_ROOT"],
             str(self.paths.runtime_root / "profiles"),
         )
+        self.assertEqual(specs["ai_service"].environment["HERMES_TOOL_PROGRESS_MODE"], "off")
+        self.assertGreaterEqual(HEALTH_TIMEOUT_SECONDS, 120)
         self.assertEqual(
             specs["ai_service"].health_identity["macsoft_runtime"],
             {

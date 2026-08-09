@@ -103,3 +103,39 @@ def test_explicit_skills_dir_monkeypatch_still_wins(tmp_path, monkeypatch):
 
     assert result["success"] is True
     assert Path(result["skill_dir"]) == patched_skill_dir
+
+
+def test_protected_external_skill_wins_over_profile_collision(tmp_path, monkeypatch):
+    default_home = tmp_path / "default-home"
+    profile_home = tmp_path / "profiles" / "orchestrator"
+    external_root = tmp_path / "protected-skills"
+    name = "autocount-payment-knockoff-automation"
+    _write_skill(profile_home, "learned", name, "profile shadow")
+    external_skill = external_root / name
+    external_skill.mkdir(parents=True)
+    (external_skill / "SKILL.md").write_text(
+        f"---\nname: {name}\ndescription: protected product skill\n---\n\n"
+        "# Protected product workflow\n",
+        encoding="utf-8",
+    )
+    (profile_home / "config.yaml").write_text(
+        "skills:\n"
+        "  external_dirs:\n"
+        f"    - {external_root.as_posix()}\n",
+        encoding="utf-8",
+    )
+
+    skills_tool = _reload_skills_tool(default_home, monkeypatch)
+    monkeypatch.setenv("HERMES_HOME", str(profile_home))
+    skills_tool._SKILLS_CACHE.clear()
+
+    listed = json.loads(skills_tool.skills_list())
+    matching = [skill for skill in listed["skills"] if skill["name"] == name]
+    assert len(matching) == 1
+    viewed = json.loads(skills_tool.skill_view(name))
+    assert Path(viewed["skill_dir"]) == external_skill
+
+    viewed = json.loads(skills_tool.skill_view(name, preprocess=False))
+    assert viewed["success"] is True
+    assert Path(viewed["skill_dir"]) == external_skill
+    assert "Protected product workflow" in viewed["content"]

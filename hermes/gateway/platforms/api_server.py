@@ -193,6 +193,27 @@ def _resolve_macsoft_profile_home(request: "web.Request") -> tuple[Optional[Path
     return home, None
 
 
+def _resolve_macsoft_actor(
+    request: "web.Request", profile_home: Optional[Path]
+) -> tuple[dict[str, str], Optional["web.Response"]]:
+    """Read a complete Server-issued actor identity after API-key authentication."""
+    names = {
+        "user_id": "X-MacSoft-User-Id",
+        "device_id": "X-MacSoft-Device-Id",
+        "role": "X-MacSoft-User-Role",
+    }
+    actor = {key: request.headers.get(header, "").strip() for key, header in names.items()}
+    actor["message_id"] = request.headers.get("X-MacSoft-Message-Id", "").strip()
+    supplied = [bool(actor[key]) for key in names]
+    if not any(supplied):
+        return {}, None
+    if profile_home is None or not all(supplied):
+        return {}, web.json_response(_openai_error("Invalid MacSoft actor identity"), status=400)
+    if any(len(value) > 256 or any(ord(char) < 32 for char in value) for value in actor.values()):
+        return {}, web.json_response(_openai_error("Invalid MacSoft actor identity"), status=400)
+    return actor, None
+
+
 @contextmanager
 def _macsoft_profile_scope(profile_home: Optional[Path]):
     """Use Hermes' official context-local profile and secret scope for one turn."""
@@ -4252,6 +4273,8 @@ class APIServerAdapter(BasePlatformAdapter):
         chat_id: str = "",
         session_key: str = "",
         session_id: str = "",
+        actor_identity: Optional[Dict[str, str]] = None,
+        macsoft_media: Optional[List[Dict[str, str]]] = None,
     ) -> list:
         """Bind session contextvars for an API-server agent run.
 
@@ -4276,6 +4299,11 @@ class APIServerAdapter(BasePlatformAdapter):
             session_key=session_key,
             session_id=session_id,
             async_delivery=False,
+            user_id=str((actor_identity or {}).get("user_id", "")),
+            message_id=str((actor_identity or {}).get("message_id", "")),
+            macsoft_user_role=str((actor_identity or {}).get("role", "")),
+            macsoft_device_id=str((actor_identity or {}).get("device_id", "")),
+            macsoft_media_json=json.dumps(macsoft_media or [], ensure_ascii=False),
         )
 
     async def _run_agent(
@@ -4448,6 +4476,9 @@ class APIServerAdapter(BasePlatformAdapter):
         profile_home, profile_err = _resolve_macsoft_profile_home(request)
         if profile_err is not None:
             return profile_err
+        actor_identity, actor_err = _resolve_macsoft_actor(request, profile_home)
+        if actor_err is not None:
+            return actor_err
 
         # Long-term memory scope header (see chat_completions for details).
         gateway_session_key, key_err = self._parse_session_key_header(request)
@@ -4472,6 +4503,25 @@ class APIServerAdapter(BasePlatformAdapter):
         user_message = raw_input if isinstance(raw_input, str) else (raw_input[-1].get("content", "") if isinstance(raw_input, list) else "")
         if not user_message:
             return web.json_response(_openai_error("No user message found in input"), status=400)
+
+        raw_macsoft_media = body.get("macsoft_media", [])
+        if raw_macsoft_media and (profile_home is None or not actor_identity):
+            return web.json_response(_openai_error("Trusted MacSoft media requires an authenticated device profile"), status=400)
+        if not isinstance(raw_macsoft_media, list) or len(raw_macsoft_media) > 5:
+            return web.json_response(_openai_error("'macsoft_media' must be an array of at most 5 items"), status=400)
+        macsoft_media: List[Dict[str, str]] = []
+        for index, item in enumerate(raw_macsoft_media):
+            if not isinstance(item, dict):
+                return web.json_response(_openai_error(f"macsoft_media[{index}] must be an object"), status=400)
+            normalized = {
+                key: str(item.get(key, "")).strip()
+                for key in ("file_id", "path", "media_type", "original_name")
+            }
+            if not normalized["path"] or not normalized["media_type"]:
+                return web.json_response(_openai_error(f"macsoft_media[{index}] requires path and media_type"), status=400)
+            if any(len(value) > 4096 or any(ord(char) < 32 for char in value) for value in normalized.values()):
+                return web.json_response(_openai_error(f"macsoft_media[{index}] is invalid"), status=400)
+            macsoft_media.append(normalized)
 
         instructions = body.get("instructions")
         previous_response_id = body.get("previous_response_id")
@@ -4644,6 +4694,9 @@ class APIServerAdapter(BasePlatformAdapter):
                             approval_token = set_current_session_key(approval_session_key)
                             session_tokens = self._bind_api_server_session(
                                 session_key=approval_session_key,
+                                session_id=str(session_id),
+                                actor_identity=actor_identity,
+                                macsoft_media=macsoft_media,
                             )
                             register_gateway_notify(approval_session_key, _approval_notify)
                             r = agent.run_conversation(

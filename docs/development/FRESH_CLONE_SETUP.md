@@ -21,6 +21,7 @@ Install these machine-level prerequisites:
 - Node.js 24 with npm
 - Python 3.12.13
 - `uv` 0.11.16 or a compatible newer release
+- PostgreSQL 17 when developing or running PharmaRise Module 1/2 workflows
 
 NSIS is not required to run or test the source. It is required only for an
 installer/release build.
@@ -38,6 +39,10 @@ uv --version
 The expected Node major version is 24. The repository bootstrap asks `uv` to
 obtain Python 3.12.13 when it creates the project environment, so a separately
 installed matching Python may not be necessary when `uv` can download it.
+
+PostgreSQL is not required for unrelated MacSoft development. It is a real
+runtime dependency for PharmaRise payment and receiving Cases; helper tests do
+not replace a live PostgreSQL acceptance run.
 
 ## 2. Clone the authoritative repository
 
@@ -200,6 +205,39 @@ runtime file to Git.
 The source runtime can start without a provider account, but AI chat and model
 operations will remain unavailable until a provider is configured. AutoCount
 operations likewise require a valid local AutoCount connection.
+
+### PharmaRise PostgreSQL setup
+
+Install PostgreSQL 17 with its command-line tools. Keep the normal local port
+`5432`, then initialize the workflow database from the repository root:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\setup-pharmarise-postgres.ps1
+```
+
+The script securely prompts for the local PostgreSQL administrator password,
+creates a dedicated `macsoft_workflow` database and least-privilege application
+role, applies the four-table migration, creates the managed evidence directory,
+and writes the generated application DSN only to the ignored local runtime
+AutoCount config. It does not print or add database passwords to Git.
+
+To configure an installed test runtime as well as the source runtime, explicitly
+pass both local config paths. Never use this example with production customer
+credentials:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\setup-pharmarise-postgres.ps1 `
+  -ConfigPath @(
+    '.\runtime\plugins\macsoft-autocount\config.json',
+    'C:\ProgramData\MacSoft Agent\runtime\plugins\macsoft-autocount\config.json'
+  )
+```
+
+The customer deployment model must explicitly provide PostgreSQL or an approved
+managed PostgreSQL connection. A release must not assume that a customer PC
+already has PostgreSQL installed.
 
 ## 8. Common setup failures
 

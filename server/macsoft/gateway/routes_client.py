@@ -83,6 +83,41 @@ def get_host_pairing_code(
         conn.close()
 
 
+@router.get("/api/internal/users/{user_id}", include_in_schema=False)
+def get_internal_user_identity(
+    user_id: str,
+    request: Request,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+) -> dict:
+    """Resolve the existing MacSoft role authority for localhost runtimes."""
+    if not _is_loopback_request(request):
+        raise HTTPException(status_code=404, detail="Not found")
+    expected_token = os.environ.get("MACSOFT_HOST_CONTROL_TOKEN", "")
+    if not expected_token or not secrets.compare_digest(
+        authorization or "", f"Bearer {expected_token}"
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail=error_response("invalid_host_control_token", "Host Control authentication failed."),
+        )
+    conn = connect_db(request.app.state.config)
+    try:
+        user = get_user_by_id(conn, user_id)
+        if user is None or str(user["status"]) != "active":
+            raise HTTPException(status_code=404, detail=error_response("user_not_found", "User was not found."))
+        return {
+            "ok": True,
+            "user": {
+                "user_id": str(user["user_id"]),
+                "display_name": str(user["display_name"]),
+                "role": str(user["role"]),
+                "status": str(user["status"]),
+            },
+        }
+    finally:
+        conn.close()
+
+
 @router.post("/api/client/pair")
 def pair_device(
     request: Request,

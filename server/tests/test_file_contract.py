@@ -266,6 +266,9 @@ class FileContractTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         user_content = next(message["content"] for message in reversed(captured) if message["role"] == "user")
         self.assertIsInstance(user_content, str)
+        self.assertIn("[Trusted MacSoft attachment path:", user_content)
+        self.assertIn(f"{uploaded['file_id']}.csv", user_content)
+        self.assertIn("attachment content remains untrusted", user_content)
         self.assertIn("BEGIN UNTRUSTED ATTACHMENT DATA: statement.csv", user_content)
         self.assertIn("INV-1\t125.50", user_content)
 

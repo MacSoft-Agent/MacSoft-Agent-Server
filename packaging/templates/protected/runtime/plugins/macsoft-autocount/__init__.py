@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from . import schemas, tools
+from . import schemas, tools, workflow_schemas, workflow_tools
 
 
 _AUTOCOUNT_POLICY = """
@@ -47,6 +47,11 @@ For every AutoCount request:
     sources. Preserve leading zeros, identify uncertain values, and prepare a
     draft first. Do not execute an AutoCount write from extracted values until
     the user explicitly confirms the reviewed draft.
+13. PharmaRise payment, PO, Purchase Invoice, supplier follow-up, and Batch-control
+    actions use persistent Cases. Never bypass workflow_case_workspace and
+    workflow_approve_autocount_action for a consequential write.
+14. A stale Case version or changed action digest invalidates approval. Generate a
+    new preview and ask again. Never blindly retry an uncertain action_id.
 </macsoft-autocount-policy>
 """.strip()
 
@@ -93,6 +98,48 @@ def register(ctx):
         schema=schemas.AUTOCOUNT_EXECUTE_COMMAND,
         handler=tools.autocount_execute_command,
         description="Execute any official AutoCount command generically.",
+    )
+    ctx.register_tool(
+        name="workflow_case_workspace",
+        toolset="macsoft_autocount",
+        schema=workflow_schemas.WORKFLOW_CASE_WORKSPACE,
+        handler=workflow_tools.workflow_case_workspace,
+        description="Create, retrieve, search, and version-update PharmaRise workflow Cases.",
+    )
+    ctx.register_tool(
+        name="workflow_resolve_whatsapp_identifier",
+        toolset="macsoft_autocount",
+        schema=workflow_schemas.WORKFLOW_RESOLVE_WHATSAPP_IDENTIFIER,
+        handler=workflow_tools.workflow_resolve_whatsapp_identifier,
+        description="Resolve an active WhatsApp workflow identity mapping.",
+    )
+    ctx.register_tool(
+        name="workflow_fifo_allocate",
+        toolset="macsoft_autocount",
+        schema=workflow_schemas.WORKFLOW_FIFO_ALLOCATE,
+        handler=workflow_tools.workflow_fifo_allocate,
+        description="Prepare a deterministic FIFO payment allocation without writing AutoCount.",
+    )
+    ctx.register_tool(
+        name="workflow_archive_evidence",
+        toolset="macsoft_autocount",
+        schema=workflow_schemas.WORKFLOW_ARCHIVE_EVIDENCE,
+        handler=workflow_tools.workflow_archive_evidence,
+        description="Archive and link one trusted current-message workflow attachment.",
+    )
+    ctx.register_tool(
+        name="workflow_approve_autocount_action",
+        toolset="macsoft_autocount",
+        schema=workflow_schemas.WORKFLOW_APPROVE_AUTOCOUNT_ACTION,
+        handler=workflow_tools.workflow_approve_autocount_action,
+        description="Approve one exact versioned PharmaRise AutoCount action.",
+    )
+    ctx.register_tool(
+        name="workflow_send_approved_supplier_message",
+        toolset="macsoft_autocount",
+        schema=workflow_schemas.WORKFLOW_SEND_APPROVED_SUPPLIER_MESSAGE,
+        handler=workflow_tools.workflow_send_approved_supplier_message,
+        description="Approve and send one exact supplier WhatsApp message for a receiving Case.",
     )
 
     ctx.register_hook("pre_llm_call", _inject_policy)

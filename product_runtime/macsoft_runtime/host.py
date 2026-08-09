@@ -32,7 +32,7 @@ from .metadata import ProductMetadata
 from .paths import ProductPaths
 
 
-HEALTH_TIMEOUT_SECONDS = 60.0
+HEALTH_TIMEOUT_SECONDS = 120.0
 MAX_RESTARTS = 3
 RESTART_WINDOW_SECONDS = 300.0
 LOG_MAX_BYTES = 5 * 1024 * 1024
@@ -143,6 +143,11 @@ def build_service_specs(
             environment={
                 **shared_environment,
                 "HERMES_HOME": str(paths.runtime_root),
+                # Customer-facing MacSoft surfaces should present business
+                # results, not internal Skill and Tool execution names. This
+                # changes display only; Tool execution and audit evidence are
+                # preserved.
+                "HERMES_TOOL_PROGRESS_MODE": "off",
                 "MACSOFT_PROFILE_ROOT": str(paths.runtime_root / "profiles"),
                 "PYTHONPATH": str(paths.ai_program_root),
             },

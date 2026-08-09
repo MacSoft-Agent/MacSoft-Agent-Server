@@ -33,6 +33,7 @@ import shlex
 import shutil
 import subprocess
 import tempfile
+import threading
 from pathlib import Path
 from typing import Optional, Dict, Any
 from urllib.parse import urljoin
@@ -111,6 +112,7 @@ GROQ_MODELS = {"whisper-large-v3", "whisper-large-v3-turbo", "distil-whisper-lar
 # Singleton for the local model — loaded once, reused across calls
 _local_model: Optional[object] = None
 _local_model_name: Optional[str] = None
+_local_model_lock = threading.Lock()
 
 STT_CAPABLE_MODEL_PROVIDERS = {
     "openai": "openai",
@@ -141,6 +143,28 @@ def is_stt_enabled(stt_config: Optional[dict] = None) -> bool:
         stt_config = _load_stt_config()
     enabled = stt_config.get("enabled", True)
     return is_truthy_value(enabled, default=True)
+
+
+def _resolve_stt_language(
+    provider_key: str,
+    stt_config: Optional[Dict[str, Any]] = None,
+    *,
+    request_language: Optional[str] = None,
+    extra_keys: tuple = (),
+) -> Optional[str]:
+    """Resolve a non-empty STT language hint, preserving request overrides."""
+    if stt_config is None:
+        stt_config = _load_stt_config()
+    provider_cfg = _get_stt_section(stt_config, provider_key)
+    candidates = [request_language, provider_cfg.get("language")]
+    candidates.extend(provider_cfg.get(key) for key in extra_keys)
+    if isinstance(stt_config, dict):
+        candidates.append(stt_config.get("language"))
+    candidates.append(os.getenv(LOCAL_STT_LANGUAGE_ENV))
+    for candidate in candidates:
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    return None
 
 
 def _has_openai_audio_backend() -> bool:
@@ -1168,7 +1192,7 @@ def _looks_like_cuda_lib_error(exc: BaseException) -> bool:
     return any(marker in msg for marker in _CUDA_LIB_ERROR_MARKERS)
 
 
-def _load_local_whisper_model(model_name: str):
+def _load_local_whisper_model(model_name: str, device: str = "auto", compute_type: str = "auto"):
     """Load faster-whisper with graceful CUDA → CPU fallback.
 
     faster-whisper's ``device="auto"`` picks CUDA when the ctranslate2 wheel
@@ -1183,7 +1207,7 @@ def _load_local_whisper_model(model_name: str):
     """
     from faster_whisper import WhisperModel
     try:
-        return WhisperModel(model_name, device="auto", compute_type="auto")
+        return WhisperModel(model_name, device=device, compute_type=compute_type)
     except Exception as exc:
         if not _looks_like_cuda_lib_error(exc):
             raise
@@ -1195,6 +1219,88 @@ def _load_local_whisper_model(model_name: str):
         return WhisperModel(model_name, device="cpu", compute_type="int8")
 
 
+_VAD_MIN_SILENCE_MS_DEFAULT = 500
+_NO_SPEECH_PROB_THRESHOLD_DEFAULT = 0.6
+_LOGPROB_THRESHOLD_DEFAULT = -1.0
+
+
+def _confidence_thresholds(local_cfg: Dict[str, Any]) -> tuple[float, float]:
+    """Resolve the local model and post-filter confidence thresholds."""
+    try:
+        no_speech = float(local_cfg.get("no_speech_prob_threshold", _NO_SPEECH_PROB_THRESHOLD_DEFAULT))
+    except (TypeError, ValueError):
+        no_speech = _NO_SPEECH_PROB_THRESHOLD_DEFAULT
+    try:
+        logprob = float(local_cfg.get("logprob_threshold", _LOGPROB_THRESHOLD_DEFAULT))
+    except (TypeError, ValueError):
+        logprob = _LOGPROB_THRESHOLD_DEFAULT
+    return no_speech, logprob
+
+
+def build_local_transcribe_kwargs(
+    stt_config: Optional[Dict[str, Any]] = None,
+    *,
+    request_language: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build the hardened kwargs shared by every local faster-whisper call."""
+    stt_config = stt_config if isinstance(stt_config, dict) else _load_stt_config()
+    local_cfg = stt_config.get("local") or {}
+    kwargs: Dict[str, Any] = {"beam_size": 5, "condition_on_previous_text": False}
+
+    vad_enabled = local_cfg.get("vad", True)
+    if vad_enabled is None:
+        vad_enabled = True
+    kwargs["vad_filter"] = bool(vad_enabled)
+    if kwargs["vad_filter"]:
+        try:
+            min_silence_ms = int(local_cfg.get("vad_min_silence_ms", _VAD_MIN_SILENCE_MS_DEFAULT))
+        except (TypeError, ValueError):
+            min_silence_ms = _VAD_MIN_SILENCE_MS_DEFAULT
+        kwargs["vad_parameters"] = {"min_silence_duration_ms": min_silence_ms}
+
+    no_speech_threshold, log_prob_threshold = _confidence_thresholds(local_cfg)
+    kwargs["no_speech_threshold"] = no_speech_threshold
+    kwargs["log_prob_threshold"] = log_prob_threshold
+
+    forced_lang = _resolve_stt_language(
+        "local", stt_config, request_language=request_language
+    )
+    if forced_lang:
+        kwargs["language"] = forced_lang
+    initial_prompt = local_cfg.get("initial_prompt")
+    if isinstance(initial_prompt, str) and initial_prompt.strip():
+        kwargs["initial_prompt"] = initial_prompt
+    return kwargs
+
+
+def _is_hallucinated_segment(
+    segment: Any, no_speech_threshold: float, logprob_threshold: float
+) -> bool:
+    """Return true only when both silence probability and low confidence agree."""
+    no_speech_prob = getattr(segment, "no_speech_prob", None)
+    avg_logprob = getattr(segment, "avg_logprob", None)
+    return (
+        isinstance(no_speech_prob, (int, float))
+        and isinstance(avg_logprob, (int, float))
+        and no_speech_prob > no_speech_threshold
+        and avg_logprob < logprob_threshold
+    )
+
+
+def _join_confident_segments(segments: Any, local_cfg: Dict[str, Any]) -> str:
+    """Join decoded text while excluding probable silence hallucinations."""
+    no_speech_threshold, logprob_threshold = _confidence_thresholds(local_cfg)
+    kept = []
+    for segment in segments:
+        if _is_hallucinated_segment(segment, no_speech_threshold, logprob_threshold):
+            logger.debug("Dropping probable hallucinated STT segment %r", getattr(segment, "text", ""))
+            continue
+        text = getattr(segment, "text", "").strip()
+        if text:
+            kept.append(text)
+    return " ".join(kept).strip()
+
+
 def _transcribe_local(file_path: str, model_name: str, language: Optional[str] = None) -> Dict[str, Any]:
     """Transcribe using faster-whisper (local, free)."""
     global _local_model, _local_model_name
@@ -1204,26 +1310,27 @@ def _transcribe_local(file_path: str, model_name: str, language: Optional[str] =
             return {"success": False, "transcript": "", "error": "faster-whisper not installed"}
 
     try:
-        # Lazy-load the model (downloads on first use, ~150 MB for 'base')
+        stt_config = _load_stt_config()
+        local_cfg = stt_config.get("local") or {}
+        # Lazy-load the model (downloads on first use, ~150 MB for 'base').
         if _local_model is None or _local_model_name != model_name:
-            logger.info("Loading faster-whisper model '%s' (first load downloads the model)...", model_name)
-            _local_model = _load_local_whisper_model(model_name)
-            _local_model_name = model_name
+            with _local_model_lock:
+                if _local_model is None or _local_model_name != model_name:
+                    logger.info("Loading faster-whisper model '%s' (first load downloads the model)...", model_name)
+                    _local_model = _load_local_whisper_model(
+                        model_name,
+                        device=local_cfg.get("device", "auto"),
+                        compute_type=local_cfg.get("compute_type", "auto"),
+                    )
+                    _local_model_name = model_name
 
-        # Language: config.yaml (stt.local.language) > env var > auto-detect.
-        _forced_lang = (
-            language
-            or _load_stt_config().get("local", {}).get("language")
-            or os.getenv(LOCAL_STT_LANGUAGE_ENV)
-            or None
+        transcribe_kwargs = build_local_transcribe_kwargs(
+            stt_config, request_language=language
         )
-        transcribe_kwargs = {"beam_size": 5}
-        if _forced_lang:
-            transcribe_kwargs["language"] = _forced_lang
 
         try:
             segments, info = _local_model.transcribe(file_path, **transcribe_kwargs)
-            transcript = " ".join(segment.text.strip() for segment in segments)
+            transcript = _join_confident_segments(segments, local_cfg)
         except Exception as exc:
             # CUDA runtime libs sometimes only fail at dlopen-on-first-use,
             # AFTER the model loaded successfully.  Evict the broken cached
@@ -1243,7 +1350,7 @@ def _transcribe_local(file_path: str, model_name: str, language: Optional[str] =
             _local_model = WhisperModel(model_name, device="cpu", compute_type="int8")
             _local_model_name = model_name
             segments, info = _local_model.transcribe(file_path, **transcribe_kwargs)
-            transcript = " ".join(segment.text.strip() for segment in segments)
+            transcript = _join_confident_segments(segments, local_cfg)
 
         logger.info(
             "Transcribed %s via local whisper (%s, lang=%s, %.1fs audio)",

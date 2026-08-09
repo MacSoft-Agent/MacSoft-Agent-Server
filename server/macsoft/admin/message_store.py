@@ -96,14 +96,14 @@ def attach_admin_files_to_message(conn: sqlite3.Connection, *, session_id: str, 
 def list_admin_context(conn: sqlite3.Connection, session_id: str) -> list[dict[str, str]]:
     rows = conn.execute(
         """
-        SELECT role, content FROM admin_messages m
+        SELECT message_id, role, content FROM admin_messages m
         INNER JOIN admin_sessions s ON s.session_id = m.session_id
         WHERE m.session_id = ? AND s.deleted_at IS NULL AND TRIM(content) <> ''
         ORDER BY m.created_at DESC LIMIT ?
         """,
         (session_id, MAX_ADMIN_CONTEXT_MESSAGES),
     ).fetchall()
-    selected = [{"role": str(row["role"]), "content": str(row["content"])} for row in reversed(rows)]
+    selected = [{"message_id": str(row["message_id"]), "role": str(row["role"]), "content": str(row["content"])} for row in reversed(rows)]
     total = 0
     bounded: list[dict[str, str]] = []
     for message in selected:

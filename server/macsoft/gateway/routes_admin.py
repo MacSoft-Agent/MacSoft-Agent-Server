@@ -36,6 +36,7 @@ from macsoft.files.storage import (
     create_admin_uploaded_file,
     delete_admin_owned_file,
     delete_admin_session_files,
+    list_admin_files_for_message,
     require_admin_owned_file,
     require_admin_owned_files,
     stored_path,
@@ -654,6 +655,20 @@ def admin_chat_stream(
         )}]
         hermes_messages.extend(list_admin_context(conn, body.session_id))
         hermes_messages[-1]["content"] = current_user_content
+        for message in hermes_messages:
+            if message.get("role") != "user" or message is hermes_messages[-1]:
+                continue
+            historical_files = list_admin_files_for_message(
+                conn,
+                session_id=body.session_id,
+                message_id=str(message["message_id"]),
+            )
+            if historical_files:
+                message["content"] = build_hermes_user_content(
+                    config,
+                    message=str(message["content"]),
+                    files=historical_files,
+                )
         assistant_message_id = new_id("admin_msg")
         admin_scope = _admin_scope_for_session(session)
         native_run_id: str | None = None

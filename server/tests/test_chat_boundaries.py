@@ -39,6 +39,7 @@ CREATE TABLE sessions (session_id TEXT PRIMARY KEY, user_id TEXT, owner_device_i
 CREATE TABLE messages (message_id TEXT PRIMARY KEY, session_id TEXT, user_id TEXT, role TEXT, content TEXT, status TEXT, model TEXT, created_at TEXT);
 CREATE TABLE client_skills (skill_id TEXT PRIMARY KEY, owner_user_id TEXT NOT NULL, owner_device_id TEXT, slug TEXT NOT NULL, name TEXT NOT NULL, description TEXT NOT NULL, content TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(owner_device_id, slug));
 CREATE TABLE uploaded_files (file_id TEXT PRIMARY KEY, owner_user_id TEXT NOT NULL, owner_device_id TEXT NOT NULL, original_name TEXT NOT NULL, stored_name TEXT NOT NULL UNIQUE, media_type TEXT NOT NULL, size_bytes INTEGER NOT NULL, sha256 TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE TABLE message_attachments (message_id TEXT NOT NULL, file_id TEXT NOT NULL, PRIMARY KEY(message_id, file_id));
 """
 
 
@@ -327,7 +328,8 @@ class ChatBoundaryTests(unittest.TestCase):
         finally:
             conn.close()
         self.assertEqual(stored, original)
-        self.assertEqual(captured[-1], {"role": "user", "content": original})
+        self.assertEqual(captured[-1]["role"], "user")
+        self.assertEqual(captured[-1]["content"], original)
         self.assertEqual(
             _normalized_messages([{"role": "user", "content": original}])[0]["content"],
             original,
@@ -382,8 +384,10 @@ class ChatBoundaryTests(unittest.TestCase):
 
         non_system = [message for message in captured if message["role"] != "system"]
         self.assertEqual(len(non_system), 41)
-        self.assertEqual(non_system[0], {"role": "user", "content": "user-40"})
-        self.assertEqual(non_system[-1], {"role": "user", "content": "current"})
+        self.assertEqual(non_system[0]["role"], "user")
+        self.assertEqual(non_system[0]["content"], "user-40")
+        self.assertEqual(non_system[-1]["role"], "user")
+        self.assertEqual(non_system[-1]["content"], "current")
         for index in range(0, 40, 2):
             self.assertEqual(non_system[index]["role"], "user")
             self.assertEqual(non_system[index + 1]["role"], "assistant")

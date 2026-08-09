@@ -1006,6 +1006,13 @@ stt:
   local:
     model: "base"              # tiny | base | small | medium | large-v3 | turbo
     # language: ""             # auto-detect; set to "en", "es", "fr", etc. to force
+    # initial_prompt: ""       # Optional terminology hint for faster-whisper
+    # vad: true                # Drop silence before decoding (enabled by default)
+    # vad_min_silence_ms: 500  # Silence duration that splits speech chunks
+    # no_speech_prob_threshold: 0.6  # Drop only with low log probability too
+    # logprob_threshold: -1.0
+    # device: "auto"           # auto | cpu | cuda
+    # compute_type: "auto"     # auto | int8 | float16 | float32
   openai:
     model: "whisper-1"         # whisper-1 | gpt-4o-mini-transcribe | gpt-4o-transcribe
   # mistral:

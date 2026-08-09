@@ -2132,6 +2132,13 @@ DEFAULT_CONFIG = {
         "local": {
             "model": "base",  # tiny, base, small, medium, large-v3
             "language": "",  # auto-detect by default; set to "en", "es", "fr", etc. to force
+            "initial_prompt": "",
+            "vad": True,
+            "vad_min_silence_ms": 500,
+            "no_speech_prob_threshold": 0.6,
+            "logprob_threshold": -1.0,
+            "device": "auto",
+            "compute_type": "auto",
         },
         "openai": {
             "model": "whisper-1",  # whisper-1, gpt-4o-mini-transcribe, gpt-4o-transcribe

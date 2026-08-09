@@ -17,8 +17,8 @@ class ProductMetadataAndPathsTests(unittest.TestCase):
         source = json.loads((root / "product.json").read_text("utf-8"))
         metadata = load_product_metadata(root)
         self.assertEqual(metadata.product, "MacSoft Agent")
-        self.assertEqual(source["product_version"], "0.1.5")
-        self.assertEqual(source["build_id"], "macsoft-agent-0.1.5-stable.20260803.1")
+        self.assertEqual(source["product_version"], "0.1.7")
+        self.assertEqual(source["build_id"], "macsoft-agent-0.1.7-stable.20260804.1")
         self.assertEqual(source["runtime_base_version"], "v2026.7.7.2")
         self.assertEqual(
             source["runtime_base_commit"],

@@ -164,16 +164,15 @@ class PackagingContractTests(unittest.TestCase):
         )
         destinations = {item["destination"] for item in protected["resources"]}
 
-        for generic_tool in (
-            "autocount_manage_connections",
+        for removed_generic_tool in (
             "autocount_get_connector_status",
             "autocount_search_commands",
             "autocount_get_command_schema",
             "autocount_validate_command",
             "autocount_execute_command",
         ):
-            self.assertIn(generic_tool, entrypoint)
-            self.assertIn(generic_tool, plugin_yaml)
+            self.assertNotIn(removed_generic_tool, entrypoint)
+            self.assertNotIn(removed_generic_tool, plugin_yaml)
         for workflow_tool in (
             "workflow_case_workspace",
             "workflow_resolve_whatsapp_identifier",

@@ -1,13 +1,7 @@
 ﻿name: macsoft-autocount
 version: "0.1.0"
-description: Dynamic AutoCount Cloud tools for the MacSoft Agent runtime.
+description: Native AutoCount Cloud guidance and optional MacSoft workflow state tools.
 provides_tools:
-  - autocount_manage_connections
-  - autocount_get_connector_status
-  - autocount_search_commands
-  - autocount_get_command_schema
-  - autocount_validate_command
-  - autocount_execute_command
   - workflow_case_workspace
   - workflow_resolve_whatsapp_identifier
   - workflow_fifo_allocate

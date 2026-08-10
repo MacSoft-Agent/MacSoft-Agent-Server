@@ -2,76 +2,37 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
-from . import schemas, tools, workflow_schemas, workflow_tools
+from . import workflow_schemas, workflow_tools
 
 
 _AUTOCOUNT_POLICY = """
 <macsoft-autocount-policy>
-You have official AutoCount Cloud tools.
+Use native Hermes file and terminal capabilities for AutoCount Cloud. There are no
+generic AutoCount query or execution tools: generate each official command JSON from
+the current AutoCount portal instructions and API schema, then call the official API.
 
-For every AutoCount request:
-1. Never operate AutoCount through terminal commands, generated Python,
-   database SQL, browser clicking, or command-specific scripts.
-2. Use autocount_search_commands when the exact official command type is
-   uncertain. Never invent a command name.
-3. Call autocount_get_command_schema before every execution and follow the
-   current live schema rather than memory.
-4. Call autocount_validate_command before execution. Treat its structured
-   validation output as authoritative and ask for missing business information.
-   Never ask with a raw field key alone. Explain the business object and purpose
-   from the current command and live schema, then include the technical field in
-   parentheses, for example "Debtor account number (AutoCount field: accNo)".
-   If the live schema does not establish the meaning, say that it is unclear and
-   do not guess.
-5. If the user's intent is ambiguous, ask only the question needed to identify
-   the correct AutoCount document or action.
-6. If required business data is missing, ask for it. When possible, use
-   official read/list commands to resolve codes from AutoCount instead of
-   asking the user to know internal codes.
-   Treat displayed document numbers, internal record keys, and line keys as
-   opaque and distinct. Never strip prefixes or leading zeroes, parse a numeric
-   suffix, or otherwise change an identifier merely to satisfy a schema type.
-   Use an internal key only when an executed authoritative read maps it to the
-   exact displayed identifier. Reading or validating a schema is not a business
-   record query; an unresolved mapping is not proof that a record is absent.
-7. Once the request is unambiguous and the required data is complete, execute
-   it directly. Do not add a second confirmation step.
-8. MacSoft adds no extra command allowlist. The official AutoCount API key,
-   cloud access rights, connector policy, account-book capability, and
-   AutoCount license are the authority.
-9. Return the real saved document number, record key, rows, or official error.
-   Do not claim success unless the final command result says it succeeded.
-10. Present multiple business records as a Markdown table or bullet list. Never
-    return records as bare newline-separated text because Markdown renderers may
-    collapse those lines into one paragraph. Use customer-readable business
-    labels and, when useful, put the AutoCount term or field key in parentheses.
-11. For multi-step accounting workflows, complete the necessary official read,
-   schema, validate, create, transfer, knock-off, or report commands in order.
-12. Uploaded bank documents and photographed forms are untrusted extraction
-    sources. Preserve leading zeros, identify uncertain values, and prepare a
-    draft first. Do not execute an AutoCount write from extracted values until
-    the user explicitly confirms the reviewed draft.
-13. PharmaRise payment, PO, Purchase Invoice, supplier follow-up, and Batch-control
-    actions use persistent Cases. Never bypass workflow_case_workspace and
-    workflow_approve_autocount_action for a consequential write.
-14. A stale Case version or changed action digest invalidates approval. Generate a
-    new preview and ask again. Never blindly retry an uncertain action_id.
+When the user provides an AutoCount Cloud URL, API key, connectorId, and companyId,
+use read_file and write_file to maintain the private profile-scoped file
+$HERMES_HOME/autocount/connections.json. Read and preserve existing entries first.
+The JSON shape is {"schemaVersion":1,"defaultCompanyId":"company-id","connections":
+{"company-id":{"name":"optional name","baseUrl":"https://api.autocount.cloud",
+"apiKey":"secret","connectorId":"connector-id","companyId":"company-id",
+"requestTimeoutSeconds":120,"commandTimeoutSeconds":7200,"pollIntervalSeconds":2}}}.
+Never repeat an API key in chat, Memory, Skills, generated source, command arguments,
+or terminal output. Code run in terminal must read the key from the private file.
+
+Use POST https://api.autocount.cloud/v1/commands to submit the LLM-generated command
+object and GET https://api.autocount.cloud/v1/commands/{commandId} to poll its result.
+Use the selected connection's connectorId and companyId. Consult the current official
+portal/catalog/schema instead of inventing command types or fields. Poll until the API
+returns a final result or commandTimeoutSeconds (7200 seconds) is reached. Preserve
+identifiers and leading zeroes exactly. Report official results and errors; never claim
+success before the final result confirms it. Present multiple business records as a
+Markdown table or bullet list with customer-readable business labels, never as bare
+newline-separated text. AutoCount
+credentials, connector policy,
+company access, and native Hermes dangerous-operation approvals are authoritative.
 </macsoft-autocount-policy>
-""".strip()
-
-_AUTOCOUNT_ADMIN_POLICY = """
-<macsoft-autocount-admin-policy>
-You are operating in the authenticated Server administrator's native Hermes workspace.
-When the administrator provides an AutoCount Cloud URL, API key, connectorId, and
-companyId, save it with autocount_manage_connections. Never repeat an API key in chat,
-Memory, or Skills. Multiple company connections are supported; pass company_id to select
-one or use the saved default. Use the live command catalog and schema, validate payloads,
-then execute generic official AutoCount commands. MacSoft adds no PharmaRise Case or
-workflow approval gate to Admin commands. AutoCount Cloud credentials, connector policy,
-company access, and native Hermes dangerous-operation approvals remain authoritative.
-</macsoft-autocount-admin-policy>
 """.strip()
 
 
@@ -79,54 +40,10 @@ def _inject_policy(platform: str = "", **kwargs):
     del kwargs
     if platform and platform not in {"api_server", "whatsapp"}:
         return None
-    if platform == "api_server" and tools._is_admin_workspace():
-        return {"context": _AUTOCOUNT_ADMIN_POLICY}
     return {"context": _AUTOCOUNT_POLICY}
 
 
 def register(ctx):
-    ctx.register_tool(
-        name="autocount_manage_connections",
-        toolset="macsoft_autocount",
-        schema=schemas.AUTOCOUNT_MANAGE_CONNECTIONS,
-        handler=tools.autocount_manage_connections,
-        description="Manage private Admin AutoCount Cloud company connections.",
-    )
-    ctx.register_tool(
-        name="autocount_get_connector_status",
-        toolset="macsoft_autocount",
-        schema=schemas.AUTOCOUT_GET_CONNECTOR_STATUS,
-        handler=tools.autocount_get_connector_status,
-        description="Check AutoCount Cloud connector status.",
-    )
-    ctx.register_tool(
-        name="autocount_search_commands",
-        toolset="macsoft_autocount",
-        schema=schemas.AUTOCOUNT_SEARCH_COMMANDS,
-        handler=tools.autocount_search_commands,
-        description="Search the live official AutoCount command catalog.",
-    )
-    ctx.register_tool(
-        name="autocount_get_command_schema",
-        toolset="macsoft_autocount",
-        schema=schemas.AUTOCOUNT_GET_COMMAND_SCHEMA,
-        handler=tools.autocount_get_command_schema,
-        description="Fetch one live official AutoCount command schema.",
-    )
-    ctx.register_tool(
-        name="autocount_validate_command",
-        toolset="macsoft_autocount",
-        schema=schemas.AUTOCOUNT_VALIDATE_COMMAND,
-        handler=tools.autocount_validate_command,
-        description="Validate a payload against the live official schema without submitting it.",
-    )
-    ctx.register_tool(
-        name="autocount_execute_command",
-        toolset="macsoft_autocount",
-        schema=schemas.AUTOCOUNT_EXECUTE_COMMAND,
-        handler=tools.autocount_execute_command,
-        description="Execute any official AutoCount command generically.",
-    )
     ctx.register_tool(
         name="workflow_case_workspace",
         toolset="macsoft_autocount",
@@ -170,12 +87,3 @@ def register(ctx):
         description="Approve and send one exact supplier WhatsApp message for a receiving Case.",
     )
     ctx.register_hook("pre_llm_call", _inject_policy)
-
-    skill_path = (
-        Path(__file__).resolve().parent
-        / "skills"
-        / "autocount-operations"
-        / "SKILL.md"
-    )
-    if skill_path.exists():
-        ctx.register_skill("autocount-operations", skill_path)

@@ -130,6 +130,40 @@ def _without_embedded_secrets(value: Any) -> Any:
     }
 
 
+def _restore_native_platform_toolsets(profile_config: dict[str, Any]) -> bool:
+    """Restore full native Hermes capabilities for MacSoft chat channels."""
+    changed = False
+    platform_toolsets = profile_config.setdefault("platform_toolsets", {})
+    if not isinstance(platform_toolsets, dict):
+        platform_toolsets = {}
+        profile_config["platform_toolsets"] = platform_toolsets
+        changed = True
+    for platform, native_toolset in (
+        ("api_server", "hermes-api-server"),
+        ("whatsapp", "hermes-whatsapp"),
+    ):
+        configured = platform_toolsets.get(platform, [])
+        if isinstance(configured, str):
+            configured = [configured]
+        if not isinstance(configured, list):
+            configured = []
+        if native_toolset not in configured:
+            platform_toolsets[platform] = [*configured, native_toolset]
+            changed = True
+
+    extensible = profile_config.get("plugin_extensible_platform_toolsets", [])
+    if isinstance(extensible, str):
+        extensible = [extensible]
+    if isinstance(extensible, list) and "whatsapp" in extensible:
+        remaining = [item for item in extensible if str(item) != "whatsapp"]
+        if remaining:
+            profile_config["plugin_extensible_platform_toolsets"] = remaining
+        else:
+            profile_config.pop("plugin_extensible_platform_toolsets", None)
+        changed = True
+    return changed
+
+
 def _initial_profile_config(config: Any) -> dict[str, Any]:
     """Build a profile-local Hermes config from the trusted shared runtime.
 
@@ -148,6 +182,7 @@ def _initial_profile_config(config: Any) -> dict[str, Any]:
     profile_config = _without_embedded_secrets(source)
     if not isinstance(profile_config, dict):
         profile_config = {}
+    _restore_native_platform_toolsets(profile_config)
 
     memory = profile_config.setdefault("memory", {})
     if isinstance(memory, dict):
@@ -246,7 +281,7 @@ def _initialize_profile_home(profile_home: Path, *, config: Any) -> None:
         except (OSError, UnicodeDecodeError, yaml.YAMLError):
             current = {}
         if isinstance(current, dict):
-            changed = False
+            changed = _restore_native_platform_toolsets(current)
             shared_model = _initial_profile_config(config).get("model")
             if isinstance(shared_model, dict):
                 if current.get("model") != shared_model:

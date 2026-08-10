@@ -22,14 +22,9 @@ platforms:
 
 platform_toolsets:
   api_server:
-    - macsoft_autocount
-    - skills_readonly
+    - hermes-api-server
   whatsapp:
-    - macsoft_autocount
-    - skills_readonly
-
-plugin_extensible_platform_toolsets:
-  - whatsapp
+    - hermes-whatsapp
 
 plugins:
   enabled:

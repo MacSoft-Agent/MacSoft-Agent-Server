@@ -127,34 +127,42 @@ class FirstRunInitializationTests(unittest.TestCase):
 
         self.assertEqual({path: path.read_bytes() for path in before}, before)
 
-    def test_upgrade_adds_read_only_skill_toolset_without_replacing_runtime_config(self) -> None:
+    def test_upgrade_restores_native_api_server_toolset_without_replacing_runtime_config(self) -> None:
         initialize_product_data(self.paths, self.metadata)
         runtime = self.paths.runtime_config.read_text("utf-8")
-        runtime = runtime.replace("    - macsoft_autocount\n", "    - macsoft_autocount\n    # customer setting\n")
+        runtime = runtime.replace(
+            "  api_server:\n    - hermes-api-server",
+            "  api_server:\n    - macsoft_autocount\n    - skills_readonly\n    # customer setting",
+        )
         runtime = runtime.replace("default: gpt-5.4", "default: customer-model")
         self.paths.runtime_config.write_text(runtime, encoding="utf-8")
 
         initialize_product_data(self.paths, self.metadata)
 
         updated = self.paths.runtime_config.read_text("utf-8")
-        self.assertIn("    - skills_readonly", updated)
+        self.assertIn("    - hermes-api-server", updated)
         self.assertIn("default: customer-model", updated)
         self.assertIn("# customer setting", updated)
 
-    def test_upgrade_adds_restricted_whatsapp_toolsets_without_replacing_runtime_config(self) -> None:
+    def test_upgrade_restores_native_whatsapp_toolset_without_replacing_runtime_config(self) -> None:
         initialize_product_data(self.paths, self.metadata)
         runtime = self.paths.runtime_config.read_text("utf-8")
+        runtime = runtime.replace(
+            "  whatsapp:\n    - hermes-whatsapp",
+            "  whatsapp:\n    - macsoft_autocount\n    - skills_readonly",
+        )
+        runtime = runtime.replace(
+            "\nplugins:",
+            "\nplugin_extensible_platform_toolsets:\n  - whatsapp\n\nplugins:",
+        )
         runtime = runtime.replace("default: gpt-5.4", "default: customer-model")
         self.paths.runtime_config.write_text(runtime, encoding="utf-8")
 
         initialize_product_data(self.paths, self.metadata)
 
         updated = self.paths.runtime_config.read_text("utf-8")
-        self.assertIn(
-            "  whatsapp:\n    - macsoft_autocount\n    - skills_readonly",
-            updated,
-        )
-        self.assertIn("plugin_extensible_platform_toolsets:\n  - whatsapp", updated)
+        self.assertIn("    - hermes-whatsapp", updated)
+        self.assertNotIn("plugin_extensible_platform_toolsets:\n  - whatsapp", updated)
         self.assertIn("default: customer-model", updated)
 
     def test_upgrade_synchronizes_internal_api_key_without_rewriting_other_settings(self) -> None:
@@ -183,10 +191,10 @@ class FirstRunInitializationTests(unittest.TestCase):
 
     def test_modified_protected_resource_is_not_overwritten(self) -> None:
         initialize_product_data(self.paths, self.metadata)
-        target = self.paths.autocount_plugin_root / "validator.py"
+        target = self.paths.autocount_plugin_root / "workflow_logic.py"
         target.write_text("# administrator change\n", encoding="utf-8")
         second = initialize_product_data(self.paths, self.metadata)
-        self.assertIn("runtime/plugins/macsoft-autocount/validator.py", second.conflicts)
+        self.assertIn("runtime/plugins/macsoft-autocount/workflow_logic.py", second.conflicts)
         self.assertEqual(target.read_text("utf-8"), "# administrator change\n")
 
     def test_removed_protected_resource_is_deleted_only_when_unchanged(self) -> None:
@@ -194,7 +202,7 @@ class FirstRunInitializationTests(unittest.TestCase):
         initialize_product_data(self.paths, self.metadata)
         manifest_path = self.program / "templates" / "protected-resources.json"
         manifest = json.loads(manifest_path.read_text("utf-8"))
-        destination = "runtime/plugins/macsoft-autocount/validator.py"
+        destination = "runtime/plugins/macsoft-autocount/workflow_logic.py"
         target = self.paths.data_root / destination
         self.assertTrue(target.is_file())
 

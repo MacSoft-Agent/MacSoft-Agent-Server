@@ -220,6 +220,34 @@ def _ensure_yaml_list_item(path: Path, key_path: tuple[str, ...], value: str) ->
     return True
 
 
+def _remove_yaml_list_item(path: Path, key_path: tuple[str, ...], value: str) -> bool:
+    """Remove one exact top-level YAML list item while preserving surrounding text."""
+    if len(key_path) != 1:
+        raise ValueError(f"Unsupported YAML list path: {'.'.join(key_path)}")
+    lines = path.read_text(encoding="utf-8-sig").splitlines(keepends=True)
+    target_index = None
+    target_end = len(lines)
+    for index, line in enumerate(lines):
+        match = _YAML_KEY_LINE.match(line)
+        if not match or len(match.group(1).expandtabs(8)) != 0:
+            continue
+        if target_index is None:
+            if match.group(2) == key_path[0]:
+                target_index = index
+            continue
+        target_end = index
+        break
+    if target_index is None:
+        return False
+    item_pattern = re.compile(rf"^\s*-\s*{re.escape(value)}\s*(?:#.*)?(?:\r?\n)?$")
+    for index in range(target_index + 1, target_end):
+        if item_pattern.match(lines[index]):
+            del lines[index]
+            _atomic_write(path, "".join(lines).encode("utf-8"))
+            return True
+    return False
+
+
 def _load_json(path: Path, fallback: dict) -> dict:
     if not path.exists():
         return fallback
@@ -465,15 +493,14 @@ def initialize_product_data(paths: ProductPaths, metadata: ProductMetadata) -> I
     _ensure_yaml_list_item(
         paths.runtime_config,
         ("platform_toolsets", "api_server"),
-        "skills_readonly",
+        "hermes-api-server",
     )
-    for toolset in ("macsoft_autocount", "skills_readonly"):
-        _ensure_yaml_list_item(
-            paths.runtime_config,
-            ("platform_toolsets", "whatsapp"),
-            toolset,
-        )
     _ensure_yaml_list_item(
+        paths.runtime_config,
+        ("platform_toolsets", "whatsapp"),
+        "hermes-whatsapp",
+    )
+    _remove_yaml_list_item(
         paths.runtime_config,
         ("plugin_extensible_platform_toolsets",),
         "whatsapp",

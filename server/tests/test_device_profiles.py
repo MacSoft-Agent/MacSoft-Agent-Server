@@ -287,6 +287,32 @@ class DeviceProfileTests(unittest.TestCase):
         finally:
             self._restore_profile_root(previous)
 
+    def test_existing_profile_restores_native_client_toolsets(self) -> None:
+        previous = self._with_profile_root()
+        try:
+            profile = ensure_device_profile(self.conn, config=self.config, device_id="device-a")
+            home = self.profile_root / str(profile["profile_id"])
+            profile_config = yaml.safe_load((home / "config.yaml").read_text(encoding="utf-8"))
+            profile_config["platform_toolsets"] = {
+                "api_server": ["macsoft_autocount", "skills_readonly"],
+                "whatsapp": ["macsoft_autocount", "skills_readonly"],
+            }
+            profile_config["plugin_extensible_platform_toolsets"] = ["whatsapp"]
+            (home / "config.yaml").write_text(
+                yaml.safe_dump(profile_config, sort_keys=False), encoding="utf-8"
+            )
+
+            ensure_device_profile(self.conn, config=self.config, device_id="device-a")
+
+            migrated = yaml.safe_load((home / "config.yaml").read_text(encoding="utf-8"))
+            self.assertIn("hermes-api-server", migrated["platform_toolsets"]["api_server"])
+            self.assertIn("hermes-whatsapp", migrated["platform_toolsets"]["whatsapp"])
+            self.assertNotIn(
+                "whatsapp", migrated.get("plugin_extensible_platform_toolsets", [])
+            )
+        finally:
+            self._restore_profile_root(previous)
+
 
 if __name__ == "__main__":
     unittest.main()

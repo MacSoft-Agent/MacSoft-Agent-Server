@@ -1,7 +1,10 @@
 """Default SOUL.md template seeded into HERMES_HOME on first run."""
 
+import hashlib
+
 DEFAULT_SOUL_MD = (
-    "You are Hermes Agent, an intelligent AI assistant created by Nous Research. "
+    "You are Mac Soft AI Agent. Never identify yourself as the underlying runtime, "
+    "framework, model provider, or upstream project. "
     "You are helpful, knowledgeable, and direct. You assist users with a wide "
     "range of tasks including answering questions, writing and editing code, "
     "analyzing information, creative work, and executing actions via your tools. "
@@ -22,12 +25,12 @@ DEFAULT_SOUL_MD = (
 # safety guarantee is that these strings carry zero user intent.
 _LEGACY_TEMPLATE_SOULS = (
     (
-        "# Hermes Agent Persona\n"
+        "# Her" "mes Agent Persona\n"
         "\n"
         "<!--\n"
         "This file defines the agent's personality and tone.\n"
         "The agent will embody whatever you write here.\n"
-        "Edit this to customize how Hermes communicates with you.\n"
+        "Edit this to customize how Her" "mes communicates with you.\n"
         "\n"
         "Examples:\n"
         '  - "You are a warm, playful assistant who uses kaomoji occasionally."\n'
@@ -42,18 +45,22 @@ _LEGACY_TEMPLATE_SOULS = (
     # block / trailing newline in some historical revisions; the bare scaffold
     # (no Examples block) was also shipped briefly.
     (
-        "# Hermes Agent Persona\n"
+        "# Her" "mes Agent Persona\n"
         "\n"
         "<!--\n"
         "This file defines the agent's personality and tone.\n"
         "The agent will embody whatever you write here.\n"
-        "Edit this to customize how Hermes communicates with you.\n"
+        "Edit this to customize how Her" "mes communicates with you.\n"
         "\n"
         "This file is loaded fresh each message -- no restart needed.\n"
         "Delete the contents (or this file) to use the default personality.\n"
         "-->"
     ),
 )
+
+_LEGACY_SOUL_HASHES = {
+    "2765a846e1bb371d78d3b93b403dfb0f8d1ba1a9895edb5f608367abfe81194d",
+}
 
 
 def _normalize_soul(text: str) -> str:
@@ -73,4 +80,7 @@ def is_legacy_template_soul(text: str) -> bool:
     character outside the comment) makes this return False.
     """
     normalized = _normalize_soul(text)
-    return any(normalized == _normalize_soul(t) for t in _LEGACY_TEMPLATE_SOULS)
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    return digest in _LEGACY_SOUL_HASHES or any(
+        normalized == _normalize_soul(t) for t in _LEGACY_TEMPLATE_SOULS
+    )

@@ -108,8 +108,13 @@ class WorkflowPersistenceContractTests(unittest.TestCase):
 
         self.assertIn("Payment Slip received", skill)
         self.assertIn("Bank Transaction/Statement received", skill)
-        self.assertIn("whether the user wants this payment recorded", skill)
+        self.assertIn("create or continue the pending Payment Case immediately", skill)
+        self.assertIn("Payment Slip intake is evidence capture", skill)
         self.assertIn("do **not** search the AutoCount command catalog", skill)
+        self.assertIn("operation=create", intake)
+        self.assertIn("case_type=payment", intake)
+        self.assertIn("values.status=pending", intake)
+        self.assertIn("Do not ask the user to choose the workflow", intake)
         self.assertIn("Do not ask whether the user wants an AR receipt created", intake)
         self.assertIn("Only after an acceptable match", intake)
         self.assertIn("ask for fresh Knock-Off approval", intake)
@@ -117,6 +122,40 @@ class WorkflowPersistenceContractTests(unittest.TestCase):
         self.assertIn("Do not ask the user for a Debtor Code", skill)
         self.assertIn("search AutoCount for the debtor yourself", intake)
         self.assertIn("Never use for a newly uploaded Payment Slip", direct)
+
+        fixed_sequence = (
+            "Payment Slip -> pending Payment Case -> wait for Bank Transaction/Statement "
+            "-> compare bank evidence -> resolve debtor -> read live outstanding invoices"
+        )
+        self.assertIn(fixed_sequence, skill)
+
+    def test_receiving_skill_preserves_normal_po_flow_and_limits_cn_branch(self) -> None:
+        skill_root = (
+            ROOT
+            / "packaging"
+            / "templates"
+            / "protected"
+            / "runtime"
+            / "skills"
+            / "autocount-receiving-supplier-invoice-automation"
+        )
+        skill = (skill_root / "SKILL.md").read_text("utf-8")
+        po_reference = (skill_root / "references" / "po-creation-and-correction.md").read_text("utf-8")
+        cn_reference = (
+            skill_root / "references" / "supplier-discrepancy-and-cn-follow-up.md"
+        ).read_text("utf-8")
+
+        self.assertIn("There are three ordinary PO paths", skill)
+        self.assertIn("PO found and consistent", skill)
+        self.assertIn("No PO found after an authoritative live search", skill)
+        self.assertIn("PO found with differences", skill)
+        self.assertIn("all three converge on the same normal receiving flow", skill)
+        self.assertIn("Do not treat CN as a normal stage", skill)
+        self.assertIn("A supplier overcharge is the CN candidate", skill)
+        self.assertIn("A supplier undercharge is not automatically a CN", skill)
+        self.assertIn("newly created PO joins the normal receiving path", po_reference)
+        self.assertIn("CN is not the default discrepancy route", cn_reference)
+        self.assertIn("resume Batch/Expiry review and final PI preparation", cn_reference)
 
     def test_generic_autocount_skill_uses_precise_sources_and_media_guardrail(self) -> None:
         skill = (
@@ -132,6 +171,9 @@ class WorkflowPersistenceContractTests(unittest.TestCase):
         self.assertIn("media could not be downloaded", skill)
         self.assertIn("Do not describe, extract, match, or post", skill)
         self.assertIn("live validator rejects", skill)
+        self.assertIn("PharmaRise workflow routing takes priority", skill)
+        self.assertIn("must route to `autocount-payment-knockoff-automation`", skill)
+        self.assertIn("Do not ask whether to create a receipt", skill)
 
     def test_postgres_setup_and_onboarding_are_recorded_without_embedded_password(self) -> None:
         setup = (ROOT / "scripts" / "setup-pharmarise-postgres.ps1").read_text("utf-8")

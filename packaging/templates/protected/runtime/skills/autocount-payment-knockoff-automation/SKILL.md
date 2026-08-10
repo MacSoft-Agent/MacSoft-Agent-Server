@@ -68,10 +68,16 @@ Use familiar accounting language. Show what was read, what remains unverified, w
 
 The payment workflow has two deliberately separate customer stages:
 
-1. **Payment Slip received:** extract and show the facts, explain that bank receipt is not verified yet, and ask whether to record it for later bank matching.
+1. **Payment Slip received:** extract and show the facts, create or continue the pending Payment Case immediately, and explain that bank receipt is not verified yet and that a later Bank Transaction or Statement is required.
 2. **Bank Transaction/Statement received:** identify it as bank-side evidence, find relevant recorded payments, compare them, explain the match result, resolve allocation, preview the Knock-Off, and request fresh approval.
 
 Do not collapse these stages merely because the Payment Slip contains an invoice number or says "successful."
+
+The fixed business sequence is:
+
+`Payment Slip -> pending Payment Case -> wait for Bank Transaction/Statement -> compare bank evidence -> resolve debtor -> read live outstanding invoices -> explicit invoice or Invoice-Date FIFO allocation -> accountant preview -> fresh approval -> Knock-Off -> read-back -> completion/notification`.
+
+Do not move debtor resolution, invoice lookup, allocation, or Knock-Off preparation ahead of an acceptable bank-evidence match. This ordering is a business control, not merely a suggested conversation style.
 
 ### 1. Establish trusted context
 
@@ -91,15 +97,17 @@ If only a Payment Slip exists:
 
 1. read it and show the user the material facts in a concise list;
 2. clearly say that the slip is a payer-side claim and the company's bank receipt has not yet been verified;
-3. ask one natural question: whether the user wants this payment recorded for follow-up while waiting for a Bank Transaction or Bank Statement;
+3. register the trusted evidence and use `workflow_case_workspace` to create or continue exactly one `case_type=payment` Case with `status=pending` and the extracted facts in `working_data`;
 4. treat an invoice number on the slip as an allocation hint only, not permission to query or Knock-Off it;
-5. after the user agrees, register the evidence, create or continue the pending Case, and reply that it has been recorded and can be continued when the bank document arrives.
+5. reply that the payment has been recorded for follow-up and ask the user to send the Bank Transaction or Bank Statement when available.
+
+Payment Slip intake is evidence capture, not an AutoCount accounting write. Do it without asking the user to choose between receipt creation, Knock-Off, bank transaction recording, or another action. Ask a focused question only when a critical intake fact or the one-time company/account-book configuration is genuinely missing and the Case cannot be scoped safely.
 
 At this Payment-Slip-only stage, do **not** search the AutoCount command catalog, load the direct Knock-Off Skill, resolve the debtor, query invoices, validate an AR payment, or prepare a posting payload. Those actions are premature and create confusing conversation. Do not ask whether to create an AR receipt or whether to process a named invoice yet.
 
 Do not ask the user for a Debtor Code during Payment Slip intake. Debtor resolution belongs after acceptable bank matching. At that later stage, search AutoCount yourself using the payer/customer evidence. If one credible debtor exists, show its code and name and ask for confirmation only when confirmation is actually needed. If several exist, show the distinguishing candidates. If none exists, explain that no matching debtor was found and ask whether the user wants to create one; never make the user perform a lookup the Agent can perform.
 
-Do not expose the terms `payment_cases`, pending table, Tool, Skill, schema, payload, or internal Case state to an ordinary user. A natural reply is "I can record this payment and wait for the bank transaction or statement before matching it."
+Do not expose the terms `payment_cases`, pending table, Tool, Skill, schema, payload, or internal Case state to an ordinary user. A natural reply is "I've recorded this payment for follow-up. Please send the Bank Transaction or Bank Statement when it is available; I will match the bank-side evidence before proposing any invoice Knock-Off."
 
 ### 3. Continue the correct Case
 

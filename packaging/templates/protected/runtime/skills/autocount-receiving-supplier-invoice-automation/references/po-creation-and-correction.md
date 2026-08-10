@@ -21,6 +21,8 @@ If accepted:
 9. create the PO once; do not execute if required workflow context is absent or the payload differs from the approved payload;
 10. read back PO number, status, lines, and totals.
 
+After successful read-back, the newly created PO joins the normal receiving path: Batch No/Expiry/Short Expiry review, PI preview, approval, PI creation, and PI read-back.
+
 ## Existing PO correction
 
 First ask whether the PO is truly outdated/wrong or the supplier document/delivery differs legitimately. If correction is chosen:
@@ -32,6 +34,8 @@ First ask whether the PO is truly outdated/wrong or the supplier document/delive
 5. obtain fresh approval;
 6. execute once and read back;
 7. re-run supplier-document comparison.
+
+If the corrected PO now agrees with the accepted supplier document, return to the same normal receiving path. A PO correction is not an endpoint and does not automatically create a CN.
 
 If PO update is unsupported or PO state prevents safe editing, state the exact manual operation. Do not recreate a second PO to simulate an edit without explicit approval.
 

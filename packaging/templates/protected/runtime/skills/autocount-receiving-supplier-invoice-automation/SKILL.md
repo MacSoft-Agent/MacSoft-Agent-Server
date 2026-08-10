@@ -69,6 +69,20 @@ When PO and supplier evidence differ, neither is automatically correct. Explain 
 
 ## Workflow
 
+### Fixed business sequence
+
+Use this sequence as the governing receiving workflow:
+
+`Supplier document -> extract facts -> resolve supplier and live PO -> choose PO path -> establish an accepted PO -> batch/expiry/Short Expiry review -> PI preview -> fresh approval -> PI creation -> read-back`.
+
+There are three ordinary PO paths, and all three converge on the same normal receiving flow:
+
+1. **PO found and consistent:** accept the live PO as the working basis and continue.
+2. **No PO found after an authoritative live search:** ask whether to prepare a new PO; if accepted, show the exact PO preview, obtain fresh approval, create it, and read it back before continuing.
+3. **PO found with differences:** explain the differences neutrally. If the PO contains old or incorrect agreed data, ask whether to update it; show before/after preview, obtain fresh approval, update it, and read it back before continuing. If the user does not accept either the current PO or a proposed correction, keep the Case pending and classify the discrepancy instead of creating the PI.
+
+Once the PO is accepted, corrected, or newly created, perform Batch No, Expiry, and Short Expiry handling and then prepare the PI. Do not treat CN as a normal stage of every discrepancy or every receiving Case.
+
 ### 1. Establish trusted context
 
 Resolve authenticated actor, existing role, company, account book, source channel, trusted chat/sender/file identity, and source event key. An unmapped WhatsApp sender may submit evidence and receive a draft, but may not authorize PO, supplier-message, Item, CN-status, or PI writes.
@@ -121,6 +135,8 @@ Compare each meaningful field:
 
 Present differences as neutral facts. Ask whether the PO is outdated, the supplier document is wrong, a partial delivery is intended, or another explanation applies.
 
+If the PO and supplier evidence agree, do not interrupt the user with discrepancy or CN questions. Continue directly to Item batch control, expiry review, and PI preparation.
+
 ### 6. Handle no-PO or PO correction
 
 Read `references/po-creation-and-correction.md`.
@@ -135,9 +151,18 @@ If a PO is outdated, re-read it, show before/after values and affected downstrea
 
 Read `references/supplier-discrepancy-and-cn-follow-up.md`.
 
-If the user decides the supplier document is wrong, explain the discrepancy and optionally prepare a supplier message. Resolve the trusted supplier contact, show recipient, exact message, evidence/case reference, and purpose. Send only after approval.
+Enter this exception branch only when the user does not accept the supplier document against the PO or does not accept the current PO as the basis for receiving. First determine the business direction of the difference:
 
-Persist a waiting state. When a CN/corrected document arrives, link it to this Case, show its material content to the user, and ask whether this exact version is accepted. Acceptance does not itself authorize an AutoCount CN-status write. Ask separately and execute only if a verified command exists and a second approval is granted. If no verified connector command exists, mark CN-status handling manual/connector-blocked.
+- If the PO contains old or incorrect agreed information, such as an accepted supplier price increase, return to the PO-correction path. Show before/after values, obtain approval, update and read back the PO, then resume the normal Batch/Expiry and PI flow.
+- If the supplier invoice is wrong, determine whether it overcharges the company, undercharges the company, or differs for a non-price reason. Do not assume every supplier error requires a CN.
+- A supplier overcharge is the CN candidate. Ask the user to contact the supplier or, only when the user authorizes Agent contact, prepare the exact supplier message for approval. Keep the Case waiting for the supplier's response/CN.
+- A supplier undercharge is not automatically a CN. Explain it and ask which approved business treatment applies; do not invent Debit Note, later-invoice, or other accounting policy.
+
+For an authorized Agent follow-up, resolve the trusted supplier contact, show recipient, exact message, evidence/case reference, and purpose. Send only after approval. Follow up on the outstanding CN request through the existing WhatsApp transport and report the supplier's response to the user.
+
+Persist a waiting state. When a CN/corrected document arrives, link it to this Case, show its material content to the user, and ask whether this exact version is accepted. A forwarded CN is not automatically accepted. If the user wants the Agent to create or record the CN in AutoCount, show the exact CN preview and obtain a separate fresh approval. Execute only when a verified command exists; otherwise mark CN handling manual/connector-blocked.
+
+After the discrepancy has been validly resolved, continue from the accepted business basis into Batch/Expiry review and PI preparation. If it remains unresolved, keep the Case pending; do not create the PI.
 
 ### 8. Verify Item batch control and expiry
 
@@ -201,7 +226,7 @@ Fresh approval is mandatory before:
 - modifying a PO;
 - changing an Item to batch-controlled or creating an Item where deployment policy treats this as consequential;
 - sending a supplier message;
-- updating a verified CN status;
+- creating/recording a CN or updating a verified CN status;
 - creating/transferring the final PI.
 
 Evidence intake, extraction, live reads, discrepancy calculation, and previews are preparatory operations.

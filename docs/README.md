@@ -35,6 +35,8 @@ deeper design context, not live version or status authority.
 - `MACSOFT_AGENT_PRODUCT_FOUNDATION.md`
 - `MACSOFT_PRODUCTION_RUNTIME_FOUNDATION.md`
 - `MACSOFT_AGENT_BUSINESS_CONTROL.md`
+- `architecture/PHARMARISE_SKILL_INDEX.md` - maintainer routing map for the
+  PharmaRise business, execution, AutoCount, and presentation Skills
 - `MacSoft-Agent-项目知识地图.md`
 - `MacSoft_Agent_Current_System_Architecture_and_Handover_Report.*`
 

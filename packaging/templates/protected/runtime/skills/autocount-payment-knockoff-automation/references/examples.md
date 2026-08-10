@@ -2,9 +2,9 @@
 
 ## 0. Payment Slip arrives before bank evidence
 
-Read and show payer, beneficiary, amount, date, reference, claimed invoice, claimed status, and any sample/test marking. Explain that the company's bank receipt is not verified. Ask whether to record it and wait for a Bank Transaction or Bank Statement.
+Read and show payer, beneficiary, amount, date, reference, claimed invoice, claimed status, and any sample/test marking. Create or continue the pending Payment Case immediately. Explain that the company's bank receipt is not verified and ask the user to send a Bank Transaction or Bank Statement when available.
 
-Do not search AutoCount, resolve the debtor, inspect the invoice, prepare an AR receipt, or ask for Knock-Off approval yet. After the user agrees, preserve the payment for later continuation and give a short confirmation without exposing internal tables or commands.
+Do not ask what the user wants to do. Do not search AutoCount, resolve the debtor, inspect the invoice, prepare an AR receipt, or ask for Knock-Off approval yet. Preserve the payment for later continuation and give a short confirmation without exposing internal tables or commands.
 
 ## 1. Normal explicit invoice and partial payment
 
@@ -32,7 +32,7 @@ Two employees forward the same evidence hash/message object. Continue the same C
 
 ## 7. Bank evidence arrives tomorrow
 
-Show today's slip facts and ask whether to record it. After agreement, preserve it for follow-up. Tomorrow another accountant submits a statement. Show the relevant bank row, locate the recorded payment using evidence/reference/amount and other facts, explain the match conclusion, then continue using live invoices. If the slip's invoice instruction is valid, use it; otherwise apply Invoice-Date FIFO. Show the allocation before requesting Knock-Off approval.
+Show today's slip facts and preserve it as pending for follow-up. Tomorrow another accountant submits a statement. Show the relevant bank row, locate the recorded payment using evidence/reference/amount and other facts, explain the match conclusion, then continue using live invoices. If the slip's invoice instruction is valid, use it; otherwise apply Invoice-Date FIFO. Show the allocation before requesting Knock-Off approval.
 
 ## 8. User correction invalidates approval
 

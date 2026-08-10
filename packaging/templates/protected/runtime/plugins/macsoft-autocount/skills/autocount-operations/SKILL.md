@@ -24,6 +24,16 @@ catalog, API key, connector policy, account book, and AutoCount license allow.
 
 ## Workflow
 
+### PharmaRise workflow routing takes priority
+
+Before applying the generic ambiguity rule below, identify whether the request is evidence intake for an established PharmaRise workflow.
+
+- A newly received customer Payment Slip, transfer proof, or payer-side receipt must route to `autocount-payment-knockoff-automation`. That workflow records a pending Payment Case and waits for later bank-side evidence. Do not ask whether to create a receipt, Knock-Off an invoice, record a bank transaction, or do something else.
+- A later Bank Transaction or Bank Statement for customer-payment verification also routes to `autocount-payment-knockoff-automation`, which searches pending Cases before any invoice allocation.
+- Supplier invoice, delivery, receiving, PO, CN, Batch, or Expiry evidence routes to `autocount-receiving-supplier-invoice-automation`.
+
+The generic command workflow applies only after the owning business Skill reaches an AutoCount read or write step. It must not replace the business workflow with a menu of possible accounting commands.
+
 1. Understand the user's business intent.
 2. When wording is ambiguous, ask which document or operation they mean.
 3. Search the live command catalog when the canonical command is uncertain.

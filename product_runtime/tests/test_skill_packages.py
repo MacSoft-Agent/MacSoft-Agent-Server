@@ -98,6 +98,24 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("Do not use an HTML/report", text)
         self.assertIn("command as a chart data source", text)
 
+    def test_bank_reconciliation_skill_uses_live_connector_contract(self) -> None:
+        text = (
+            SKILLS_ROOT / "autocount-bank-reconciliation" / "SKILL.md"
+        ).read_text(encoding="utf-8")
+        for command_type in (
+            "list-gl-bank-cash-accounts",
+            "list-gl-bank-reconciliation-uncleared",
+            "validate-gl-bank-reconciliation",
+            "create-gl-bank-reconciliation",
+            "get-gl-bank-reconciliation",
+        ):
+            self.assertIn(command_type, text)
+        self.assertIn('"actualBalance": 2900', text)
+        self.assertIn('"selectedBankTransKeys": [1, 2]', text)
+        self.assertIn("send `payload` as a quoted JSON string", text)
+        self.assertIn("explicit confirmation before saving", text)
+        self.assertIn("Report success only when", text)
+
 
 if __name__ == "__main__":
     unittest.main()

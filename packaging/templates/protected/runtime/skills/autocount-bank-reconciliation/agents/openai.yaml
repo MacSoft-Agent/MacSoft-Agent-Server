@@ -1,0 +1,4 @@
+interface:
+  display_name: "AutoCount Bank Reconciliation"
+  short_description: "Prepare and post AutoCount bank reconciliation"
+  default_prompt: "Use $autocount-bank-reconciliation to reconcile this bank statement in AutoCount."

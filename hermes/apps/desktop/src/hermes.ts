@@ -661,7 +661,8 @@ export function toggleToolset(
 export function getToolsetConfig(name: string): Promise<ToolsetConfig> {
   return window.hermesDesktop.api<ToolsetConfig>({
     ...profileScoped(),
-    path: `/api/tools/toolsets/${encodeURIComponent(name)}/config`
+    path: `/api/tools/toolsets/${encodeURIComponent(name)}/config`,
+    timeoutMs: 120_000
   })
 }
 
@@ -670,7 +671,8 @@ export function getToolsetModels(name: string, provider?: string): Promise<Tools
 
   return window.hermesDesktop.api<ToolsetModelsResponse>({
     ...profileScoped(),
-    path: `/api/tools/toolsets/${encodeURIComponent(name)}/models${suffix}`
+    path: `/api/tools/toolsets/${encodeURIComponent(name)}/models${suffix}`,
+    timeoutMs: 120_000
   })
 }
 

@@ -1553,6 +1553,14 @@ class TestWebServerEndpoints:
         from hermes_cli.web_server import _config_only_http_path_allowed
 
         assert _config_only_http_path_allowed("/api/audio/transcribe") is True
+        assert _config_only_http_path_allowed("/api/skills") is True
+        assert _config_only_http_path_allowed("/api/skills/hub/install") is True
+        assert _config_only_http_path_allowed("/api/tools/toolsets") is True
+        assert _config_only_http_path_allowed("/api/mcp/servers") is True
+        assert _config_only_http_path_allowed("/api/actions/skill-install/status") is True
+        assert _config_only_http_path_allowed("/api/analytics/usage") is True
+        assert _config_only_http_path_allowed("/api/learning/node") is True
+        assert _config_only_http_path_allowed("/api/learning/graph") is False
         assert _config_only_http_path_allowed("/api/messaging/platforms") is True
         assert _config_only_http_path_allowed("/api/messaging/platforms/telegram") is True
         assert _config_only_http_path_allowed("/api/messaging/platforms/telegram/test") is True

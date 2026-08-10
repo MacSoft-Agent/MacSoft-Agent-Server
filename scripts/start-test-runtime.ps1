@@ -1,5 +1,7 @@
 [CmdletBinding()]
-param()
+param(
+    [switch]$ValidateDesktopSourceOnly
+)
 
 $ErrorActionPreference = 'Stop'
 $ProjectRoot = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
@@ -156,7 +158,7 @@ function Assert-CurrentGitDesktopSource {
     if (
         -not $chatContent.Contains('macSoftAdminChat') -or
         $chatContent.Contains('MacSoftAdminChatSurface') -or
-        -not $sidebarContent.Contains("SIDEBAR_NAV.filter")
+        -not $sidebarContent.Contains("SIDEBAR_NAV.map(item =>")
     ) {
         throw 'The current Git Desktop source markers are missing or an old Admin surface is still present.'
     }
@@ -193,6 +195,10 @@ foreach ($marker in @(
     if (-not (Test-Path -LiteralPath $marker)) {
         throw "MacSoft Agent source marker is missing: $marker"
     }
+}
+if ($ValidateDesktopSourceOnly) {
+    Assert-CurrentGitDesktopSource
+    return
 }
 if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
     throw 'hermes\venv is missing. Rebuild the uv environment before starting the test runtime.'

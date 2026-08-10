@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
 import tomllib
 import unittest
 from pathlib import Path
@@ -94,6 +96,30 @@ class PackagingContractTests(unittest.TestCase):
         self.assertIn("dev:macsoft", stop)
         self.assertIn("product_runtime.macsoft_runtime.cli", stop)
         self.assertIn("@(8766, 8643, 8642, 8787, 5174)", stop)
+
+    def test_source_test_runtime_accepts_current_desktop_navigation(self) -> None:
+        powershell = shutil.which("powershell") or shutil.which("pwsh")
+        if powershell is None:
+            self.skipTest("PowerShell is required to validate the Windows source-test runtime")
+
+        result = subprocess.run(
+            [
+                powershell,
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(ROOT / "scripts" / "start-test-runtime.ps1"),
+                "-ValidateDesktopSourceOnly",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
     def test_source_test_runtime_safely_yields_installed_host_ports_to_development(self) -> None:
         start = (ROOT / "scripts" / "start-test-runtime.ps1").read_text(encoding="utf-8-sig")

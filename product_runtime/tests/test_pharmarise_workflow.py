@@ -83,7 +83,7 @@ class WorkflowLogicTests(unittest.TestCase):
 
 
 class WorkflowPersistenceContractTests(unittest.TestCase):
-    def test_payment_skill_keeps_slip_intake_before_bank_matching_and_posting(self) -> None:
+    def test_payment_skill_automatically_records_slip_before_bank_matching_and_posting(self) -> None:
         skill_root = (
             ROOT
             / "packaging"
@@ -95,6 +95,7 @@ class WorkflowPersistenceContractTests(unittest.TestCase):
         )
         skill = (skill_root / "SKILL.md").read_text("utf-8")
         intake = (skill_root / "references" / "payment-intake-and-pending.md").read_text("utf-8")
+        examples = (skill_root / "references" / "examples.md").read_text("utf-8")
         direct = (
             ROOT
             / "packaging"
@@ -108,7 +109,14 @@ class WorkflowPersistenceContractTests(unittest.TestCase):
 
         self.assertIn("Payment Slip received", skill)
         self.assertIn("Bank Transaction/Statement received", skill)
-        self.assertIn("whether the user wants this payment recorded", skill)
+        self.assertIn("automatically create or continue", skill)
+        self.assertIn("Pending Bank Verification", skill)
+        self.assertIn("Do not ask for permission to record", intake)
+        self.assertNotIn("whether the user wants this payment recorded", skill)
+        self.assertNotIn("After the user agrees", intake)
+        self.assertNotIn("Would you like me to record it", intake)
+        self.assertNotIn("Ask whether to record it", examples)
+        self.assertNotIn("After agreement", examples)
         self.assertIn("do **not** search the AutoCount command catalog", skill)
         self.assertIn("Do not ask whether the user wants an AR receipt created", intake)
         self.assertIn("Only after an acceptable match", intake)

@@ -68,7 +68,7 @@ Use familiar accounting language. Show what was read, what remains unverified, w
 
 The payment workflow has two deliberately separate customer stages:
 
-1. **Payment Slip received:** extract and show the facts, explain that bank receipt is not verified yet, and ask whether to record it for later bank matching.
+1. **Payment Slip received:** extract the facts, automatically record or continue a Pending Bank Verification Case, preserve the evidence, and explain that bank receipt is not verified yet.
 2. **Bank Transaction/Statement received:** identify it as bank-side evidence, find relevant recorded payments, compare them, explain the match result, resolve allocation, preview the Knock-Off, and request fresh approval.
 
 Do not collapse these stages merely because the Payment Slip contains an invoice number or says "successful."
@@ -89,11 +89,15 @@ Read `references/payment-intake-and-pending.md` for extraction and duplicate han
 
 If only a Payment Slip exists:
 
-1. read it and show the user the material facts in a concise list;
-2. clearly say that the slip is a payer-side claim and the company's bank receipt has not yet been verified;
-3. ask one natural question: whether the user wants this payment recorded for follow-up while waiting for a Bank Transaction or Bank Statement;
-4. treat an invoice number on the slip as an allocation hint only, not permission to query or Knock-Off it;
-5. after the user agrees, register the evidence, create or continue the pending Case, and reply that it has been recorded and can be continued when the bank document arrives.
+1. read it and extract the material facts;
+2. search for an existing Case by trusted evidence/source identity, then automatically create or continue exactly one Case with status `pending_bank_verification`;
+3. write the visible amount, payment date, and payment reference to supported top-level fields and preserve payer/customer hints, currency, claimed status, invoice hints, uncertainties, and source identity in `working_data`;
+4. archive the trusted attachment against the current Case version, then re-read the Case and verify the pending status and evidence metadata persisted;
+5. show the captured facts and clearly say that the slip is a payer-side claim and the company's bank receipt has not yet been verified;
+6. treat an invoice number on the slip as an allocation hint only, not permission to query or Knock-Off it;
+7. tell the user that the payment is recorded and can be continued when a Bank Transaction or Bank Statement arrives. Do not ask for permission to record a recognized Payment Slip in the configured payment-intake channel.
+
+Pending intake is a non-consequential workflow record, not an AutoCount accounting write. It does not require Knock-Off approval. If trusted company/account-book mapping or PostgreSQL workflow storage is unavailable, explain the configuration/storage blocker and do not falsely claim the payment was recorded.
 
 At this Payment-Slip-only stage, do **not** search the AutoCount command catalog, load the direct Knock-Off Skill, resolve the debtor, query invoices, validate an AR payment, or prepare a posting payload. Those actions are premature and create confusing conversation. Do not ask whether to create an AR receipt or whether to process a named invoice yet.
 

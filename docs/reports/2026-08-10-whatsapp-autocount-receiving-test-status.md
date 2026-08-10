@@ -1,9 +1,9 @@
-# WhatsApp–AutoCount Receiving Workflow Test Report
+# WhatsApp–AutoCount Workflow Test Report - Module 1 Scope Correction and Receiving Investigation
 
 **Date:** 2026-08-10  
 **Branch:** `improve/skill`  
-**Current HEAD:** `2fde310` (`docs: design WhatsApp document ingestion`)  
-**Purpose:** Record the repository, environment, document-ingestion, Skill, AutoCount, and end-to-end receiving work completed during this test cycle.
+**Current HEAD:** `fabf855` (`fix: synchronize server PDF dependency`)
+**Purpose:** Record the repository, environment, document-ingestion, AutoCount, and workflow work completed during this test cycle, while distinguishing the intended Module 1 Payment Knock-Off acceptance target from the separate Receiving investigation.
 
 ## 1. Executive summary
 
@@ -17,6 +17,18 @@ The receiving test then progressed successfully through document reading and liv
 No PO was created by that failed attempt. The Receiving Skill and the shared `autocount-operations` guidance have now been updated to prevent identifier guessing, distinguish schema inspection from business queries, require the approval handshake when the active Tool contract requires it, and classify failures using command/submission evidence.
 
 The next stage is a clean restart and a new WhatsApp session, followed by an authoritative PO list/search and a repeat of the approval path. Before that test can complete, the stale runtime AutoCount plugin registration must be reconciled with the protected packaging template so that the workflow tools required by the Skill are actually exposed.
+
+### Scope correction: Module 1 is the acceptance target
+
+The intended customer acceptance target is **Module 1 - AI Payment Knock-Off**, as defined in the commercial proposal. The supplier invoice used in this test is a Module 2 Receiving document, not payment evidence. Therefore:
+
+- the Receiving behavior documented below remains valid engineering evidence and does not require rollback;
+- the PDF/WhatsApp ingestion and shared AutoCount identifier-safety changes remain reusable for Module 1;
+- the Receiving test must not be reported as proof that Module 1 Payment Knock-Off is complete or accepted;
+- the `autocount-payment-knockoff-automation` and `autocount-local-direct-payment-knockoff` Skills were not modified or fully validated in this test cycle;
+- Module 1 acceptance must restart with a fictional customer payment slip, followed by a matching bank transaction listing and a live AutoCount Debtor with an outstanding Sales Invoice.
+
+The expected Module 1 control sequence is: capture the payment slip as **Pending Bank Verification**, verify it against the bank transaction listing, resolve the Debtor and outstanding Sales Invoices, prepare the allocation (specified invoice or FIFO), obtain Account Department approval, execute AR knock-off, and read back the result. A payment slip alone must never be treated as bank confirmation and must not trigger an immediate knock-off.
 
 ## 2. Repository integration completed
 
@@ -219,6 +231,8 @@ This drift has been reported but not silently overwritten in this work package. 
 
 ## 9. Current test stage
 
+The table below records the separate Receiving investigation. It is not the Module 1 Payment Knock-Off acceptance checklist.
+
 | Stage | Status | Evidence / remaining work |
 |---|---|---|
 | Repository merge | Complete | `8639b75` merged remote main into `improve/skill`. |
@@ -241,18 +255,18 @@ This drift has been reported but not silently overwritten in this work package. 
 
 ## 10. Recommended next actions
 
-1. Reconcile active runtime `macsoft-autocount/__init__.py` with the protected template without overwriting unrelated runtime configuration.
-2. Restart the test runtime and confirm that workflow tools, especially `workflow_case_workspace` and `workflow_approve_autocount_action`, are exposed to WhatsApp.
-3. Start a new WhatsApp session so old Skill content and cached context do not influence the test.
-4. Re-send the same fictional invoice.
-5. Execute an authoritative PO list/search and exact-match `PO-000001`; do not convert it to `1`.
-6. If the PO is proven absent, create/continue the Receiving Case, produce the exact PO preview, obtain user approval, call workflow approval, and execute with returned `workflow_context`.
-7. Require command ID plus PO read-back before reporting creation success.
-8. Continue to GRN/Stock Receive for Batch No, then separately preview/approve the PI.
+1. Treat Module 1 Payment Knock-Off as the primary acceptance target and pause further Receiving acceptance work unless it is separately requested.
+2. Review the responsibilities and routing relationship of `autocount-payment-knockoff-automation` and `autocount-local-direct-payment-knockoff` before changing either Skill.
+3. Use a read-only AutoCount setup check to identify a real test Debtor, outstanding Sales Invoice, and supported AR payment/knock-off schema in `testing` / `AED_Testing`.
+4. Generate a fictional payment slip and matching bank transaction listing using those exact live identifiers and amounts.
+5. Start a new WhatsApp session and send only the payment slip first. Verify that the Case remains Pending Bank Verification and that no knock-off occurs.
+6. Send the matching bank transaction listing in a later turn. Verify bank confirmation, outstanding-invoice matching, specified-invoice/FIFO behavior, allocation preview, and Account Department approval.
+7. Execute AR knock-off only after approval, then require AutoCount read-back and notification evidence before reporting completion.
+8. Keep the Receiving findings below as a separate follow-up backlog: runtime/template workflow-tool reconciliation, authoritative PO resolution, approval context, GRN/Batch handling, and PI read-back.
 
-## 11. Working-tree caution
+## 11. Git state at scope correction
 
-The worktree currently contains multiple uncommitted changes beyond this report's PDF and AutoCount Skill scope, including Desktop, WhatsApp bridge/onboarding, Gateway status, and web-server files. Those changes must be reviewed and separated by ownership before staging or committing. Do not use broad staging, destructive reset, or cleanup commands.
+The previously accumulated implementation was committed and pushed to `improve/skill`. The dependency-consistency correction was committed as `fabf855`. This report update is a subsequent documentation-only change; unrelated content in the second report below has been preserved.
 
 ---
 

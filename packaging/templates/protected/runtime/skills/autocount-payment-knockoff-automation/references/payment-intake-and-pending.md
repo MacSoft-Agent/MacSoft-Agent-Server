@@ -35,9 +35,13 @@ Before creating a Case, search by stable source event/evidence identity. Also co
 
 ## Pending behavior
 
-If cleared bank evidence is missing, first show the material facts extracted from the Payment Slip and ask whether the user wants the payment recorded for later verification. Do not begin AutoCount invoice or posting work while waiting for that answer.
+If cleared bank evidence is missing, automatically create or continue one `pending_bank_verification` Payment Case in the configured payment-intake channel. Do not ask for permission to record a recognized Payment Slip. This persistence is intake/audit work, not an AutoCount posting action.
 
-After the user agrees, save a coarse pending status and useful `working_data`, then tell the user in ordinary accounting language:
+Use `workflow_case_workspace` with `operation=create`, `case_type=payment`, the trusted company/account-book scope, the current trusted media path, and `values.status=pending_bank_verification`. Supply supported top-level facts when visible (`amount`, `payment_date`, `payment_reference`) and keep payer/customer hints, currency, claimed status, invoice hints, extraction uncertainty, and source metadata in `working_data`. Creation is idempotent for the trusted source event/media identity and may return an existing Case.
+
+Archive the current trusted attachment with `workflow_archive_evidence`, using the returned Case ID and version. Then get the Case again and verify the pending status and evidence metadata persisted before claiming it was recorded. If storage or archival fails, report the blocker and do not claim success.
+
+After persistence succeeds, tell the user in ordinary accounting language:
 
 1. what was captured;
 2. that receipt into the company bank is still unverified;
@@ -69,11 +73,11 @@ Adapt naturally rather than copying word for word:
 > - Reference: TXN-PR-10021
 > - Invoice reference shown: INV-10001
 >
-> This confirms the payer's transfer claim, but it does not yet confirm that the money reached the company bank account. Would you like me to record it and wait for the Bank Transaction or Bank Statement for matching?
+> I recorded this payment for follow-up. It confirms the payer's transfer claim, but it does not yet confirm that the money reached the company bank account. Send the Bank Transaction or Bank Statement when available and I will match it before proposing any Knock-Off.
 
-If the document visibly says sample/test, mention that fact and ask whether to record it as a test payment. Do not reinterpret it as a request to post a real accounting document.
+If the document visibly says sample/test, mention that fact and record it as a pending test payment in the configured test workflow. Do not reinterpret it as a request to post a real accounting document.
 
-## Response after the user agrees
+## Response after automatic recording
 
 Confirm briefly that the payment has been recorded for follow-up. Tell the user they may send the Bank Transaction or Bank Statement later and that the payment will then be matched before any invoice Knock-Off is proposed. Do not mention PostgreSQL, `payment_cases`, `working_data`, or internal status names.
 

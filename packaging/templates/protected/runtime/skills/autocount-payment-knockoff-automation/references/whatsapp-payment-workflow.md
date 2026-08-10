@@ -18,6 +18,8 @@ Treat common sequences as one possible Case only after checking identity and fac
 
 Register each evidence object separately, then link it to the Case. Do not rely on WhatsApp cache paths for durable evidence.
 
+For a recognized Payment Slip in a configured payment-intake chat, create or reuse the pending Payment Case during the same Agent turn, archive the trusted attachment, and re-read the Case before replying. Do not wait for a second "record it" message. Idempotent source identity prevents the same forwarded message from creating duplicate Cases.
+
 ## Group behavior
 
 Group identity may select company/workflow purpose, but sender identity determines who is speaking. Never treat every group participant as an approver. Keep customer/debtor identity separate from employee/actor identity.

@@ -27,13 +27,21 @@ def read_frontmatter(path: Path) -> tuple[str, str]:
 
 
 class SkillPackageTests(unittest.TestCase):
-    expected = {
+    workflow_skills = {
+        "autocount-local-direct-payment-knockoff",
+        "autocount-local-direct-purchase-invoice",
+        "autocount-payment-knockoff-automation",
+        "autocount-receiving-supplier-invoice-automation",
+        "pharmarise-company-configuration",
+    }
+    concise_skills = {
         "macsoft-chart-dashboard",
         "macsoft-chart-visualization",
         "kpi-dashboard-design",
         "data-storytelling",
         "web-design-engineer",
     }
+    expected = workflow_skills | concise_skills
 
     def test_packaged_top_level_skill_inventory_is_an_explicit_allowlist(self) -> None:
         manifest = __import__("json").loads(
@@ -58,7 +66,8 @@ class SkillPackageTests(unittest.TestCase):
             name, description = read_frontmatter(skill_md)
             self.assertEqual(name, directory_name)
             self.assertTrue(description.endswith("."), directory_name)
-            self.assertLessEqual(len(description), 60, directory_name)
+            if directory_name in self.concise_skills:
+                self.assertLessEqual(len(description), 60, directory_name)
 
         dashboard_refs = SKILLS_ROOT / "macsoft-chart-dashboard" / "references"
         self.assertEqual(

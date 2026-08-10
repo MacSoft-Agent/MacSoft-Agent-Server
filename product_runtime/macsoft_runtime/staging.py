@@ -43,27 +43,19 @@ FORBIDDEN_NAMES = {
     "client_skills",
 }
 PACKAGED_SKILL_DIRECTORIES = {
+    "autocount-local-direct-payment-knockoff",
+    "autocount-local-direct-purchase-invoice",
+    "autocount-payment-knockoff-automation",
+    "autocount-receiving-supplier-invoice-automation",
     "macsoft-chart-dashboard",
     "macsoft-chart-visualization",
     "kpi-dashboard-design",
     "data-storytelling",
     "web-design-engineer",
-}
-EXCLUDED_AUTOCOUNT_PLUGIN_ENTRIES = {
-    "migrations",
-    "workflow_evidence.py",
-    "workflow_logic.py",
-    "workflow_schemas.py",
-    "workflow_store.py",
-    "workflow_tools.py",
+    "pharmarise-company-configuration",
 }
 EXCLUDED_PACKAGED_WORKFLOW_DIRECTORIES = {
     "autocount-bank-reconciliation",
-    "autocount-local-direct-payment-knockoff",
-    "autocount-local-direct-purchase-invoice",
-    "autocount-payment-knockoff-automation",
-    "autocount-receiving-supplier-invoice-automation",
-    "pharmarise-company-configuration",
 }
 
 
@@ -97,8 +89,6 @@ def _ignore_templates(directory: str, names: list[str]) -> set[str]:
         ignored.update(name for name in names if name not in PACKAGED_SKILL_DIRECTORIES)
     elif normalized.endswith("/templates/runtime/skills"):
         ignored.update(names)
-    elif normalized.endswith("/protected/runtime/plugins/macsoft-autocount"):
-        ignored.update(name for name in names if name in EXCLUDED_AUTOCOUNT_PLUGIN_ENTRIES)
     return ignored
 
 
@@ -209,11 +199,9 @@ def audit_staging(root: Path, development_root: Path) -> list[str]:
             )
         ):
             issues.append(f"WhatsApp session state included: {relative}")
-        lowered_name = path.name.lower()
         if any(part.lower() in EXCLUDED_PACKAGED_WORKFLOW_DIRECTORIES for part in path.parts):
             issues.append(f"Excluded company workflow included: {relative}")
-        if lowered_name in EXCLUDED_AUTOCOUNT_PLUGIN_ENTRIES:
-            issues.append(f"Excluded AutoCount workflow module included: {relative}")
+        lowered_name = path.name.lower()
         if path.is_file() and (
             lowered_name.startswith("__editable__.")
             or lowered_name.startswith("__editable___")

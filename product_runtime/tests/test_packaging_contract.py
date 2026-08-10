@@ -145,7 +145,7 @@ class PackagingContractTests(unittest.TestCase):
             product["protected_resource_version"], protected["version"]
         )
 
-    def test_packaged_autocount_plugin_is_generic_and_has_no_company_workflow(self) -> None:
+    def test_packaged_autocount_plugin_includes_approved_company_workflow(self) -> None:
         plugin_root = (
             ROOT
             / "packaging"
@@ -173,10 +173,23 @@ class PackagingContractTests(unittest.TestCase):
         ):
             self.assertIn(generic_tool, entrypoint)
             self.assertIn(generic_tool, plugin_yaml)
-        self.assertNotIn("workflow_", entrypoint)
-        self.assertNotIn("workflow_", plugin_yaml)
-        self.assertFalse(any("workflow_" in path for path in destinations))
-        self.assertFalse(any("pharmarise" in path.lower() for path in destinations))
+        for workflow_tool in (
+            "workflow_case_workspace",
+            "workflow_resolve_whatsapp_identifier",
+            "workflow_fifo_allocate",
+            "workflow_archive_evidence",
+            "workflow_approve_autocount_action",
+            "workflow_send_approved_supplier_message",
+        ):
+            self.assertIn(workflow_tool, entrypoint)
+            self.assertIn(workflow_tool, plugin_yaml)
+        self.assertIn(
+            "runtime/plugins/macsoft-autocount/workflow_tools.py", destinations
+        )
+        self.assertIn(
+            "runtime/plugins/macsoft-autocount/migrations/001_pharmarise_workflow.sql",
+            destinations,
+        )
 
     def test_protected_skill_directory_is_deployed_as_an_allowlisted_managed_tree(self) -> None:
         product = json.loads((ROOT / "product.json").read_text(encoding="utf-8"))
@@ -193,11 +206,16 @@ class PackagingContractTests(unittest.TestCase):
         self.assertEqual(
             set(skill_tree["include_directories"]),
             {
+                "autocount-local-direct-payment-knockoff",
+                "autocount-local-direct-purchase-invoice",
+                "autocount-payment-knockoff-automation",
+                "autocount-receiving-supplier-invoice-automation",
                 "macsoft-chart-dashboard",
                 "macsoft-chart-visualization",
                 "kpi-dashboard-design",
                 "data-storytelling",
                 "web-design-engineer",
+                "pharmarise-company-configuration",
             },
         )
         self.assertEqual(product["protected_resource_version"], protected["version"])

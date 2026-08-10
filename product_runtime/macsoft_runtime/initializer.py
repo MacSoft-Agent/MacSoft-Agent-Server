@@ -14,6 +14,14 @@ from .metadata import ProductMetadata
 from .paths import ProductPaths
 
 
+_LEGACY_MACSOFT_SOUL = (
+    "Your name is MacSoft Agent.\n"
+    "When asked who you are in English, identify yourself only as MacSoft Agent.\n"
+    "When asked who you are in Chinese, identify yourself only as MacSoft 助手.\n"
+    "Do not mention the underlying framework or upstream product name."
+)
+
+
 @dataclass
 class InitializationResult:
     created: list[str] = field(default_factory=list)
@@ -381,6 +389,17 @@ def initialize_product_data(paths: ProductPaths, metadata: ProductMetadata) -> I
             result.created.append(str(destination.relative_to(paths.data_root)))
         else:
             result.preserved.append(str(destination.relative_to(paths.data_root)))
+
+    # Identity is mutable customer data, so only migrate the exact historical
+    # MacSoft template. Any administrator-authored SOUL.md remains untouched.
+    try:
+        existing_soul = paths.soul_file.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        existing_soul = ""
+    normalized_soul = existing_soul.replace("\r\n", "\n").replace("\r", "\n").strip()
+    if normalized_soul == _LEGACY_MACSOFT_SOUL:
+        source_soul = (paths.templates_root / "runtime" / "SOUL.md").read_bytes()
+        _atomic_write(paths.soul_file, source_soul)
 
     # The localhost API credential is generated and owned by the Host. Keep the
     # independently preserved runtime and Server YAML files aligned while

@@ -100,6 +100,7 @@ import type { SidebarNavItem } from '../../types'
 
 import { countLabel } from './chrome'
 import { SidebarCronJobsSection } from './cron-jobs-section'
+import { GlobalTrainingHelp } from './global-training-help'
 import { SidebarLoadMoreRow } from './load-more-row'
 import { orderByIds, reconcileOrderIds, resolveManualSessionOrderIds, sameIds } from './order'
 import { ProfileRail } from './profile-switcher'
@@ -241,6 +242,7 @@ export function ChatSidebar({
   const contentVisible = sidebarOpen || overlayMounted
   const panesFlipped = useStore($panesFlipped)
   const agentsGrouped = useStore($sidebarAgentsGrouped)
+  const [globalTrainingHelpEntrySignal, setGlobalTrainingHelpEntrySignal] = useState(0)
   const pinnedSessionIds = useStore($pinnedSessionIds)
   const pinsOpen = useStore($sidebarPinsOpen)
   const agentsOpen = useStore($sidebarRecentsOpen)
@@ -1118,16 +1120,20 @@ export function ChatSidebar({
                 )
               })}
               {macSoftCustomerRuntime && (
-                <SidebarMenuItem>
+                <SidebarMenuItem className="flex items-center gap-1">
                   <SidebarMenuButton
-                    className="flex h-7 w-full justify-start gap-2 rounded-md border border-transparent px-2 text-left text-[0.8125rem] font-medium text-(--ui-text-secondary) [-webkit-app-region:no-drag] hover:bg-(--ui-control-hover-background) hover:text-foreground"
-                    onClick={onOpenGlobalTraining}
+                    className="flex h-7 min-w-0 flex-1 justify-start gap-2 rounded-md border border-transparent px-2 text-left text-[0.8125rem] font-medium text-(--ui-text-secondary) [-webkit-app-region:no-drag] hover:bg-(--ui-control-hover-background) hover:text-foreground"
+                    onClick={() => {
+                      setGlobalTrainingHelpEntrySignal(value => value + 1)
+                      onOpenGlobalTraining?.()
+                    }}
                     tooltip="Global Training"
                     type="button"
                   >
                     <Codicon className="size-4 shrink-0" name="beaker" />
                     {contentVisible && <span className="min-w-0 flex-1 truncate">Global Training</span>}
                   </SidebarMenuButton>
+                  {contentVisible && <GlobalTrainingHelp entrySignal={globalTrainingHelpEntrySignal} />}
                 </SidebarMenuItem>
               )}
             </SidebarMenu>

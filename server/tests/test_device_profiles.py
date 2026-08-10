@@ -89,6 +89,10 @@ class DeviceProfileTests(unittest.TestCase):
             home = self.profile_root / str(profile["profile_id"])
             self.assertTrue((home / "memories" / "USER.md").is_file())
             self.assertTrue((home / "memories" / "MEMORY.md").is_file())
+            soul = (home / "SOUL.md").read_text(encoding="utf-8")
+            self.assertIn("You are Mac Soft AI Agent", soul)
+            self.assertNotIn("Hermes Agent", soul)
+            self.assertNotIn("Nous Research", soul)
             self.assertTrue((home / "skills" / "private").is_dir())
             self.assertTrue((home / "skills" / "learned").is_dir())
             profile_config = yaml.safe_load((home / "config.yaml").read_text(encoding="utf-8"))
@@ -107,6 +111,35 @@ class DeviceProfileTests(unittest.TestCase):
                 profile_config["skills"]["external_dirs"][1],
                 str((self.hermes_home / "global" / "skills" / "learned").resolve()),
             )
+            self.assertIn("hermes-agent", profile_config["skills"]["disabled"])
+
+    def test_existing_upstream_default_identity_is_migrated_without_touching_custom_souls(self) -> None:
+        previous = self._with_profile_root()
+        try:
+            profile = ensure_device_profile(self.conn, config=self.config, device_id="device-a")
+            home = self.profile_root / str(profile["profile_id"])
+            soul_path = home / "SOUL.md"
+            soul_path.write_text(
+                "You are Hermes Agent, an intelligent AI assistant created by Nous Research. "
+                "You are helpful, knowledgeable, and direct. You assist users with a wide "
+                "range of tasks including answering questions, writing and editing code, "
+                "analyzing information, creative work, and executing actions via your tools. "
+                "You communicate clearly, admit uncertainty when appropriate, and prioritize "
+                "being genuinely useful over being verbose unless otherwise directed below. "
+                "Be targeted and efficient in your exploration and investigations.",
+                encoding="utf-8",
+            )
+            ensure_device_profile(self.conn, config=self.config, device_id="device-a")
+            self.assertIn("You are Mac Soft AI Agent", soul_path.read_text(encoding="utf-8"))
+
+            soul_path.write_text("You are the customer's custom accounting assistant.", encoding="utf-8")
+            ensure_device_profile(self.conn, config=self.config, device_id="device-a")
+            self.assertEqual(
+                soul_path.read_text(encoding="utf-8"),
+                "You are the customer's custom accounting assistant.",
+            )
+        finally:
+            self._restore_profile_root(previous)
 
     def test_profile_path_rejects_untrusted_or_malformed_ids(self) -> None:
         previous = self._with_profile_root()

@@ -54,6 +54,27 @@ class FirstRunInitializationTests(unittest.TestCase):
         self.assertEqual(self.paths.runtime_config.read_text("utf-8"), custom)
         self.assertIn("runtime\\config.yaml" if __import__('os').name == 'nt' else "runtime/config.yaml", second.preserved)
 
+    def test_upgrade_rebrands_only_the_known_macsoft_identity_template(self) -> None:
+        initialize_product_data(self.paths, self.metadata)
+        old_identity = (
+            "Your name is MacSoft Agent.\n"
+            "When asked who you are in English, identify yourself only as MacSoft Agent.\n"
+            "When asked who you are in Chinese, identify yourself only as MacSoft 助手.\n"
+            "Do not mention the underlying framework or upstream product name.\n"
+        )
+        self.paths.soul_file.write_text(old_identity, encoding="utf-8")
+
+        initialize_product_data(self.paths, self.metadata)
+
+        updated = self.paths.soul_file.read_text(encoding="utf-8")
+        self.assertIn("You are Mac Soft AI Agent", updated)
+        self.assertNotIn("Hermes Agent", updated)
+
+        custom = "You are the administrator's custom company assistant.\n"
+        self.paths.soul_file.write_text(custom, encoding="utf-8")
+        initialize_product_data(self.paths, self.metadata)
+        self.assertEqual(self.paths.soul_file.read_text(encoding="utf-8"), custom)
+
     def test_company_configuration_references_are_created_once_and_preserved(self) -> None:
         first = initialize_product_data(self.paths, self.metadata)
         reference = (

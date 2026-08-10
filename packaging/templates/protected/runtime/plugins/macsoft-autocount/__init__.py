@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-from . import workflow_schemas, workflow_tools
-
-
 _AUTOCOUNT_POLICY = """
 <macsoft-autocount-policy>
 Use native Hermes file and terminal capabilities for AutoCount Cloud. There are no
@@ -44,46 +41,4 @@ def _inject_policy(platform: str = "", **kwargs):
 
 
 def register(ctx):
-    ctx.register_tool(
-        name="workflow_case_workspace",
-        toolset="macsoft_autocount",
-        schema=workflow_schemas.WORKFLOW_CASE_WORKSPACE,
-        handler=workflow_tools.workflow_case_workspace,
-        description="Create, retrieve, search, and version-update PharmaRise workflow Cases.",
-    )
-    ctx.register_tool(
-        name="workflow_resolve_whatsapp_identifier",
-        toolset="macsoft_autocount",
-        schema=workflow_schemas.WORKFLOW_RESOLVE_WHATSAPP_IDENTIFIER,
-        handler=workflow_tools.workflow_resolve_whatsapp_identifier,
-        description="Resolve an active WhatsApp workflow identity mapping.",
-    )
-    ctx.register_tool(
-        name="workflow_fifo_allocate",
-        toolset="macsoft_autocount",
-        schema=workflow_schemas.WORKFLOW_FIFO_ALLOCATE,
-        handler=workflow_tools.workflow_fifo_allocate,
-        description="Prepare a deterministic FIFO payment allocation without writing AutoCount.",
-    )
-    ctx.register_tool(
-        name="workflow_archive_evidence",
-        toolset="macsoft_autocount",
-        schema=workflow_schemas.WORKFLOW_ARCHIVE_EVIDENCE,
-        handler=workflow_tools.workflow_archive_evidence,
-        description="Archive and link one trusted current-message workflow attachment.",
-    )
-    ctx.register_tool(
-        name="workflow_approve_autocount_action",
-        toolset="macsoft_autocount",
-        schema=workflow_schemas.WORKFLOW_APPROVE_AUTOCOUNT_ACTION,
-        handler=workflow_tools.workflow_approve_autocount_action,
-        description="Approve one exact versioned PharmaRise AutoCount action.",
-    )
-    ctx.register_tool(
-        name="workflow_send_approved_supplier_message",
-        toolset="macsoft_autocount",
-        schema=workflow_schemas.WORKFLOW_SEND_APPROVED_SUPPLIER_MESSAGE,
-        handler=workflow_tools.workflow_send_approved_supplier_message,
-        description="Approve and send one exact supplier WhatsApp message for a receiving Case.",
-    )
     ctx.register_hook("pre_llm_call", _inject_policy)

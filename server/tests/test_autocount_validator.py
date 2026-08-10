@@ -4,6 +4,7 @@ import importlib
 import importlib.util
 import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -35,7 +36,6 @@ if spec is None or spec.loader is None:
 plugin = importlib.util.module_from_spec(spec)
 sys.modules[PACKAGE_NAME] = plugin
 spec.loader.exec_module(plugin)
-tools = importlib.import_module(f"{PACKAGE_NAME}.tools")
 
 
 class AutoCountNativePolicyTests(unittest.TestCase):
@@ -52,6 +52,7 @@ class AutoCountNativePolicyTests(unittest.TestCase):
         self.assertNotIn("autocount_execute_command", api_policy)
 
     def test_profile_connection_store_supports_multiple_companies(self) -> None:
+        tools = importlib.import_module(f"{PACKAGE_NAME}.tools")
         with tempfile.TemporaryDirectory() as temporary:
             home = Path(temporary)
             connection_dir = home / "autocount"
@@ -104,27 +105,67 @@ class AutoCountNativePolicyTests(unittest.TestCase):
 
         context = Context()
         plugin.register(context)
-        self.assertFalse(any(name.startswith("autocount_") for name in context.tools))
-        self.assertEqual(len(context.tools), 6)
+        self.assertEqual(context.tools, [])
         self.assertEqual(context.hooks, ["pre_llm_call"])
         self.assertEqual(context.skills, [])
         manifest = yaml.safe_load((PLUGIN_DIR / "plugin.yaml").read_text(encoding="utf-8"))
-        self.assertEqual(set(manifest["provides_tools"]), set(context.tools))
+        self.assertNotIn("provides_tools", manifest)
 
-    def test_plugin_contains_no_generic_query_schema_or_validator_module(self) -> None:
-        names = {path.name for path in PLUGIN_DIR.glob("*.py")}
-        self.assertNotIn("schemas.py", names)
-        self.assertNotIn("validator.py", names)
+    def test_staged_policy_only_plugin_imports_and_registers(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            staged_plugin_root = Path(temporary) / "macsoft-autocount"
+            staged_plugin_root.mkdir()
+            for filename in ("__init__.py", "plugin.yaml"):
+                shutil.copy2(PLUGIN_DIR / filename, staged_plugin_root / filename)
+
+            package_name = "macsoft_autocount_staged_policy_tests"
+            staged_spec = importlib.util.spec_from_file_location(
+                package_name,
+                staged_plugin_root / "__init__.py",
+                submodule_search_locations=[str(staged_plugin_root)],
+            )
+            self.assertIsNotNone(staged_spec)
+            self.assertIsNotNone(staged_spec.loader)
+            staged_plugin = importlib.util.module_from_spec(staged_spec)
+            sys.modules[package_name] = staged_plugin
+            try:
+                staged_spec.loader.exec_module(staged_plugin)
+
+                class Context:
+                    def __init__(self):
+                        self.tools: list[str] = []
+                        self.hooks: list[str] = []
+
+                    def register_tool(self, *, name, **kwargs):
+                        del kwargs
+                        self.tools.append(name)
+
+                    def register_hook(self, name, handler):
+                        del handler
+                        self.hooks.append(name)
+
+                context = Context()
+                staged_plugin.register(context)
+                self.assertEqual(context.tools, [])
+                self.assertEqual(context.hooks, ["pre_llm_call"])
+                self.assertEqual(
+                    {path.name for path in staged_plugin_root.iterdir() if path.is_file()},
+                    {"__init__.py", "plugin.yaml"},
+                )
+            finally:
+                sys.modules.pop(package_name, None)
+
+    def test_packaged_plugin_manifest_contains_only_policy_files(self) -> None:
+        protected = json.loads(
+            (PLUGIN_DIR.parents[3] / "protected-resources.json").read_text(
+                encoding="utf-8"
+            )
+        )
         self.assertEqual(
-            names,
+            {item["destination"] for item in protected["resources"]},
             {
-                "__init__.py",
-                "tools.py",
-                "workflow_evidence.py",
-                "workflow_logic.py",
-                "workflow_schemas.py",
-                "workflow_store.py",
-                "workflow_tools.py",
+                "runtime/plugins/macsoft-autocount/__init__.py",
+                "runtime/plugins/macsoft-autocount/plugin.yaml",
             },
         )
 

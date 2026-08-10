@@ -15,14 +15,14 @@ from macsoft_runtime.staging import (
 
 
 class StagingAuditTests(unittest.TestCase):
-    def test_template_copy_includes_approved_workflows(self) -> None:
+    def test_template_copy_excludes_workflows_and_tools(self) -> None:
         root = Path(__file__).resolve().parents[2]
         skills = root / "packaging" / "templates" / "protected" / "runtime" / "skills"
         ignored_skills = _ignore_templates(str(skills), [item.name for item in skills.iterdir()])
         self.assertIn("autocount-bank-reconciliation", ignored_skills)
-        self.assertNotIn("pharmarise-company-configuration", ignored_skills)
-        self.assertNotIn("autocount-payment-knockoff-automation", ignored_skills)
-        self.assertNotIn("autocount-receiving-supplier-invoice-automation", ignored_skills)
+        self.assertIn("pharmarise-company-configuration", ignored_skills)
+        self.assertIn("autocount-payment-knockoff-automation", ignored_skills)
+        self.assertIn("autocount-receiving-supplier-invoice-automation", ignored_skills)
         self.assertNotIn("macsoft-chart-dashboard", ignored_skills)
         self.assertNotIn("web-design-engineer", ignored_skills)
 
@@ -36,10 +36,12 @@ class StagingAuditTests(unittest.TestCase):
             / "macsoft-autocount"
         )
         ignored_plugin = _ignore_templates(str(plugin), [item.name for item in plugin.iterdir()])
-        self.assertNotIn("workflow_tools.py", ignored_plugin)
-        self.assertNotIn("migrations", ignored_plugin)
-        self.assertNotIn("tools.py", ignored_plugin)
-        self.assertNotIn("skills", ignored_plugin)
+        self.assertIn("workflow_tools.py", ignored_plugin)
+        self.assertIn("migrations", ignored_plugin)
+        self.assertIn("tools.py", ignored_plugin)
+        self.assertIn("skills", ignored_plugin)
+        self.assertNotIn("__init__.py", ignored_plugin)
+        self.assertNotIn("plugin.yaml", ignored_plugin)
 
         mutable_skills = root / "packaging" / "templates" / "runtime" / "skills"
         ignored_mutable = _ignore_templates(
@@ -136,7 +138,7 @@ class StagingAuditTests(unittest.TestCase):
             self.assertTrue(any("Runtime log" in issue for issue in issues))
             self.assertTrue(any("Runtime database" in issue for issue in issues))
 
-    def test_approved_company_workflow_and_plugin_module_are_accepted(self) -> None:
+    def test_company_workflow_and_plugin_module_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             staging = Path(temp)
             skill = staging / "templates" / "runtime" / "skills" / "pharmarise-company-configuration"
@@ -148,8 +150,26 @@ class StagingAuditTests(unittest.TestCase):
 
             issues = audit_staging(staging, Path("C:/MacSoft-Agent"))
 
-            self.assertFalse(any("Excluded company workflow" in issue for issue in issues))
-            self.assertFalse(any("Excluded AutoCount workflow module" in issue for issue in issues))
+            self.assertTrue(any("Excluded company workflow" in issue for issue in issues))
+            self.assertTrue(any("Excluded AutoCount plugin entry" in issue for issue in issues))
+
+    def test_unknown_protected_skill_is_rejected_by_final_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            staging = Path(temp)
+            skill = (
+                staging
+                / "templates"
+                / "protected"
+                / "runtime"
+                / "skills"
+                / "rogue-skill"
+            )
+            skill.mkdir(parents=True)
+            (skill / "SKILL.md").write_text("rogue", encoding="utf-8")
+
+            issues = audit_staging(staging, Path("C:/MacSoft-Agent"))
+
+            self.assertTrue(any("Unapproved protected Skill" in issue for issue in issues))
 
     def test_editable_python_install_metadata_is_excluded_and_rejected(self) -> None:
         names = [

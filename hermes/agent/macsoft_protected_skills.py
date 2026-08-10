@@ -3,15 +3,7 @@
 from __future__ import annotations
 
 
-PROTECTED_SKILL_NAMES = frozenset(
-    {
-        "pharmarise-company-configuration",
-        "autocount-payment-knockoff-automation",
-        "autocount-local-direct-payment-knockoff",
-        "autocount-receiving-supplier-invoice-automation",
-        "autocount-local-direct-purchase-invoice",
-    }
-)
+PROTECTED_SKILL_NAMES: frozenset[str] = frozenset()
 
 
 def is_protected_skill_name(name: object) -> bool:

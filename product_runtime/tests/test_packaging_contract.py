@@ -152,14 +152,10 @@ class PackagingContractTests(unittest.TestCase):
             / "macsoft-autocount"
         )
         policy = (plugin_root / "__init__.py").read_text(encoding="utf-8")
-        skill = (
-            plugin_root / "skills" / "autocount-operations" / "SKILL.md"
-        ).read_text(encoding="utf-8")
-        for content in (policy, skill):
-            normalized = " ".join(content.split())
-            self.assertIn("Markdown table or bullet list", normalized)
-            self.assertIn("bare newline-separated", normalized)
-            self.assertIn("customer-readable business labels", normalized)
+        normalized = " ".join(policy.split())
+        self.assertIn("Markdown table or bullet list", normalized)
+        self.assertIn("bare newline-separated", normalized)
+        self.assertIn("customer-readable business labels", normalized)
 
         product = json.loads((ROOT / "product.json").read_text(encoding="utf-8"))
         protected = json.loads(
@@ -171,7 +167,7 @@ class PackagingContractTests(unittest.TestCase):
             product["protected_resource_version"], protected["version"]
         )
 
-    def test_packaged_autocount_plugin_includes_approved_company_workflow(self) -> None:
+    def test_packaged_autocount_plugin_is_policy_only(self) -> None:
         plugin_root = (
             ROOT
             / "packaging"
@@ -190,31 +186,16 @@ class PackagingContractTests(unittest.TestCase):
         )
         destinations = {item["destination"] for item in protected["resources"]}
 
-        for removed_generic_tool in (
-            "autocount_get_connector_status",
-            "autocount_search_commands",
-            "autocount_get_command_schema",
-            "autocount_validate_command",
-            "autocount_execute_command",
-        ):
-            self.assertNotIn(removed_generic_tool, entrypoint)
-            self.assertNotIn(removed_generic_tool, plugin_yaml)
-        for workflow_tool in (
-            "workflow_case_workspace",
-            "workflow_resolve_whatsapp_identifier",
-            "workflow_fifo_allocate",
-            "workflow_archive_evidence",
-            "workflow_approve_autocount_action",
-            "workflow_send_approved_supplier_message",
-        ):
-            self.assertIn(workflow_tool, entrypoint)
-            self.assertIn(workflow_tool, plugin_yaml)
-        self.assertIn(
-            "runtime/plugins/macsoft-autocount/workflow_tools.py", destinations
-        )
-        self.assertIn(
-            "runtime/plugins/macsoft-autocount/migrations/001_pharmarise_workflow.sql",
+        self.assertNotIn("register_tool", entrypoint)
+        self.assertNotIn("provides_tools", plugin_yaml)
+        self.assertNotIn("workflow_", entrypoint)
+        self.assertNotIn("workflow_", plugin_yaml)
+        self.assertEqual(
             destinations,
+            {
+                "runtime/plugins/macsoft-autocount/__init__.py",
+                "runtime/plugins/macsoft-autocount/plugin.yaml",
+            },
         )
 
     def test_protected_skill_directory_is_deployed_as_an_allowlisted_managed_tree(self) -> None:
@@ -232,16 +213,11 @@ class PackagingContractTests(unittest.TestCase):
         self.assertEqual(
             set(skill_tree["include_directories"]),
             {
-                "autocount-local-direct-payment-knockoff",
-                "autocount-local-direct-purchase-invoice",
-                "autocount-payment-knockoff-automation",
-                "autocount-receiving-supplier-invoice-automation",
                 "macsoft-chart-dashboard",
                 "macsoft-chart-visualization",
                 "kpi-dashboard-design",
                 "data-storytelling",
                 "web-design-engineer",
-                "pharmarise-company-configuration",
             },
         )
         self.assertEqual(product["protected_resource_version"], protected["version"])

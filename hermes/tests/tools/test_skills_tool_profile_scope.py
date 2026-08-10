@@ -105,7 +105,7 @@ def test_explicit_skills_dir_monkeypatch_still_wins(tmp_path, monkeypatch):
     assert Path(result["skill_dir"]) == patched_skill_dir
 
 
-def test_protected_external_skill_wins_over_profile_collision(tmp_path, monkeypatch):
+def test_removed_workflow_name_has_normal_collision_handling(tmp_path, monkeypatch):
     default_home = tmp_path / "default-home"
     profile_home = tmp_path / "profiles" / "orchestrator"
     external_root = tmp_path / "protected-skills"
@@ -133,9 +133,9 @@ def test_protected_external_skill_wins_over_profile_collision(tmp_path, monkeypa
     matching = [skill for skill in listed["skills"] if skill["name"] == name]
     assert len(matching) == 1
     viewed = json.loads(skills_tool.skill_view(name))
-    assert Path(viewed["skill_dir"]) == external_skill
+    assert viewed["success"] is False
+    assert "Ambiguous skill name" in viewed["error"]
 
     viewed = json.loads(skills_tool.skill_view(name, preprocess=False))
-    assert viewed["success"] is True
-    assert Path(viewed["skill_dir"]) == external_skill
-    assert "Protected product workflow" in viewed["content"]
+    assert viewed["success"] is False
+    assert len(viewed["matches"]) == 2

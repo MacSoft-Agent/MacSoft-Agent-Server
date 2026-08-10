@@ -27,13 +27,6 @@ def read_frontmatter(path: Path) -> tuple[str, str]:
 
 
 class SkillPackageTests(unittest.TestCase):
-    workflow_skills = {
-        "autocount-local-direct-payment-knockoff",
-        "autocount-local-direct-purchase-invoice",
-        "autocount-payment-knockoff-automation",
-        "autocount-receiving-supplier-invoice-automation",
-        "pharmarise-company-configuration",
-    }
     concise_skills = {
         "macsoft-chart-dashboard",
         "macsoft-chart-visualization",
@@ -41,7 +34,7 @@ class SkillPackageTests(unittest.TestCase):
         "data-storytelling",
         "web-design-engineer",
     }
-    expected = workflow_skills | concise_skills
+    expected = concise_skills
 
     def test_packaged_top_level_skill_inventory_is_an_explicit_allowlist(self) -> None:
         manifest = __import__("json").loads(

@@ -190,33 +190,150 @@ class FirstRunInitializationTests(unittest.TestCase):
         self.assertIn("runtime\\config.yaml" if __import__('os').name == 'nt' else "runtime/config.yaml", second.preserved)
 
     def test_modified_protected_resource_is_not_overwritten(self) -> None:
-        initialize_product_data(self.paths, self.metadata)
+        manifest_path = self.program / "templates" / "protected-resources.json"
+        current_manifest = json.loads(manifest_path.read_text("utf-8"))
+        previous_manifest = json.loads(json.dumps(current_manifest))
+        previous_manifest["version"] = self.metadata.protected_resource_version - 1
+        previous_manifest["resources"].append(
+            {
+                "source": "protected/runtime/plugins/macsoft-autocount/workflow_logic.py",
+                "destination": "runtime/plugins/macsoft-autocount/workflow_logic.py",
+            }
+        )
+        manifest_path.write_text(json.dumps(previous_manifest), encoding="utf-8")
+        initialize_product_data(
+            self.paths,
+            replace(
+                self.metadata,
+                protected_resource_version=self.metadata.protected_resource_version - 1,
+            ),
+        )
         target = self.paths.autocount_plugin_root / "workflow_logic.py"
         target.write_text("# administrator change\n", encoding="utf-8")
+        manifest_path.write_text(json.dumps(current_manifest), encoding="utf-8")
         second = initialize_product_data(self.paths, self.metadata)
         self.assertIn("runtime/plugins/macsoft-autocount/workflow_logic.py", second.conflicts)
         self.assertEqual(target.read_text("utf-8"), "# administrator change\n")
 
     def test_removed_protected_resource_is_deleted_only_when_unchanged(self) -> None:
-        base_version = self.metadata.protected_resource_version
-        initialize_product_data(self.paths, self.metadata)
         manifest_path = self.program / "templates" / "protected-resources.json"
-        manifest = json.loads(manifest_path.read_text("utf-8"))
+        current_manifest = json.loads(manifest_path.read_text("utf-8"))
+        previous_manifest = json.loads(json.dumps(current_manifest))
+        previous_manifest["version"] = self.metadata.protected_resource_version - 1
         destination = "runtime/plugins/macsoft-autocount/workflow_logic.py"
+        previous_manifest["resources"].append(
+            {
+                "source": "protected/runtime/plugins/macsoft-autocount/workflow_logic.py",
+                "destination": destination,
+            }
+        )
+        manifest_path.write_text(json.dumps(previous_manifest), encoding="utf-8")
+        initialize_product_data(
+            self.paths,
+            replace(
+                self.metadata,
+                protected_resource_version=self.metadata.protected_resource_version - 1,
+            ),
+        )
         target = self.paths.data_root / destination
         self.assertTrue(target.is_file())
 
-        manifest["resources"] = [
-            item for item in manifest["resources"] if item["destination"] != destination
-        ]
-        manifest["version"] = base_version + 1
-        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-        removed = initialize_product_data(
-            self.paths,
-            replace(self.metadata, protected_resource_version=base_version + 1),
-        )
+        manifest_path.write_text(json.dumps(current_manifest), encoding="utf-8")
+        removed = initialize_product_data(self.paths, self.metadata)
         self.assertIn(destination, removed.removed_protected)
         self.assertFalse(target.exists())
+
+    def test_version_nine_removes_complete_version_eight_workflow_inventory_safely(self) -> None:
+        manifest_path = self.program / "templates" / "protected-resources.json"
+        current_manifest = json.loads(manifest_path.read_text("utf-8"))
+        previous_manifest = json.loads(json.dumps(current_manifest))
+        previous_manifest["version"] = 8
+        removed_resources = [
+            "tools.py",
+            "workflow_logic.py",
+            "workflow_evidence.py",
+            "workflow_schemas.py",
+            "workflow_store.py",
+            "workflow_tools.py",
+        ]
+        previous_manifest["resources"].extend(
+            {
+                "source": f"protected/runtime/plugins/macsoft-autocount/{filename}",
+                "destination": f"runtime/plugins/macsoft-autocount/{filename}",
+            }
+            for filename in removed_resources
+        )
+        previous_manifest["resources"].extend(
+            [
+                {
+                    "source": "protected/runtime/plugins/macsoft-autocount/migrations/001_pharmarise_workflow.sql",
+                    "destination": "runtime/plugins/macsoft-autocount/migrations/001_pharmarise_workflow.sql",
+                },
+                {
+                    "source": "protected/runtime/plugins/macsoft-autocount/skills/autocount-operations/SKILL.md",
+                    "destination": "runtime/plugins/macsoft-autocount/skills/autocount-operations/SKILL.md",
+                },
+            ]
+        )
+        removed_skill_names = [
+            "autocount-local-direct-payment-knockoff",
+            "autocount-local-direct-purchase-invoice",
+            "autocount-payment-knockoff-automation",
+            "autocount-receiving-supplier-invoice-automation",
+            "pharmarise-company-configuration",
+        ]
+        skill_tree = next(
+            item
+            for item in previous_manifest["directories"]
+            if item["destination"] == "runtime/skills"
+        )
+        skill_tree["include_directories"].extend(removed_skill_names)
+
+        expected_removed = {
+            item["destination"] for item in previous_manifest["resources"]
+        } - {
+            "runtime/plugins/macsoft-autocount/__init__.py",
+            "runtime/plugins/macsoft-autocount/plugin.yaml",
+        }
+        skill_source_root = (
+            self.program / "templates" / "protected" / "runtime" / "skills"
+        )
+        for name in removed_skill_names:
+            for source_file in (skill_source_root / name).rglob("*"):
+                if source_file.is_file():
+                    expected_removed.add(
+                        (Path("runtime/skills") / name / source_file.relative_to(skill_source_root / name)).as_posix()
+                    )
+
+        manifest_path.write_text(json.dumps(previous_manifest), encoding="utf-8")
+        initialize_product_data(
+            self.paths,
+            replace(self.metadata, protected_resource_version=8),
+        )
+        self.assertTrue(
+            all((self.paths.data_root / destination).is_file() for destination in expected_removed)
+        )
+
+        modified = {
+            "runtime/plugins/macsoft-autocount/workflow_logic.py",
+            "runtime/skills/pharmarise-company-configuration/SKILL.md",
+        }
+        for destination in modified:
+            (self.paths.data_root / destination).write_text(
+                "administrator change\n", encoding="utf-8"
+            )
+
+        manifest_path.write_text(json.dumps(current_manifest), encoding="utf-8")
+        upgraded = initialize_product_data(self.paths, self.metadata)
+
+        self.assertTrue(modified <= set(upgraded.conflicts))
+        self.assertTrue((expected_removed - modified) <= set(upgraded.removed_protected))
+        for destination in expected_removed:
+            target = self.paths.data_root / destination
+            if destination in modified:
+                self.assertEqual(target.read_text("utf-8"), "administrator change\n")
+            else:
+                self.assertFalse(target.exists(), destination)
 
     def test_protected_skill_directory_syncs_and_reconciles_safely(self) -> None:
         base_version = self.metadata.protected_resource_version

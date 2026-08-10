@@ -15,7 +15,7 @@ from tools.skills_tool import skill_view
 
 
 class MacSoftProgressSkillTests(unittest.TestCase):
-    def test_protected_workflow_skill_cannot_be_created_in_profile_scope(self) -> None:
+    def test_removed_workflow_skill_name_can_be_created_in_profile_scope(self) -> None:
         with tempfile.TemporaryDirectory() as raw_root:
             root = Path(raw_root) / "profiles"
             home = root / "prof_0123456789abcdef0123456789abcdef"
@@ -25,23 +25,21 @@ class MacSoftProgressSkillTests(unittest.TestCase):
             os.environ["MACSOFT_PROFILE_ROOT"] = str(root)
             token = set_hermes_home_override(home)
             try:
-                protected_name = "autocount-payment-knockoff-automation"
-                guard = skill_manager_tool._macsoft_progress_skill_guard(protected_name)
-                self.assertIsNotNone(guard)
-                self.assertFalse(guard["success"])
+                learned_name = "autocount-payment-knockoff-automation"
+                guard = skill_manager_tool._macsoft_progress_skill_guard(learned_name)
+                self.assertIsNone(guard)
                 result = json.loads(
                     skill_manager_tool.skill_manage(
                         action="create",
-                        name=protected_name,
+                        name=learned_name,
                         content=(
-                            f"---\nname: {protected_name}\n"
+                            f"---\nname: {learned_name}\n"
                             "description: shadow\n---\nshadow"
                         ),
                     )
                 )
-                self.assertFalse(result["success"])
-                self.assertIn("protected MacSoft workflow Skill", result["error"])
-                self.assertFalse((home / "skills" / "learned" / protected_name).exists())
+                self.assertTrue(result["success"])
+                self.assertTrue((home / "skills" / "learned" / learned_name).exists())
             finally:
                 reset_hermes_home_override(token)
                 if previous is None:

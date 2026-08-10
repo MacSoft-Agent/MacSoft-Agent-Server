@@ -43,19 +43,23 @@ FORBIDDEN_NAMES = {
     "client_skills",
 }
 PACKAGED_SKILL_DIRECTORIES = {
-    "autocount-local-direct-payment-knockoff",
-    "autocount-local-direct-purchase-invoice",
-    "autocount-payment-knockoff-automation",
-    "autocount-receiving-supplier-invoice-automation",
     "macsoft-chart-dashboard",
     "macsoft-chart-visualization",
     "kpi-dashboard-design",
     "data-storytelling",
     "web-design-engineer",
-    "pharmarise-company-configuration",
+}
+PACKAGED_AUTOCOUNT_PLUGIN_ENTRIES = {
+    "__init__.py",
+    "plugin.yaml",
 }
 EXCLUDED_PACKAGED_WORKFLOW_DIRECTORIES = {
     "autocount-bank-reconciliation",
+    "autocount-local-direct-payment-knockoff",
+    "autocount-local-direct-purchase-invoice",
+    "autocount-payment-knockoff-automation",
+    "autocount-receiving-supplier-invoice-automation",
+    "pharmarise-company-configuration",
 }
 
 
@@ -89,6 +93,8 @@ def _ignore_templates(directory: str, names: list[str]) -> set[str]:
         ignored.update(name for name in names if name not in PACKAGED_SKILL_DIRECTORIES)
     elif normalized.endswith("/templates/runtime/skills"):
         ignored.update(names)
+    elif normalized.endswith("/protected/runtime/plugins/macsoft-autocount"):
+        ignored.update(name for name in names if name not in PACKAGED_AUTOCOUNT_PLUGIN_ENTRIES)
     return ignored
 
 
@@ -199,8 +205,31 @@ def audit_staging(root: Path, development_root: Path) -> list[str]:
             )
         ):
             issues.append(f"WhatsApp session state included: {relative}")
+        normalized_parts = tuple(part.lower() for part in path.relative_to(root).parts)
+        skill_marker = ("protected", "runtime", "skills")
+        for index in range(max(0, len(normalized_parts) - len(skill_marker))):
+            if normalized_parts[index:index + len(skill_marker)] != skill_marker:
+                continue
+            entry_index = index + len(skill_marker)
+            if (
+                entry_index < len(normalized_parts)
+                and normalized_parts[entry_index] not in PACKAGED_SKILL_DIRECTORIES
+            ):
+                issues.append(f"Unapproved protected Skill included: {relative}")
+            break
         if any(part.lower() in EXCLUDED_PACKAGED_WORKFLOW_DIRECTORIES for part in path.parts):
             issues.append(f"Excluded company workflow included: {relative}")
+        plugin_marker = ("protected", "runtime", "plugins", "macsoft-autocount")
+        for index in range(max(0, len(normalized_parts) - len(plugin_marker))):
+            if normalized_parts[index:index + len(plugin_marker)] != plugin_marker:
+                continue
+            entry_index = index + len(plugin_marker)
+            if (
+                entry_index < len(normalized_parts)
+                and normalized_parts[entry_index] not in PACKAGED_AUTOCOUNT_PLUGIN_ENTRIES
+            ):
+                issues.append(f"Excluded AutoCount plugin entry included: {relative}")
+            break
         lowered_name = path.name.lower()
         if path.is_file() and (
             lowered_name.startswith("__editable__.")

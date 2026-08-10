@@ -1,12 +1,5 @@
 ﻿name: macsoft-autocount
 version: "0.1.0"
-description: Native AutoCount Cloud guidance and optional MacSoft workflow state tools.
-provides_tools:
-  - workflow_case_workspace
-  - workflow_resolve_whatsapp_identifier
-  - workflow_fifo_allocate
-  - workflow_archive_evidence
-  - workflow_approve_autocount_action
-  - workflow_send_approved_supplier_message
+description: Native AutoCount Cloud guidance for LLM-generated official API calls.
 provides_hooks:
   - pre_llm_call

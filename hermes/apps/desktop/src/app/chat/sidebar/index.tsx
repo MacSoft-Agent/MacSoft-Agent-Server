@@ -1059,6 +1059,7 @@ export function ChatSidebar({
                 item =>
                   !macSoftCustomerRuntime ||
                   item.id === 'new-session' ||
+                  item.id === 'skills' ||
                   (macSoftSourceTestRuntime && item.id === 'messaging')
               ).map(item => {
                 const isInteractive = Boolean(item.action) || Boolean(item.route)

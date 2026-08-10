@@ -643,8 +643,12 @@ async def _token_auth_seam(request: Request, call_next):
 
 
 def _config_only_http_path_allowed(path: str) -> bool:
-    """Return whether *path* belongs to the settings/authentication surface."""
+    """Return whether *path* belongs to the customer administration surface."""
     if path == "/api/messaging/platforms" or path.startswith("/api/messaging/platforms/"):
+        return True
+    if path.startswith(("/api/skills", "/api/tools", "/api/mcp", "/api/actions/")):
+        return True
+    if path == "/api/learning/node":
         return True
     if path in {
         "/api/status",
@@ -656,6 +660,7 @@ def _config_only_http_path_allowed(path: str) -> bool:
         "/api/providers/validate",
         "/api/providers/oauth",
         "/api/audio/transcribe",
+        "/api/analytics/usage",
     }:
         return True
     return path.startswith("/api/model/") or path.startswith("/api/providers/oauth/")

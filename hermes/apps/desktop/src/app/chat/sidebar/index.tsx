@@ -217,8 +217,6 @@ interface ChatSidebarProps extends React.ComponentProps<typeof Sidebar> {
 
 export function ChatSidebar({
   currentView,
-  macSoftCustomerRuntime = false,
-  macSoftSourceTestRuntime = false,
   onNavigate,
   onLoadMoreSessions,
   onLoadMoreProfileSessions,
@@ -1051,13 +1049,7 @@ export function ChatSidebar({
         <SidebarGroup className="shrink-0 p-0 pb-2 pt-[calc(var(--titlebar-height)+0.375rem)]">
           <SidebarGroupContent>
             <SidebarMenu className="gap-px">
-              {SIDEBAR_NAV.filter(
-                item =>
-                  !macSoftCustomerRuntime ||
-                  item.id === 'new-session' ||
-                  item.id === 'skills' ||
-                  (macSoftSourceTestRuntime && item.id === 'messaging')
-              ).map(item => {
+              {SIDEBAR_NAV.map(item => {
                 const isInteractive = Boolean(item.action) || Boolean(item.route)
 
                 const active =

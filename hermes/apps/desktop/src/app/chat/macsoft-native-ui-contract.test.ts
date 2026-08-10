@@ -15,9 +15,10 @@ describe('MacSoft Admin chat UI contract', () => {
     expect(chatSource).not.toContain('Admin chat session')
   })
 
-  it('uses the existing sidebar and exposes native capabilities in the MacSoft customer runtime', () => {
+  it('uses the existing sidebar and exposes all native navigation in the MacSoft customer runtime', () => {
     expect(controllerSource).toContain('macSoftCustomerRuntime={macSoftCustomerRuntime}')
-    expect(sidebarSource).toContain("item.id === 'skills'")
+    expect(sidebarSource).toContain('SIDEBAR_NAV.map(item =>')
+    expect(sidebarSource).not.toContain('SIDEBAR_NAV.filter(')
     expect(controllerSource).toContain("macSoftCustomerRuntime && item.action === 'new-session'")
     expect(controllerSource).toContain('onNavigate={handleSidebarNavigate}')
   })

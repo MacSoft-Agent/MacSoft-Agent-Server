@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import os
 import tempfile
 import unittest
@@ -18,7 +19,10 @@ from macsoft.gateway.routes_admin import router as admin_router
 from macsoft.gateway.routes_files import router as files_router
 
 
-PNG = b"\x89PNG\r\n\x1a\n" + b"macsoft-admin-test-image"
+PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
+CORRUPT_PNG = b"\x89PNG\r\n\x1a\n" + b"not-a-decodable-image"
 
 
 class AdminFileContractTests(unittest.TestCase):
@@ -110,6 +114,18 @@ class AdminFileContractTests(unittest.TestCase):
         self.assertEqual(deleted.status_code, 200)
         self.assertTrue(deleted.json()["deleted"])
 
+    def test_admin_upload_rejects_an_image_header_without_decodable_pixels(self) -> None:
+        session_id = self.create_session()
+
+        response = self.client.post(
+            f"/api/admin/sessions/{session_id}/files",
+            headers=self.headers,
+            files={"file": ("broken.png", CORRUPT_PNG, "image/png")},
+        )
+
+        self.assertEqual(response.status_code, 422, response.text)
+        self.assertEqual(response.json()["error"]["code"], "invalid_image_data")
+
     def test_session_deletion_removes_attachment_bytes_and_record(self) -> None:
         session_id = self.create_session()
         uploaded = self.upload_png(session_id)
@@ -164,6 +180,51 @@ class AdminFileContractTests(unittest.TestCase):
                 }
             ],
         )
+
+    def test_later_admin_turn_skips_a_corrupted_historical_image(self) -> None:
+        session_id = self.create_session()
+        uploaded = self.upload_png(session_id)
+        with patch(
+            "macsoft.gateway.routes_admin.stream_interruptible_hermes_reply_events",
+            return_value=iter([{"type": "text_delta", "text": "First"}]),
+        ):
+            first = self.client.post(
+                "/api/admin/chat/stream",
+                headers=self.headers,
+                json={
+                    "session_id": session_id,
+                    "message": "Read the image.",
+                    "uploaded_file_ids": [uploaded["file_id"]],
+                },
+            )
+        self.assertEqual(first.status_code, 200, first.text)
+
+        path = resolve_db_path(self.config).parent / "admin_uploads" / f"{uploaded['file_id']}.png"
+        path.write_bytes(CORRUPT_PNG)
+        captured: list[dict] = []
+
+        def stream(**kwargs):
+            captured.extend(kwargs["messages"])
+            return iter([{"type": "text_delta", "text": "Recovered"}])
+
+        with patch(
+            "macsoft.gateway.routes_admin.stream_interruptible_hermes_reply_events",
+            side_effect=stream,
+        ):
+            second = self.client.post(
+                "/api/admin/chat/stream",
+                headers=self.headers,
+                json={"session_id": session_id, "message": "Continue.", "uploaded_file_ids": []},
+            )
+
+        self.assertEqual(second.status_code, 200, second.text)
+        historical = next(
+            message["content"]
+            for message in captured
+            if message.get("role") == "user" and message.get("message_id")
+        )
+        self.assertIsInstance(historical, str)
+        self.assertIn("Previously attached image unavailable: receipt.png", historical)
 
 
 if __name__ == "__main__":

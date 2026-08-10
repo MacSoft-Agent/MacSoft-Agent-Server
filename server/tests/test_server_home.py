@@ -5,6 +5,7 @@ import unittest
 import os
 from pathlib import Path
 from unittest.mock import patch
+import yaml
 from macsoft.config import (
     AppConfig,
     AutoCountSettings,
@@ -60,6 +61,42 @@ class ServerHomeTests(unittest.TestCase):
             ):
                 self.assertTrue((home / relative).exists(), relative)
             self.assertFalse((Path(temporary) / "runtime" / "global-staging").exists())
+
+    def test_admin_provider_uses_server_request_timeout_without_losing_provider_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            config = _config(Path(temporary))
+            runtime = Path(config.hermes.home)
+            runtime.mkdir(parents=True)
+            (runtime / "config.yaml").write_text(
+                yaml.safe_dump(
+                    {
+                        "model": {"provider": "openai-codex", "default": "gpt-5.4"},
+                        "providers": {
+                            "openai-codex": {"device_profile": "customer-profile"},
+                        },
+                    },
+                    sort_keys=False,
+                ),
+                encoding="utf-8",
+            )
+            admin = runtime / "admin"
+            admin.mkdir()
+            (admin / "config.yaml").write_text(
+                yaml.safe_dump(
+                    {"providers": {"another-provider": {"request_timeout_seconds": 91}}},
+                    sort_keys=False,
+                ),
+                encoding="utf-8",
+            )
+
+            with _server_env(config):
+                home = ensure_server_home(config)
+
+            admin_config = yaml.safe_load((home / "config.yaml").read_text(encoding="utf-8"))
+            self.assertEqual(admin_config["providers"]["openai-codex"]["request_timeout_seconds"], 30)
+            self.assertEqual(admin_config["providers"]["openai-codex"]["stale_timeout_seconds"], 30)
+            self.assertEqual(admin_config["providers"]["openai-codex"]["device_profile"], "customer-profile")
+            self.assertEqual(admin_config["providers"]["another-provider"]["request_timeout_seconds"], 91)
 
     def test_shareable_context_contains_memory_but_not_skill_documents(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

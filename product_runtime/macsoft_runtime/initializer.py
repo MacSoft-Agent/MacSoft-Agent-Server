@@ -93,6 +93,40 @@ def _synchronize_yaml_scalar(path: Path, key_path: tuple[str, ...], value: str) 
     raise ValueError(f"{path.name} is missing required setting: {'.'.join(key_path)}")
 
 
+def _migrate_yaml_scalar_if_equal(
+    path: Path,
+    key_path: tuple[str, ...],
+    *,
+    old_value: str,
+    new_value: str,
+) -> bool:
+    """Migrate one exact historical scalar while retaining nearby customer text."""
+    lines = path.read_text(encoding="utf-8-sig").splitlines(keepends=True)
+    parents: list[tuple[int, str]] = []
+
+    for index, line in enumerate(lines):
+        match = _YAML_KEY_LINE.match(line)
+        if not match:
+            continue
+        prefix, key, remainder, newline = match.groups()
+        indent = len(prefix.expandtabs(8))
+        while parents and parents[-1][0] >= indent:
+            parents.pop()
+        current_path = tuple(item[1] for item in parents) + (key,)
+        if current_path == key_path:
+            raw_value, marker, comment = (remainder or "").partition("#")
+            if raw_value.strip() != old_value:
+                return False
+            suffix = f" #{comment}" if marker else ""
+            lines[index] = f"{prefix}{key}: {new_value}{suffix}{newline or ''}"
+            _atomic_write(path, "".join(lines).encode("utf-8"))
+            return True
+        if not (remainder or "").strip() or (remainder or "").lstrip().startswith("#"):
+            parents.append((indent, key))
+
+    raise ValueError(f"{path.name} is missing required setting: {'.'.join(key_path)}")
+
+
 def _ensure_yaml_list_item(path: Path, key_path: tuple[str, ...], value: str) -> bool:
     """Add one product-required YAML list item while preserving user settings.
 
@@ -430,6 +464,12 @@ def initialize_product_data(paths: ProductPaths, metadata: ProductMetadata) -> I
             paths.server_config,
             ("hermes", "api_key"),
             local_api_key,
+        )
+        _migrate_yaml_scalar_if_equal(
+            paths.server_config,
+            ("hermes", "request_timeout_seconds"),
+            old_value="600",
+            new_value="7200",
         )
 
     if not paths.server_database.exists():

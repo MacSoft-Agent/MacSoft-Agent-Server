@@ -175,6 +175,24 @@ describe('MacSoft Admin chat transport', () => {
     expect(result.current.messages.map(chatMessageText)).toEqual(['first prompt', 'Hello world'])
   })
 
+  it('shows the safe transport explanation when an Admin stream cannot start', async () => {
+    installApi({
+      listSessions: vi.fn(async () => []),
+      startStream: vi.fn(async () => {
+        throw new Error('This Admin chat is still stopping. Please retry shortly.')
+      })
+    })
+    const { result } = renderHook(() => useMacSoftAdminChat(true, true))
+
+    await waitFor(() => expect(result.current.sessionsLoaded).toBe(true))
+    await act(async () => result.current.submit('retry'))
+
+    expect(result.current.error).toBe('This Admin chat is still stopping. Please retry shortly.')
+    expect(result.current.messages.at(-1)?.error).toBe(
+      'This Admin chat is still stopping. Please retry shortly.'
+    )
+  })
+
   it('atomically releases pending, busy, activity and interrupt state on message_done', async () => {
     const { api, emit } = installApi({ listSessions: vi.fn(async () => []) })
     const { result } = renderHook(() => useMacSoftAdminChat(true, true))

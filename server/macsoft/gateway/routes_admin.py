@@ -44,6 +44,7 @@ from macsoft.security import new_id
 
 
 router = APIRouter()
+ADMIN_INTERRUPT_RELEASE_WAIT_SECONDS = 10.0
 
 class AdminSessionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -292,6 +293,10 @@ def interrupt_admin_chat(
             status_code=409,
             detail=_error("admin_run_not_active", "This Admin session has no active reply."),
         )
+    registry.wait_until_released(
+        f"admin:{body.session_id}",
+        timeout_seconds=ADMIN_INTERRUPT_RELEASE_WAIT_SECONDS,
+    )
     return {
         "ok": True,
         "session_id": body.session_id,
@@ -360,6 +365,7 @@ def admin_chat_stream(
                     config,
                     message=str(message["content"]),
                     files=historical_files,
+                    skip_unreadable_images=True,
                 )
         assistant_message_id = new_id("admin_msg")
         admin_scope = "admin"

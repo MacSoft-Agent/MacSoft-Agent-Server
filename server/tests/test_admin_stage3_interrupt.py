@@ -5,6 +5,8 @@ import json
 import os
 import sqlite3
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -91,6 +93,26 @@ class AdminStage3InterruptTests(unittest.TestCase):
         self.assertFalse(registry.interrupt_requested("client:one"))
         self.assertTrue(registry.is_active("client:one"))
 
+    def test_registry_waits_for_real_release_without_force_unlocking(self) -> None:
+        registry = ActiveChatRunRegistry()
+        self.assertTrue(registry.reserve("admin:one"))
+        releaser = threading.Thread(
+            target=lambda: (time.sleep(0.02), registry.release("admin:one")),
+            daemon=True,
+        )
+        releaser.start()
+
+        self.assertTrue(registry.wait_until_released("admin:one", timeout_seconds=0.5))
+        releaser.join(timeout=0.5)
+        self.assertFalse(registry.is_active("admin:one"))
+
+    def test_registry_wait_timeout_keeps_active_run_owned(self) -> None:
+        registry = ActiveChatRunRegistry()
+        self.assertTrue(registry.reserve("admin:one"))
+
+        self.assertFalse(registry.wait_until_released("admin:one", timeout_seconds=0.01))
+        self.assertTrue(registry.is_active("admin:one"))
+
     def test_interrupt_endpoint_targets_only_bound_admin_run(self) -> None:
         run_key = f"admin:{self.session['session_id']}"
         registry = self.app.state.active_chat_runs
@@ -100,7 +122,9 @@ class AdminStage3InterruptTests(unittest.TestCase):
         registry.bind_run(f"admin:{self.other_session['session_id']}", "run_other")
         registry.reserve("client:client_session")
 
-        with patch("macsoft.gateway.routes_admin.interrupt_hermes_run", return_value=True) as stop:
+        with patch("macsoft.gateway.routes_admin.interrupt_hermes_run", return_value=True) as stop, patch.object(
+            registry, "wait_until_released", return_value=False
+        ) as wait_for_release:
             result = interrupt_admin_chat(
                 self.request,
                 AdminInterruptRequest(session_id=self.session["session_id"]),
@@ -108,6 +132,7 @@ class AdminStage3InterruptTests(unittest.TestCase):
             )
 
         self.assertEqual(result["status"], "interrupting")
+        wait_for_release.assert_called_once()
         self.assertEqual(stop.call_args.kwargs["run_id"], "run_admin_target")
         self.assertFalse(registry.interrupt_requested(f"admin:{self.other_session['session_id']}"))
         self.assertFalse(registry.interrupt_requested("client:client_session"))

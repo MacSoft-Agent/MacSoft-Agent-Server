@@ -44,6 +44,28 @@ class FirstRunInitializationTests(unittest.TestCase):
         self.assertEqual(json.loads((self.paths.autocount_plugin_root / "config.json").read_text("utf-8"))["apiKey"], "")
         self.assertFalse((self.paths.runtime_root / "auth.json").exists())
         self.assertEqual(self.paths.server_database.stat().st_size, 0)
+        self.assertIn("request_timeout_seconds: 7200", server)
+
+    def test_upgrade_migrates_only_the_historical_server_timeout_default(self) -> None:
+        initialize_product_data(self.paths, self.metadata)
+        server = self.paths.server_config.read_text(encoding="utf-8")
+        server = server.replace("request_timeout_seconds: 7200", "request_timeout_seconds: 600 # old default")
+        server += "\n# customer server setting\n"
+        self.paths.server_config.write_text(server, encoding="utf-8")
+
+        initialize_product_data(self.paths, self.metadata)
+
+        updated = self.paths.server_config.read_text(encoding="utf-8")
+        self.assertIn("request_timeout_seconds: 7200 # old default", updated)
+        self.assertIn("# customer server setting", updated)
+
+        customized = updated.replace("request_timeout_seconds: 7200", "request_timeout_seconds: 3600")
+        self.paths.server_config.write_text(customized, encoding="utf-8")
+        initialize_product_data(self.paths, self.metadata)
+        self.assertIn(
+            "request_timeout_seconds: 3600 # old default",
+            self.paths.server_config.read_text(encoding="utf-8"),
+        )
 
     def test_upgrade_preserves_mutable_customer_data(self) -> None:
         initialize_product_data(self.paths, self.metadata)

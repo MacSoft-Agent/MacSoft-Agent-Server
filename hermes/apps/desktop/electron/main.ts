@@ -94,7 +94,10 @@ import {
 } from './hardening'
 import { createLinkTitleWindow, guardLinkTitleSession, readLinkTitleWindowTitle } from './link-title-window'
 import { MacSoftDesktopChatClient } from './macsoft-desktop-chat-client'
-import { MacSoftDesktopAdminChatClient } from './macsoft-desktop-admin-chat-client'
+import {
+  MacSoftDesktopAdminChatClient,
+  recoverDisconnectedAdminStream
+} from './macsoft-desktop-admin-chat-client'
 import { MacSoftHostClient } from './macsoft-host-client'
 import { verifyMacSoftInstallerAuthenticode } from './macsoft-update-authenticode'
 import { loadMacSoftProductMetadata, resolveMacSoftProductPaths, resolvePackagedRuntimeHome } from './macsoft-product'
@@ -7452,6 +7455,7 @@ function cleanupMacSoftAdminStream(streamId: string) {
 
 async function pumpMacSoftAdminStream(
   streamId: string,
+  sessionId: string,
   response: Response,
   webContents: Electron.WebContents,
   controller: AbortController
@@ -7459,6 +7463,7 @@ async function pumpMacSoftAdminStream(
   const reader = response.body?.getReader()
   let buffer = ''
   const decoder = new TextDecoder()
+  let terminalEventSeen = false
 
   const emitRecord = (record: string) => {
     let event = ''
@@ -7468,6 +7473,7 @@ async function pumpMacSoftAdminStream(
       if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart())
     }
     if (!MACSOFT_ADMIN_STREAM_EVENTS.has(event) || dataLines.length === 0) return
+    if (event === 'message_done') terminalEventSeen = true
     try {
       sendMacSoftAdminStreamEvent(streamId, webContents, event, JSON.parse(dataLines.join('\n')))
     } catch {
@@ -7490,11 +7496,19 @@ async function pumpMacSoftAdminStream(
     }
     buffer += decoder.decode()
     if (buffer.trim()) emitRecord(buffer)
+    if (!controller.signal.aborted && !terminalEventSeen) {
+      throw new Error('Admin chat stream ended before completion.')
+    }
   } catch {
     if (!controller.signal.aborted) {
+      await recoverDisconnectedAdminStream(
+        sessionId,
+        controller.signal,
+        activeSessionId => getMacSoftDesktopAdminChatClient().interruptAdminChat(activeSessionId)
+      )
       sendMacSoftAdminStreamEvent(streamId, webContents, 'error', {
         code: 'stream_disconnected',
-        message: 'MacSoft Server chat stream disconnected.'
+        message: 'MacSoft Server chat stream disconnected. The previous reply is being stopped.'
       })
     }
   } finally {
@@ -7547,7 +7561,7 @@ ipcMain.handle('hermes:macsoft-admin:start-stream', async (event, request) => {
   webContents.once('destroyed', onDestroyed)
   try {
     const response = await getMacSoftDesktopAdminChatClient().startAdminChatStream(sessionId, message, uploadedFileIds, controller.signal)
-    void pumpMacSoftAdminStream(streamId, response, webContents, controller)
+    void pumpMacSoftAdminStream(streamId, sessionId, response, webContents, controller)
     return { streamId }
   } catch (error) {
     cleanupMacSoftAdminStream(streamId)

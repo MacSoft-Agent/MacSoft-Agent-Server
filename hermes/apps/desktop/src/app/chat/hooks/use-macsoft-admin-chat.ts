@@ -563,7 +563,11 @@ export function useMacSoftAdminChat(enabled: boolean, serverReady: boolean) {
         syncSelectedView(sessionId)
 
         return true
-      } catch {
+      } catch (error) {
+        const message = safeError(
+          error instanceof Error ? error.message : error,
+          'Admin chat could not start.'
+        )
         if (sessionId) {
           const run = runsBySessionRef.current.get(sessionId)
 
@@ -572,7 +576,7 @@ export function useMacSoftAdminChat(enabled: boolean, serverReady: boolean) {
             updateSessionMessages(sessionId, current =>
               current.map(item =>
                 item.id === run.assistantMessageId
-                  ? { ...item, error: 'Admin chat could not start.', pending: false }
+                  ? { ...item, error: message, pending: false }
                   : item
               )
             )
@@ -580,7 +584,7 @@ export function useMacSoftAdminChat(enabled: boolean, serverReady: boolean) {
           }
         }
 
-        dispatch({ type: 'stream-error', message: 'Admin chat could not start.' })
+        dispatch({ type: 'stream-error', message })
 
         return false
       }

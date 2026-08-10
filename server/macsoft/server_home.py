@@ -73,6 +73,25 @@ def ensure_server_home(config: Any) -> Path:
     for key in ("model", "memory", "skills", "curator"):
         if key in desired:
             current[key] = desired[key]
+    model = current.get("model")
+    provider_id = model.get("provider") if isinstance(model, dict) else None
+    if isinstance(provider_id, str) and provider_id.strip():
+        providers = current.get("providers")
+        if not isinstance(providers, dict):
+            providers = {}
+            current["providers"] = providers
+        provider = providers.get(provider_id)
+        if not isinstance(provider, dict):
+            provider = {}
+        desired_providers = desired.get("providers")
+        if isinstance(desired_providers, dict):
+            desired_provider = desired_providers.get(provider_id)
+            if isinstance(desired_provider, dict):
+                provider.update(desired_provider)
+        timeout_seconds = int(config.hermes.request_timeout_seconds)
+        provider["request_timeout_seconds"] = timeout_seconds
+        provider["stale_timeout_seconds"] = timeout_seconds
+        providers[provider_id] = provider
     config_path.write_text(
         yaml.safe_dump(_without_embedded_secrets(current), sort_keys=False),
         encoding="utf-8",

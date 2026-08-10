@@ -41,6 +41,23 @@ export interface AdminUploadedFile {
   createdAt: string
 }
 
+const SAFE_ADMIN_ERROR_MESSAGES: Record<string, string> = {
+  admin_session_busy: 'This Admin chat is still stopping. Please retry shortly.',
+  admin_run_not_active: 'The previous Admin reply has already stopped.',
+  invalid_image: 'The attached image is invalid. Please upload it again.',
+  invalid_image_data: 'The attached image is invalid. Please upload it again.'
+}
+
+export async function recoverDisconnectedAdminStream(
+  sessionId: string,
+  signal: AbortSignal,
+  interrupt: (sessionId: string) => Promise<void>
+): Promise<boolean> {
+  if (signal.aborted) return false
+  await interrupt(sessionId).catch(() => undefined)
+  return true
+}
+
 export class MacSoftDesktopAdminChatClient {
   private adminAccessToken: string | null = null
 
@@ -144,7 +161,10 @@ export class MacSoftDesktopAdminChatClient {
       response = await this.send(pathname, init, timeoutMs)
     }
     if (!response.ok) {
-      throw new Error('MacSoft Server Admin request failed.')
+      const body = await this.readJson(response)
+      const code = body?.detail?.error?.code
+      const safeMessage = typeof code === 'string' ? SAFE_ADMIN_ERROR_MESSAGES[code] : undefined
+      throw new Error(safeMessage || 'MacSoft Server Admin request failed.')
     }
     return response
   }

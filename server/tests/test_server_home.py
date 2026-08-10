@@ -54,7 +54,10 @@ class ServerHomeTests(unittest.TestCase):
             config = _config(Path(temporary))
             with _server_env(config):
                 home = ensure_server_home(config)
-            self.assertEqual(home, Path(temporary) / "runtime" / "admin")
+            # Windows CI may expose the temporary root through its 8.3 alias
+            # (RUNNER~1) while server_home() deliberately returns a resolved
+            # long path. Compare canonical paths rather than lexical aliases.
+            self.assertEqual(home, (Path(temporary) / "runtime" / "admin").resolve())
             for relative in (
                 "config.yaml", "memories/USER.md", "memories/MEMORY.md",
                 "skills", "sessions", "logs", "curator", "backups",

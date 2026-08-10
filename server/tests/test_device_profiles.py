@@ -107,6 +107,10 @@ class DeviceProfileTests(unittest.TestCase):
                 profile_config["skills"]["external_dirs"][0],
                 str((self.hermes_home / "skills").resolve()),
             )
+            self.assertIn(
+                str((self.hermes_home / "admin" / "skills").resolve()),
+                profile_config["skills"]["external_dirs"],
+            )
             self.assertNotIn(
                 str((self.hermes_home / "global" / "skills" / "learned").resolve()),
                 profile_config["skills"]["external_dirs"],
@@ -248,6 +252,38 @@ class DeviceProfileTests(unittest.TestCase):
             self.assertEqual(profile_config["model"]["default"], "inclusionai/ling-3.0-flash:free")
             self.assertNotIn("api_key", profile_config["model"])
             self.assertIn("persistent skill", learned.read_text(encoding="utf-8"))
+        finally:
+            self._restore_profile_root(previous)
+
+    def test_existing_profile_inherits_server_home_skills_without_losing_local_learning(self) -> None:
+        previous = self._with_profile_root()
+        try:
+            profile = ensure_device_profile(self.conn, config=self.config, device_id="device-a")
+            home = self.profile_root / str(profile["profile_id"])
+            learned = home / "skills" / "learned" / "local-procedure" / "SKILL.md"
+            learned.parent.mkdir(parents=True)
+            learned.write_text("---\nname: local-procedure\n---\nlocal", encoding="utf-8")
+
+            profile_config = yaml.safe_load((home / "config.yaml").read_text(encoding="utf-8"))
+            profile_config["skills"]["external_dirs"] = [
+                str((self.hermes_home / "skills").resolve()),
+                str((self.hermes_home / "global" / "skills" / "learned").resolve()),
+            ]
+            (home / "config.yaml").write_text(
+                yaml.safe_dump(profile_config, sort_keys=False), encoding="utf-8"
+            )
+
+            ensure_device_profile(self.conn, config=self.config, device_id="device-a")
+            migrated = yaml.safe_load((home / "config.yaml").read_text(encoding="utf-8"))
+            self.assertIn(
+                str((self.hermes_home / "admin" / "skills").resolve()),
+                migrated["skills"]["external_dirs"],
+            )
+            self.assertNotIn(
+                str((self.hermes_home / "global" / "skills" / "learned").resolve()),
+                migrated["skills"]["external_dirs"],
+            )
+            self.assertIn("local", learned.read_text(encoding="utf-8"))
         finally:
             self._restore_profile_root(previous)
 

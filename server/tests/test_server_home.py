@@ -61,7 +61,7 @@ class ServerHomeTests(unittest.TestCase):
                 self.assertTrue((home / relative).exists(), relative)
             self.assertFalse((Path(temporary) / "runtime" / "global-staging").exists())
 
-    def test_shareable_context_reads_memory_and_native_skills(self) -> None:
+    def test_shareable_context_contains_memory_but_not_skill_documents(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             config = _config(Path(temporary))
             with _server_env(config):
@@ -72,7 +72,7 @@ class ServerHomeTests(unittest.TestCase):
                 skill.write_text("# Reconciliation\nCheck both ledgers.", encoding="utf-8")
                 context = read_shareable_server_context(config)
             self.assertIn("Validate totals before export.", context or "")
-            self.assertIn("Check both ledgers.", context or "")
+            self.assertNotIn("Check both ledgers.", context or "")
 
     def test_removed_global_learning_routes_are_not_registered(self) -> None:
         paths = {route.path for route in admin_router.routes}

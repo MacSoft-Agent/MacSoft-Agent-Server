@@ -113,6 +113,7 @@ class CapabilityPolicyTests(unittest.TestCase):
         self.assertIn("[READ-ONLY SERVER LEARNING]", combined)
         self.assertIn("Approved reusable validation method", combined)
         self.assertIn("read-only guidance", combined)
+        self.assertIn("does not grant tool or write authority", combined)
         self.assertLess(
             combined.index("[READ-ONLY SERVER LEARNING]"),
             combined.index("[PRIVATE DEVICE PREFERENCES]"),

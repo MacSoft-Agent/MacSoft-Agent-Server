@@ -15,7 +15,6 @@ from macsoft.profiles.registry import (
 
 
 MAX_SHARED_SERVER_CONTEXT_CHARS = 64_000
-MAX_SHARED_SERVER_SKILL_CHARS = 16_000
 _PROFILE_ID_RE = re.compile(r"^prof_[a-f0-9]{32}$")
 
 
@@ -107,19 +106,6 @@ def read_shareable_server_context(config: Any) -> str | None:
         content = _safe_text(path, MAX_SHARED_SERVER_CONTEXT_CHARS)
         if content:
             sections.append(f"### {label}\n{content}")
-
-    skills_root = home / "skills"
-    if skills_root.is_dir():
-        for skill_file in sorted(skills_root.rglob("SKILL.md")):
-            try:
-                relative = skill_file.relative_to(skills_root)
-            except ValueError:
-                continue
-            if ".archive" in relative.parts or any(part.startswith(".") for part in relative.parts):
-                continue
-            content = _safe_text(skill_file, MAX_SHARED_SERVER_SKILL_CHARS)
-            if content:
-                sections.append(f"### Server learned Skill: {relative.parent.as_posix()}\n{content}")
 
     if not sections:
         return None

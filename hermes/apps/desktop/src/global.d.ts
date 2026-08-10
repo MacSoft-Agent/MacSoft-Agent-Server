@@ -19,13 +19,6 @@ declare global {
       macSoftAdminChat: {
         listSessions: () => Promise<MacSoftAdminSession[]>
         createSession: (title?: string) => Promise<MacSoftAdminSession>
-        createGlobalTrainingSession: (workflowTarget?: string) => Promise<MacSoftAdminSession>
-        getGlobalLearningStatus: (sessionId: string) => Promise<{ enabled: boolean; session_id: string | null }>
-        toggleGlobalLearning: (input: { sessionId: string; enabled: boolean }) => Promise<{ enabled: boolean }>
-        listGlobalLearningProposals: () => Promise<MacSoftGlobalLearningProposal[]>
-        refreshGlobalLearningProposal: (sessionId: string) => Promise<MacSoftGlobalLearningProposal | null>
-        decideGlobalLearningProposal: (input: { proposalId: string; decision: 'approve' | 'reject' }) => Promise<MacSoftGlobalLearningProposal>
-        restoreGlobalLearningProposal: (proposalId: string) => Promise<MacSoftGlobalLearningProposal>
         getMessages: (sessionId: string) => Promise<MacSoftAdminMessage[]>
         deleteSession: (sessionId: string) => Promise<void>
         uploadFile: (input: { sessionId: string; filename: string; dataUrl: string }) => Promise<MacSoftAdminUploadedFile>
@@ -301,29 +294,9 @@ export interface MacSoftAdminSession {
   id: string
   session_id: string
   title: string
-  session_type: 'chat' | 'global_training'
-  workflow_target: string
+  session_type: 'chat'
   created_at: string
   updated_at: string
-}
-
-export interface MacSoftGlobalLearningProposal {
-  proposal_id: string
-  training_session_id: string
-  run_id: string | null
-  kind: string
-  workflow_target: string
-  status: 'pending' | 'approved' | 'rejected'
-  created_at: string
-  decided_at: string | null
-  previous_hash: string | null
-  new_hash: string | null
-  changes: Array<{
-    path: string
-    action: 'create' | 'update' | 'delete'
-    previous_hash: string | null
-    new_hash: string | null
-  }>
 }
 
 export interface MacSoftAdminMessage {

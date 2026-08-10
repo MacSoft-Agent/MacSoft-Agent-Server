@@ -29,11 +29,7 @@ def _profile() -> tuple[str, Path] | None:
     root = Path(root_raw).expanduser().resolve()
     home = get_hermes_home().resolve()
     device_profile = home.parent == root and home.name.startswith("prof_")
-    global_staging = (
-        home.parent == (root.parent / "global-staging").resolve()
-        and home.name.startswith("admin_sess_")
-    )
-    if not device_profile and not global_staging:
+    if not device_profile:
         return None
     return home.name, home
 

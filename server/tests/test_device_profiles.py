@@ -107,9 +107,9 @@ class DeviceProfileTests(unittest.TestCase):
                 profile_config["skills"]["external_dirs"][0],
                 str((self.hermes_home / "skills").resolve()),
             )
-            self.assertEqual(
-                profile_config["skills"]["external_dirs"][1],
+            self.assertNotIn(
                 str((self.hermes_home / "global" / "skills" / "learned").resolve()),
+                profile_config["skills"]["external_dirs"],
             )
             self.assertIn("hermes-agent", profile_config["skills"]["disabled"])
 

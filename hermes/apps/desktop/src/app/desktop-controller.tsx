@@ -194,6 +194,7 @@ export function DesktopController() {
   const location = useLocation()
   const navigate = useNavigate()
   const macSoftCustomerRuntime = window.hermesDesktop?.macSoftCustomerRuntime === true
+  const macSoftSourceTestRuntime = window.hermesDesktop?.macSoftSourceTestRuntime === true
   const macSoftDesktopChat = useMacSoftDesktopChatStatus(macSoftCustomerRuntime)
   const macSoftFirstRunNavigationRef = useRef(window.hermesDesktop?.macSoftFirstRun === true)
 
@@ -1247,6 +1248,7 @@ export function DesktopController() {
     <ChatSidebar
       currentView={currentView}
       macSoftCustomerRuntime={macSoftCustomerRuntime}
+      macSoftSourceTestRuntime={macSoftSourceTestRuntime}
       onArchiveSession={sessionId => void archiveSession(sessionId)}
       onBranchSession={sessionId => void branchStoredSession(sessionId)}
       onDeleteSession={sessionId => void removeSessionForRuntime(sessionId)}

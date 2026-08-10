@@ -125,7 +125,7 @@ class AudioTranscriptionContractTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 401, response.text)
-        self.assertEqual(response.json()["error"]["code"], "invalid_device_token")
+        self.assertEqual(response.json()["error"]["code"], "device_credentials_rejected")
         post.assert_not_called()
 
     def test_missing_host_token_reports_service_unavailable(self) -> None:

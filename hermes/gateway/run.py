@@ -2059,7 +2059,14 @@ def _build_media_placeholder(event) -> str:
     return "\n".join(parts)
 
 
-def _build_document_context_note(display_name: str, agent_path: str, mtype: str) -> str:
+def _build_document_context_note(
+    display_name: str,
+    agent_path: str,
+    mtype: str,
+    *,
+    text_available: bool = False,
+    images_available: bool = False,
+) -> str:
     """Context note prepended to a user turn when they attach a document.
 
     Text documents (``text/*``) have their content inlined upstream by the
@@ -2076,6 +2083,16 @@ def _build_document_context_note(display_name: str, agent_path: str, mtype: str)
             f"[The user sent a text document: '{display_name}'. "
             f"Its content has been included below. "
             f"The file is also saved at: {agent_path}]"
+        )
+    if text_available:
+        return (
+            f"[The user sent a PDF document: '{display_name}'. Its extracted content has been included below. "
+            f"The original file is saved at: {agent_path}]"
+        )
+    if images_available:
+        return (
+            f"[The user sent a scanned PDF document: '{display_name}'. Its page images are attached for visual reading. "
+            f"The original file is saved at: {agent_path}]"
         )
     return (
         f"[The user sent a document: '{display_name}'. It is saved at: {agent_path}. "
@@ -10548,7 +10565,19 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 # cache directories are auto-mounted at /root/.hermes/cache/* by get_cache_directory_mounts().
                 agent_path = to_agent_visible_cache_path(path)
 
-                context_note = _build_document_context_note(display_name, agent_path, mtype)
+                extracted_paths = (getattr(event, "metadata", None) or {}).get(
+                    "document_text_extracted_paths", []
+                )
+                rendered_paths = (getattr(event, "metadata", None) or {}).get(
+                    "document_pages_rendered_paths", []
+                )
+                context_note = _build_document_context_note(
+                    display_name,
+                    agent_path,
+                    mtype,
+                    text_available=path in extracted_paths,
+                    images_available=path in rendered_paths,
+                )
                 message_text = f"{context_note}\n\n{message_text}"
 
         # Discord: surface the triggering message id per-turn on the user
@@ -11417,7 +11446,11 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         
         # One-time prompt if no home channel is set for this platform
         # Skip for webhooks - they deliver directly to configured targets (github_comment, etc.)
-        if not history and source.platform and source.platform != Platform.LOCAL and source.platform != Platform.WEBHOOK:
+        if (
+            not history
+            and source.platform
+            not in {Platform.LOCAL, Platform.WEBHOOK, Platform.WHATSAPP}
+        ):
             platform_name = source.platform.value
             env_key = _home_target_env_var(platform_name)
             if not os.getenv(env_key):

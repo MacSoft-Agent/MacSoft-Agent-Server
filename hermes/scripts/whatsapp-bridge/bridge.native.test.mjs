@@ -7,7 +7,8 @@
 
 import { strict as assert } from 'node:assert';
 import { createHash } from 'node:crypto';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { getAggregateVotesInPollMessage } from '@whiskeysockets/baileys';
@@ -22,6 +23,17 @@ import {
   pollCreationMessageFromPayload,
   pollUpdateForAggregation,
 } from './bridge_helpers.js';
+
+// -- customer-visible identity ---------------------------------------------
+{
+  const bridgeSource = readFileSync(
+    fileURLToPath(new URL('./bridge.js', import.meta.url)),
+    'utf8',
+  );
+  assert.match(bridgeSource, /DEFAULT_REPLY_PREFIX = '⚕ \*Mac Soft AI Agent\*/);
+  assert.match(bridgeSource, /browser: \['Mac Soft AI Agent'/);
+  assert.doesNotMatch(bridgeSource, /DEFAULT_REPLY_PREFIX = .*Hermes Agent/);
+}
 
 // -- quoted outbound text -------------------------------------------------
 {

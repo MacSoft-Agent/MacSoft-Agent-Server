@@ -7612,6 +7612,9 @@ ipcMain.handle('hermes:macsoft-host:set-autostart', (_event, enabled) =>
 ipcMain.on('hermes:macsoft-customer-runtime', event => {
   event.returnValue = IS_MACSOFT_CUSTOMER_RUNTIME
 })
+ipcMain.on('hermes:macsoft-source-test-runtime', event => {
+  event.returnValue = IS_MACSOFT_TEST_RUNTIME
+})
 ipcMain.on('hermes:macsoft-first-run-navigation', event => {
   event.returnValue = macSoftFirstRunNavigationPending
   macSoftFirstRunNavigationPending = false

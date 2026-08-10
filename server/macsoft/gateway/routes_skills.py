@@ -6,6 +6,7 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from macsoft.db import connect_db
+from macsoft.gateway.errors import device_credentials_rejected_error
 from macsoft.identity.devices import require_device
 from macsoft.skills.client_skills import (
     MAX_SKILL_CONTENT_LENGTH,
@@ -44,6 +45,8 @@ class ClientSkillUpdate(BaseModel):
 
 
 def _error(code: str, message: str, *, details: dict | None = None) -> dict:
+    if code == "invalid_device_token":
+        return device_credentials_rejected_error()
     return {
         "ok": False,
         "error": {"code": code, "message": message, "details": details or {}},

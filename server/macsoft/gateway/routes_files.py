@@ -15,10 +15,19 @@ from macsoft.files.storage import (
     stored_path,
 )
 from macsoft.identity.devices import require_device
-from macsoft.gateway.errors import error_response
+from macsoft.gateway.errors import (
+    device_credentials_rejected_error,
+    error_response as _error_response,
+)
 
 
 router = APIRouter()
+
+
+def error_response(code: str, message: str) -> dict:
+    if code == "invalid_device_token":
+        return device_credentials_rejected_error()
+    return _error_response(code, message)
 
 
 def _require_request_device(conn, authorization: str | None, device_id: str | None):

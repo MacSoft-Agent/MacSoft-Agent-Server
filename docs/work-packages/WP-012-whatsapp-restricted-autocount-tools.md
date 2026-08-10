@@ -41,6 +41,9 @@ MacSoft Client device, profile, Server session, or Server SQLite identity path.
 - Inject the existing AutoCount policy for `whatsapp` as well as `api_server`.
 - Upgrade preserved runtime configuration additively for existing installs.
 - Apply the same configuration to the current development runtime for immediate testing.
+- Ensure release staging rejects WhatsApp credentials, runtime environment files,
+  pairing state, logs, and runtime databases if any packaging path accidentally
+  introduces them.
 
 ## Non-scope
 
@@ -94,11 +97,23 @@ the two allowed toolsets.
 
 ## Implementation result
 
-Pending verification.
+- WhatsApp uses the narrow product base toolsets while remaining extensible by
+  normally enabled plugin toolsets.
+- The AutoCount policy is injected for WhatsApp.
+- Development WhatsApp pairing/configuration remains under the ignored root
+  `runtime/` and is not a staging source.
+- Staging audit now fails closed on `creds.json`, `.env`, pairing state, runtime
+  logs, runtime databases, and WhatsApp session content.
 
 ## Verification evidence
 
-Pending.
+- TDD red evidence: the two new staging leak tests failed before the audit was
+  hardened because no WhatsApp credential/pairing-state issues were reported.
+- `python -m unittest product_runtime.tests.test_staging`: 6 passed.
+- `python -m unittest product_runtime.tests.test_staging product_runtime.tests.test_packaging_contract product_runtime.tests.test_initializer`: 36 passed.
+- Tracked-file scan found no current WhatsApp JIDs and no tracked runtime state.
+- `git diff --check` passed for the staging audit and its tests (line-ending
+  normalization warnings only).
 
 ## Unexpected findings
 
@@ -108,6 +123,9 @@ Pending.
 ## Remaining risks
 
 - Real installed-product WhatsApp pairing and AutoCount execution have not yet been exercised.
+- A product update intentionally preserves the target installation's existing
+  ProgramData. That preserves that customer's own WhatsApp session; it does not
+  import the build machine's ignored development runtime.
 
 ## Final status
 

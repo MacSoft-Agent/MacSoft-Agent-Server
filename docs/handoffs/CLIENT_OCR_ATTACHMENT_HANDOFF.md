@@ -105,7 +105,7 @@ Delete an unused upload when the user removes it before sending. Do not automati
 
 Read the top-level `error.code` and show `error.message`. Important codes include:
 
-- `invalid_device_token`
+- `device_credentials_rejected`
 - `empty_file`
 - `file_too_large`
 - `unsupported_file_type`

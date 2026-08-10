@@ -9,7 +9,10 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from macsoft.db import connect_db
-from macsoft.gateway.errors import error_response
+from macsoft.gateway.errors import (
+    device_credentials_rejected_error,
+    error_response as _error_response,
+)
 from macsoft.identity.devices import create_or_replace_device, require_device
 from macsoft.identity.pairing import claim_pairing_code, get_or_create_dev_pairing_code
 from macsoft.identity.users import get_default_admin, get_user_by_id
@@ -23,6 +26,12 @@ router = APIRouter()
 
 SERVER_HERMES_MODEL_ID = "server-hermes-current"
 SERVER_HERMES_MODEL_NAME = "MacSoft Server Current Model"
+
+
+def error_response(code: str, message: str) -> dict:
+    if code == "invalid_device_token":
+        return device_credentials_rejected_error()
+    return _error_response(code, message)
 
 
 class PairDeviceRequest(BaseModel):

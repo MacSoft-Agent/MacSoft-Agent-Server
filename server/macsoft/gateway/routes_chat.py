@@ -33,6 +33,7 @@ from macsoft.chat.result_formatter import (
     user_requested_json,
 )
 from macsoft.db import connect_db
+from macsoft.gateway.errors import device_credentials_rejected_error
 from macsoft.files.content import AttachmentContentError, build_hermes_user_content
 from macsoft.files.storage import (
     UploadValidationError,
@@ -143,6 +144,8 @@ class ChatInterruptRequest(BaseModel):
 
 
 def error_response(code: str, message: str) -> dict:
+    if code == "invalid_device_token":
+        return device_credentials_rejected_error()
     return {
         "ok": False,
         "error": {

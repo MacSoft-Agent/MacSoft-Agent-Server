@@ -130,8 +130,7 @@ ready for normal development.
 
 ## 5. Start the isolated development application
 
-First make sure no installed MacSoft product or previous test runtime is using
-these development ports:
+The source launcher owns these development ports while it is running:
 
 ```text
 8766  Windows Host control
@@ -157,9 +156,13 @@ Stop the complete test runtime with:
 .\stop-test.bat
 ```
 
-Do not mix this source runtime with an installed MacSoft Agent instance on the
-same ports. If startup reports occupied ports, identify and stop the previous
-test runtime or installed service before trying again.
+If the installed `MacSoftAgentHost` service owns all conflicting ports,
+`start-test.bat` verifies its service executable and process tree, then asks
+Windows to stop it. A non-elevated terminal receives a UAC prompt for only that
+service-control operation. Closing the Desktop, or running `stop-test.bat`,
+stops the source runtime and releases all five ports; it does not restart the
+installed service or alter its configured startup policy. Unknown or mixed
+port owners remain a hard error and are never terminated automatically.
 
 ## 6. Confirm the local services
 
@@ -283,9 +286,11 @@ Get-NetTCPConnection -State Listen |
     Select-Object LocalAddress,LocalPort,OwningProcess
 ```
 
-An installed `MacSoftAgentHost` service may own the production ports. Do not
-kill or delete it blindly; decide whether the installed product or source test
-runtime should be active.
+An installed `MacSoftAgentHost` service may own the production ports.
+`start-test.bat` automatically yields that verified service to development
+mode. If the launcher still refuses to start, at least one listener is not in
+the installed Host's process tree; inspect the reported PID rather than
+terminating it blindly.
 
 ### AI Service is healthy but chat has no model
 

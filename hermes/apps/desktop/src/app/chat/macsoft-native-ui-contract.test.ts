@@ -17,7 +17,7 @@ describe('MacSoft Admin chat UI contract', () => {
 
   it('uses the existing sidebar and hides non-chat navigation in the MacSoft customer runtime', () => {
     expect(controllerSource).toContain('macSoftCustomerRuntime={macSoftCustomerRuntime}')
-    expect(sidebarSource).toContain("!macSoftCustomerRuntime || item.id === 'new-session'")
+    expect(sidebarSource).toContain("item.id === 'messaging'")
     expect(controllerSource).toContain("macSoftCustomerRuntime && item.action === 'new-session'")
     expect(controllerSource).toContain('onNavigate={handleSidebarNavigate}')
   })

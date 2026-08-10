@@ -11,7 +11,10 @@ from fastapi import APIRouter, Body, Header, HTTPException, Request
 
 from macsoft.chat.hermes_client import HermesApiError
 from macsoft.db import connect_db
-from macsoft.gateway.errors import error_response
+from macsoft.gateway.errors import (
+    device_credentials_rejected_error,
+    error_response as _error_response,
+)
 from macsoft.identity.devices import require_device
 from macsoft.profiles.registry import require_device_profile, resolve_profile_home
 from macsoft.profiles.mutations import (
@@ -24,6 +27,12 @@ from macsoft.profiles.mutations import (
 from macsoft.security import utc_now_iso
 
 router = APIRouter()
+
+
+def error_response(code: str, message: str) -> dict:
+    if code == "invalid_device_token":
+        return device_credentials_rejected_error()
+    return _error_response(code, message)
 
 
 def _scope(request: Request, authorization: str | None, device_id: str | None):

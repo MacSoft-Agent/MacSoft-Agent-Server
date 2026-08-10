@@ -14,6 +14,30 @@ Every request uses the existing device credentials:
 - `X-Device-Id: <device_id>`
 
 Server derives `device_id -> profile_id -> profile home` after authentication.
+
+## Server identity and rejected credentials
+
+`GET /health` returns a durable public `server_id` UUID. It identifies the
+persisted Server database and is stable across URL, IP, port, network, process,
+upgrade, backup, and restore changes. A new database represents a new Server.
+
+Clients must treat `server_id` as the credential-storage namespace; the Server
+URL is transport configuration only. A protected request whose credentials are
+unknown, revoked, inactive, or bound to a different `X-Device-Id` returns:
+
+```json
+{
+  "ok": false,
+  "error": {
+    "code": "device_credentials_rejected",
+    "message": "This device credential is not accepted by this Server.",
+    "details": {}
+  }
+}
+```
+
+This response does not mean a time-based token expiry. Pairing code failures
+remain `invalid_pairing_code`.
 `profile_id`, `HERMES_HOME`, filesystem paths, credentials, and raw Hermes
 state are never Client authority inputs or response fields. A device profile
 is one-to-one, persistent across Server/Hermes restart, and frozen when its
@@ -69,4 +93,3 @@ atomic write path, before/after learned-tree hashes, native audit JSON, and
 Server audit record. Audit records include profile, device, skill where known,
 run where known, source, hashes, timestamp, and result. Rollback is explicit,
 creates its own safety snapshot, clears the Skill prompt cache, and is audited.
-

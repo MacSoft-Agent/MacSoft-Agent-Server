@@ -1,6 +1,6 @@
 ---
 name: autocount-receiving-supplier-invoice-automation
-description: Process PharmaRise supplier and receiving documents through PO resolution, discrepancy handling, batch and expiry review, approval, Purchase Invoice creation, and durable continuation across Client or WhatsApp.
+description: Use when supplier or receiving evidence arrives, a PO must be resolved or corrected, batch or expiry needs review, or an approved AutoCount receiving action must be continued safely.
 ---
 
 # AutoCount Receiving and Supplier Invoice Automation
@@ -48,6 +48,8 @@ When PO and supplier evidence differ, neither is automatically correct. Explain 
 - Resolve one company and canonical account book before business reads/writes.
 - Register original evidence and create or continue one `receiving_case`.
 - Never guess unreadable supplier, invoice, PO, Item, UOM, quantity, unit price, tax, batch, or expiry fields.
+- Treat document numbers and internal keys as opaque identifiers. Never remove prefixes, trim leading zeroes, or coerce a displayed identifier to another type unless a live authoritative read returns that exact mapping.
+- Reading a command schema is capability discovery, not execution. Never report that records were searched or absent unless a live read command actually ran and its result supports that conclusion.
 - Resolve creditor, PO, Item, UOM, and internal keys from live AutoCount.
 - Treat human labels as descriptions, never as AutoCount internal codes. Values such as `Stock`, `standard`, a supplier's product label, or an OCR category must not be submitted as `itemType`, UOM, tax, location, or Item code unless the same exact code was returned by a live authoritative read.
 - No PO is a controlled branch, not an automatic failure and not permission to create one silently.
@@ -60,6 +62,8 @@ When PO and supplier evidence differ, neither is automatically correct. Explain 
 - The current connector can enable Item batch control. Its active native schemas support Batch No on Goods Received Note and Stock Receive, while the current direct Purchase Invoice validator rejects `batchNo` despite a conflicting human example. Do not force Batch No into direct PI. Use a verified receiving-document path when the business flow supports it; otherwise retain Batch No as an explicit manual/connector-blocked PI follow-up. Header/line `userDefinedFields` are available, and the deployed line Short Expiry field has been read back as `UDF_SHORTEXPIRY` (`F` in the proven non-short-expiry case). No verified `expiryDate` write field has been found.
 - Final PI creation requires an exact preview and fresh approval.
 - Approval is bound to current Case version and action digest; changed data invalidates it.
+- A user's conversational approval authorizes the approval handshake; it is not itself a substitute for a workflow approval token or context required by the active Tool contract.
+- When the active execution contract requires approved workflow context, obtain it through the available workflow approval capability and pass its exact identifiers with the unchanged payload. Never synthesize, guess, or omit that context.
 - Keep one stable `action_id` through approval, execution, and recovery.
 - Verify real AutoCount state after every consequential write.
 
@@ -97,7 +101,9 @@ Do not combine two supplier invoices because they share a PO or supplier. Do not
 
 Resolve the creditor through official reads such as `get-creditor-detail`. If multiple candidates remain, ask using identifying facts.
 
-If the evidence names a PO, use supported live operations such as `get-purchase-order` and `read-purchase-order-lines`. Otherwise search with `list-purchase-orders` and compare creditor, dates, references, line identities, quantities, and amounts. The Agent explains ambiguity; a Tool must not select the PO from fuzzy similarity alone.
+Preserve the PO identifier exactly as shown in the evidence. Inspect live command schemas and choose the least expensive authoritative read that accepts that identifier without mutation. If a detail command accepts only an internal numeric key while the evidence contains a formatted document number, execute an available list/search command, match the returned document number exactly, and use only the internal key returned by that record. Merely reading the list/search schema is not a search. Never convert a value such as `PO-000001` to `1` by inference. If no supported command can establish the mapping, report the PO as unresolved because of the interface limitation; do not report it as absent.
+
+Use supported live operations such as `get-purchase-order`, `list-purchase-orders`, search commands, and `read-purchase-order-lines` according to their current schemas. Prefer direct lookup when compatible; do not add list calls when a direct exact lookup succeeded. Compare creditor, dates, references, line identities, quantities, and amounts. The Agent explains ambiguity; a Tool must not select the PO from fuzzy similarity alone.
 
 Read `references/po-resolution-and-comparison.md` before deciding whether the PO matches.
 
@@ -119,7 +125,9 @@ Present differences as neutral facts. Ask whether the PO is outdated, the suppli
 
 Read `references/po-creation-and-correction.md`.
 
-If no PO exists, ask whether the user wants AI help creating one. If yes, resolve live Item/UOM/schema facts, prepare the exact PO payload, validate it, show a preview, obtain approval, execute, and read it back. Internal codes must come from live reads. If a required code cannot be resolved, stop that write and name the missing configuration; do not substitute a human label. If an unresolved field is optional in the live schema, omit it rather than guessing. If the user declines, keep the Case pending/manual without inventing a PO.
+Enter the no-PO branch only after an authoritative live read proves absence. An unresolved identifier, incompatible lookup schema, or unexecuted list/search does not prove that no PO exists.
+
+If no PO exists, ask whether the user wants AI help creating one. If yes, resolve live Item/UOM/schema facts, prepare the exact PO payload, validate it, show a preview, and obtain fresh user approval. For a write protected by the active workflow contract, create or continue the Case only when needed, call the exposed workflow approval capability (currently `workflow_approve_autocount_action` when available) with the exact preview and payload, then copy its returned action ID, digest, Case scope/version, and related required fields unchanged into `workflow_context` for execution. Reuse a still-valid Case and approved context; do not repeat intake or approval unnecessarily. If the active contract does not expose or require workflow context, retain the exact-preview and explicit-user-approval boundary and follow that contract. Execute once and read back. Internal codes must come from live reads. If a required code cannot be resolved, stop that write and name the missing configuration; do not substitute a human label. If an unresolved field is optional in the live schema, omit it rather than guessing. If the user declines, keep the Case pending/manual without inventing a PO.
 
 If a PO is outdated, re-read it, show before/after values and affected downstream consequences, validate the supported update, obtain fresh approval, execute `update-purchase-order`, and read back. If the connector cannot perform the required edit, state the exact manual requirement.
 
@@ -167,6 +175,8 @@ Read back the PI and its lines. Verify creditor, references, quantities, totals,
 “Command completed” means only that the connector finished processing the command. It is not proof that a PI exists. Treat the business write as successful only after live read-back finds exactly one matching document and verifies its material fields. If a completed command produced no document, correct only the demonstrated payload problem, regenerate the preview/digest, and obtain fresh approval before another attempt.
 
 On timeout or unknown result, inspect Case events and live AutoCount before any retry. Follow `references/exceptions-and-recovery.md`.
+
+Classify failures from observable execution evidence. No command ID and no submitted/queued response means the write did not reach the connector. A final failed status with a command ID is an executed connector/AutoCount failure. A timeout or lost response with a command ID is uncertain and requires read-back before retry. Do not describe a workflow-context or approval rejection as an AutoCount backend failure.
 
 ## Agent judgement responsibilities
 
@@ -229,6 +239,9 @@ Never:
 - omit a short-expiry warning;
 - copy evidence only to temporary WhatsApp/cache storage;
 - reuse stale approval;
+- treat chat approval as a replacement for workflow approval required by the active execution contract;
+- mutate a displayed document number to satisfy an incompatible internal-key schema;
+- claim a list/search was performed after only reading its schema;
 - blindly retry an uncertain accounting write;
 - claim PI success without read-back;
 - turn Case status into a hard-coded workflow engine.

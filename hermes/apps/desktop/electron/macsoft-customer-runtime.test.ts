@@ -17,7 +17,20 @@ test('MacSoft source test mode is explicit and restricted to the Vite developmen
   assert.match(source, /const IS_MACSOFT_TEST_RUNTIME = Boolean\(DEV_SERVER\) && process\.env\.MACSOFT_DESKTOP_TEST_MODE === '1'/)
   assert.match(source, /const IS_MACSOFT_CUSTOMER_RUNTIME = IS_PACKAGED \|\| IS_MACSOFT_TEST_RUNTIME/)
   assert.match(source, /event\.returnValue = IS_MACSOFT_CUSTOMER_RUNTIME/)
+  assert.match(source, /event\.returnValue = IS_MACSOFT_TEST_RUNTIME/)
+  const preload = fs.readFileSync(new URL('./preload.ts', import.meta.url), 'utf8')
+  assert.match(preload, /macSoftSourceTestRuntime/)
   assert.equal(packageJson.scripts['dev:macsoft'], 'cross-env MACSOFT_DESKTOP_TEST_MODE=1 npm run dev')
+})
+
+test('MacSoft source test runtime restores the original Hermes Messaging navigation', () => {
+  const controller = fs.readFileSync(new URL('../src/app/desktop-controller.tsx', import.meta.url), 'utf8')
+  const sidebar = fs.readFileSync(new URL('../src/app/chat/sidebar/index.tsx', import.meta.url), 'utf8')
+  const systemActions = fs.readFileSync(new URL('../src/store/system-actions.ts', import.meta.url), 'utf8')
+  assert.match(controller, /macSoftSourceTestRuntime=\{macSoftSourceTestRuntime\}/)
+  assert.match(sidebar, /item\.id === 'messaging'/)
+  assert.match(systemActions, /macSoftCustomerRuntime/)
+  assert.match(systemActions, /macSoftHost\.serviceAction\('ai_service', 'restart'\)/)
 })
 
 test('packaged customer runtime cannot enter the bootstrap downloader', () => {

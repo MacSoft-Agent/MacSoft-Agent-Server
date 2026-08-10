@@ -95,6 +95,18 @@ class PackagingContractTests(unittest.TestCase):
         self.assertIn("product_runtime.macsoft_runtime.cli", stop)
         self.assertIn("@(8766, 8643, 8642, 8787, 5174)", stop)
 
+    def test_source_test_runtime_safely_yields_installed_host_ports_to_development(self) -> None:
+        start = (ROOT / "scripts" / "start-test-runtime.ps1").read_text(encoding="utf-8-sig")
+        stop = (ROOT / "scripts" / "stop-test-runtime.ps1").read_text(encoding="utf-8-sig")
+
+        self.assertIn("MacSoftAgentHost", start)
+        self.assertIn("Stop-ControlledInstalledHost", start)
+        self.assertIn("pythonservice.exe", start)
+        self.assertIn("Get-DescendantProcessIds", start)
+        self.assertIn("Start-Process -FilePath $serviceController", start)
+        self.assertIn("-Verb RunAs", start)
+        self.assertNotIn("Start-Service", stop)
+
     def test_mutable_development_state_is_ignored_but_templates_remain(self) -> None:
         ignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
         self.assertIn("runtime/", ignore)

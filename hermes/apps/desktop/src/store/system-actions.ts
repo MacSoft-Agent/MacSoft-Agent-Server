@@ -39,7 +39,11 @@ export async function runGatewayRestart(): Promise<void> {
   $gatewayRestarting.set(true)
 
   try {
-    await awaitAction(await restartGateway())
+    if (window.hermesDesktop?.macSoftCustomerRuntime) {
+      await window.hermesDesktop.macSoftHost.serviceAction('ai_service', 'restart')
+    } else {
+      await awaitAction(await restartGateway())
+    }
   } catch (err) {
     notifyError(err, translateNow('commandCenter.gatewayRestartFailed'))
   } finally {

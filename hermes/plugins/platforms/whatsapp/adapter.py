@@ -33,6 +33,7 @@ from hermes_constants import (
     get_hermes_dir,
     with_hermes_node_path,
 )
+from gateway.document_ingestion import prepare_pdf_for_agent
 
 logger = logging.getLogger(__name__)
 
@@ -857,6 +858,10 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
             import aiohttp
 
             # Format and chunk the message
+            # MacSoft owns the customer-facing WhatsApp identity. Keep
+            # lowercase `hermes ...` operator commands intact while preventing
+            # upstream product branding from leaking into customer chats.
+            content = content.replace("Hermes", "Mac Soft AI Agent")
             formatted = self.format_message(content)
             chunks = self.truncate_message(formatted, self._outgoing_chunk_limit())
 
@@ -920,7 +925,7 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
                 json={
                     "chatId": to_whatsapp_jid(chat_id),
                     "messageId": message_id,
-                    "message": content,
+                    "message": content.replace("Hermes", "Mac Soft AI Agent"),
                 },
                 timeout=aiohttp.ClientTimeout(total=15)
             ) as resp:
@@ -1433,6 +1438,9 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
             # the message text so the agent can read it inline.
             # Cap at 100KB to match Telegram/Discord/Slack behaviour.
             body = data.get("body", "")
+            metadata: Dict[str, Any] = {}
+            pdf_text_paths: list[str] = []
+            pdf_rendered_paths: list[str] = []
             if data.get("isGroup"):
                 body = self._clean_bot_mention_text(body, data)
 
@@ -1455,9 +1463,36 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
                 reply_to_is_own_message = self._message_is_reply_to_bot(data)
             MAX_TEXT_INJECT_BYTES = 100 * 1024
             if msg_type == MessageType.DOCUMENT and cached_urls:
-                for doc_path in cached_urls:
+                for doc_path in list(cached_urls):
                     ext = Path(doc_path).suffix.lower()
-                    if ext in {".txt", ".md", ".csv", ".json", ".xml", ".yaml", ".yml", ".log", ".py", ".js", ".ts", ".html", ".css"}:
+                    if ext == ".pdf":
+                        try:
+                            prepared = prepare_pdf_for_agent(
+                                Path(doc_path),
+                                max_text_bytes=MAX_TEXT_INJECT_BYTES,
+                            )
+                            if prepared.text:
+                                pdf_text_paths.append(str(doc_path))
+                                display_name = Path(doc_path).name
+                                parts = display_name.split("_", 2)
+                                if len(parts) >= 3:
+                                    display_name = parts[2]
+                                injection = f"[Extracted content of {display_name}]:\n{prepared.text}"
+                                body = f"{injection}\n\n{body}" if body else injection
+                                print(f"[{self.name}] Extracted PDF text from: {doc_path}", flush=True)
+                            else:
+                                pdf_rendered_paths.append(str(doc_path))
+                                for image_path in prepared.image_paths:
+                                    cached_urls.append(str(image_path))
+                                    media_types.append("image/png")
+                                print(
+                                    f"[{self.name}] Rendered scanned PDF for vision: {doc_path} "
+                                    f"({len(prepared.image_paths)} page(s))",
+                                    flush=True,
+                                )
+                        except Exception as e:
+                            print(f"[{self.name}] Failed to prepare PDF: {e}", flush=True)
+                    elif ext in {".txt", ".md", ".csv", ".json", ".xml", ".yaml", ".yml", ".log", ".py", ".js", ".ts", ".html", ".css"}:
                         try:
                             file_size = Path(doc_path).stat().st_size
                             if file_size > MAX_TEXT_INJECT_BYTES:
@@ -1480,7 +1515,10 @@ class WhatsAppAdapter(WhatsAppBehaviorMixin, BasePlatformAdapter):
                         except Exception as e:
                             print(f"[{self.name}] Failed to read document text: {e}", flush=True)
 
-            metadata: Dict[str, Any] = {}
+            if pdf_text_paths:
+                metadata["document_text_extracted_paths"] = pdf_text_paths
+            if pdf_rendered_paths:
+                metadata["document_pages_rendered_paths"] = pdf_rendered_paths
             native_type = str(data.get("nativeType") or "").strip()
             native_metadata = data.get("nativeMetadata")
             if native_type:

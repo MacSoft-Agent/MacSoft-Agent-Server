@@ -13,6 +13,9 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 logger = logging.getLogger("macsoft.api")
 
+DEVICE_CREDENTIALS_REJECTED_CODE = "device_credentials_rejected"
+DEVICE_CREDENTIALS_REJECTED_MESSAGE = "This device credential is not accepted by this Server."
+
 
 def error_response(
     code: str,
@@ -28,6 +31,13 @@ def error_response(
             "details": details or {},
         },
     }
+
+
+def device_credentials_rejected_error() -> dict[str, Any]:
+    return error_response(
+        DEVICE_CREDENTIALS_REJECTED_CODE,
+        DEVICE_CREDENTIALS_REJECTED_MESSAGE,
+    )
 
 
 def _standard_error_detail(value: Any) -> dict[str, Any] | None:

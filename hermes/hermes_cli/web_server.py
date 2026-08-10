@@ -644,6 +644,8 @@ async def _token_auth_seam(request: Request, call_next):
 
 def _config_only_http_path_allowed(path: str) -> bool:
     """Return whether *path* belongs to the settings/authentication surface."""
+    if path == "/api/messaging/platforms" or path.startswith("/api/messaging/platforms/"):
+        return True
     if path in {
         "/api/status",
         "/api/config",
@@ -6821,21 +6823,38 @@ def _messaging_platform_payload(
     )
     env_vars = []
 
+    try:
+        platform_yaml = (load_config().get("platforms") or {}).get(platform_id) or {}
+    except Exception:
+        platform_yaml = {}
+    config_value_keys = {
+        f"{platform_id.upper()}_ENABLED": "enabled",
+        f"{platform_id.upper()}_MODE": "mode",
+        f"{platform_id.upper()}_DM_POLICY": "dm_policy",
+        f"{platform_id.upper()}_GROUP_POLICY": "group_policy",
+    }
+
     for key in entry["env_vars"]:
         # When profile-scoped, judge only the profile's own .env — the
         # dashboard process's os.environ carries the ROOT install's .env
         # (loaded at startup) and would falsely report the root credentials
         # as the profile's.
         value = env_on_disk.get(key) or ("" if scoped else os.getenv(key, ""))
-        env_vars.append(
-            {
+        config_key = config_value_keys.get(key)
+        if not value and config_key and config_key in platform_yaml:
+            yaml_value = platform_yaml[config_key]
+            value = str(yaml_value).lower() if isinstance(yaml_value, bool) else str(yaml_value)
+        info = _messaging_env_info(key)
+        field = {
                 "key": key,
                 "required": key in entry["required_env"],
                 "is_set": bool(value),
                 "redacted_value": redact_key(value) if value else None,
-                **_messaging_env_info(key),
+                **info,
             }
-        )
+        if value and not info["is_password"]:
+            field["current_value"] = value
+        env_vars.append(field)
 
     if scoped:
         # Profile-scoped view: derive enablement/configuration from the

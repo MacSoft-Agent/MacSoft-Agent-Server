@@ -11,6 +11,7 @@ declare global {
   interface Window {
     hermesDesktop: {
       macSoftCustomerRuntime: boolean
+      macSoftSourceTestRuntime: boolean
       macSoftFirstRun: boolean
       macSoftDesktopChat: {
         getStatus: () => Promise<MacSoftDesktopChatStatusResult>

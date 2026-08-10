@@ -606,7 +606,7 @@ function MessagingField({
             onChange={event => onEdit(field.key, event.target.value)}
             placeholder={field.is_set ? field.redacted_value || m.replaceValue : copy.placeholder}
             type={field.is_password ? 'password' : 'text'}
-            value={edits[field.key] || ''}
+            value={edits[field.key] ?? field.current_value ?? ''}
           />
           {field.url && (
             <Button asChild className="size-8 shrink-0" title={m.openDocs} variant="ghost">

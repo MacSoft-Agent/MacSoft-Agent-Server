@@ -84,7 +84,12 @@ def test_messaging_payload_includes_safe_whatsapp_setup(monkeypatch):
         "name": "WhatsApp",
         "description": "WhatsApp bridge",
         "docs_url": "",
-        "env_vars": ("WHATSAPP_MODE", "WHATSAPP_ALLOWED_USERS", "WHATSAPP_ENABLED"),
+        "env_vars": (
+            "WHATSAPP_MODE",
+            "WHATSAPP_ALLOWED_USERS",
+            "WHATSAPP_ENABLED",
+            "TELEGRAM_BOT_TOKEN",
+        ),
         "required_env": (),
     }
     monkeypatch.setattr(ws, "get_running_pid", lambda: None)
@@ -112,6 +117,7 @@ def test_messaging_payload_includes_safe_whatsapp_setup(monkeypatch):
             "WHATSAPP_MODE": "self-chat",
             "WHATSAPP_ALLOWED_USERS": "61405484224",
             "WHATSAPP_ENABLED": "true",
+            "TELEGRAM_BOT_TOKEN": "secret-token",
         },
         runtime=None,
         scoped=True,
@@ -123,6 +129,11 @@ def test_messaging_payload_includes_safe_whatsapp_setup(monkeypatch):
         "home_channel_set": True,
     }
     assert "61405484224" not in str(payload["whatsapp_setup"])
+    fields = {field["key"]: field for field in payload["env_vars"]}
+    assert fields["WHATSAPP_MODE"]["current_value"] == "self-chat"
+    assert fields["WHATSAPP_ALLOWED_USERS"]["current_value"] == "61405484224"
+    assert "current_value" not in fields["TELEGRAM_BOT_TOKEN"]
+    assert "secret-token" not in str(fields["TELEGRAM_BOT_TOKEN"])
 
 
 def test_apply_whatsapp_onboarding_saves_pairing_policy(monkeypatch):

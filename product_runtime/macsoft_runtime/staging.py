@@ -151,10 +151,29 @@ def audit_staging(root: Path, development_root: Path) -> list[str]:
     issues: list[str] = []
     for path in root.rglob("*"):
         relative = path.relative_to(root).as_posix()
+        relative_parts = tuple(part.lower() for part in path.relative_to(root).parts)
         if any(part.lower() == ".git" for part in path.parts):
             issues.append(f"Git metadata included: {relative}")
         if path.is_file() and path.name.lower() in FORBIDDEN_NAMES:
             issues.append(f"Forbidden state file included: {relative}")
+        if path.is_file() and path.name.lower() == "creds.json":
+            issues.append(f"WhatsApp credential included: {relative}")
+        if path.is_file() and path.name.lower() == ".env":
+            issues.append(f"Runtime environment file included: {relative}")
+        if path.is_file() and "pairing" in relative_parts[:-1]:
+            issues.append(f"Pairing state included: {relative}")
+        if path.is_file() and path.suffix.lower() == ".log":
+            issues.append(f"Runtime log included: {relative}")
+        if path.is_file() and path.suffix.lower() in {".db", ".sqlite", ".sqlite3"}:
+            issues.append(f"Runtime database included: {relative}")
+        if (
+            path.is_file()
+            and any(
+                relative_parts[index:index + 3] == ("platforms", "whatsapp", "session")
+                for index in range(max(0, len(relative_parts) - 2))
+            )
+        ):
+            issues.append(f"WhatsApp session state included: {relative}")
         lowered_name = path.name.lower()
         if path.is_file() and (
             lowered_name.startswith("__editable__.")

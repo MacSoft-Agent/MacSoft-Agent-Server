@@ -303,6 +303,7 @@ def _sync_protected_directory(
     state: dict,
     protected_state: dict,
     result: InitializationResult,
+    include_directories: tuple[str, ...] = (),
 ) -> None:
     """Synchronize a managed directory without touching unknown runtime files.
 
@@ -314,6 +315,10 @@ def _sync_protected_directory(
         path.relative_to(source_root).as_posix(): path
         for path in source_root.rglob("*")
         if path.is_file()
+        and (
+            not include_directories
+            or path.relative_to(source_root).parts[0] in include_directories
+        )
     }
     managed_prefix = relative_destination_root.rstrip("/") + "/"
 
@@ -357,6 +362,43 @@ def _sync_protected_directory(
             result.conflicts.append(relative_destination)
 
 
+def _reconcile_removed_protected_resources(
+    *,
+    paths: ProductPaths,
+    active_resources: set[str],
+    managed_directory_roots: tuple[str, ...],
+    bundled_version: int,
+    state: dict,
+    protected_state: dict,
+    result: InitializationResult,
+) -> None:
+    """Remove obsolete unchanged managed files while preserving local edits."""
+    if int(state.get("protected_version", 0)) >= bundled_version:
+        return
+    for relative_destination in list(protected_state):
+        if relative_destination in active_resources:
+            continue
+        if any(
+            relative_destination.startswith(root.rstrip("/") + "/")
+            for root in managed_directory_roots
+        ):
+            # Managed-directory reconciliation owns these files.
+            continue
+        previous = protected_state.get(relative_destination, {})
+        previous_hash = previous.get("bundled_hash") if isinstance(previous, dict) else None
+        destination = paths.data_root / relative_destination
+        if not destination.exists():
+            protected_state.pop(relative_destination, None)
+            continue
+        current_hash = _sha256(destination)
+        if previous_hash and current_hash == previous_hash:
+            destination.unlink()
+            result.removed_protected.append(relative_destination)
+            protected_state.pop(relative_destination, None)
+        elif relative_destination not in result.conflicts:
+            result.conflicts.append(relative_destination)
+
+
 def initialize_product_data(paths: ProductPaths, metadata: ProductMetadata) -> InitializationResult:
     """Create packaged writable state without importing developer or customer data.
 
@@ -394,29 +436,6 @@ def initialize_product_data(paths: ProductPaths, metadata: ProductMetadata) -> I
             paths.autocount_plugin_root / "config.json",
         ),
         (paths.templates_root / "server" / "macsoft-server.yaml", paths.server_config),
-    )
-    company_reference_names = (
-        "contacts-and-escalation.md",
-        "account-books.md",
-        "paths-and-storage.md",
-        "whatsapp-channels.md",
-    )
-    company_template_root = (
-        paths.templates_root
-        / "runtime"
-        / "skills"
-        / "pharmarise-company-configuration"
-        / "references"
-    )
-    company_runtime_root = (
-        paths.runtime_root
-        / "skills"
-        / "pharmarise-company-configuration"
-        / "references"
-    )
-    mutable_templates += tuple(
-        (company_template_root / name, company_runtime_root / name)
-        for name in company_reference_names
     )
     for source, destination in mutable_templates:
         if _copy_template_once(source, destination, replacements):
@@ -483,11 +502,13 @@ def initialize_product_data(paths: ProductPaths, metadata: ProductMetadata) -> I
     if not isinstance(protected_state, dict):
         protected_state = {}
 
+    active_resources: set[str] = set()
     for item in resource_manifest.get("resources", []):
         if not isinstance(item, dict):
             continue
         relative_source = _relative_manifest_path(item.get("source"), "source")
         relative_destination = _relative_manifest_path(item.get("destination"), "destination")
+        active_resources.add(relative_destination)
         source = paths.templates_root / relative_source
         destination = paths.data_root / relative_destination
         _sync_protected_file(
@@ -500,11 +521,13 @@ def initialize_product_data(paths: ProductPaths, metadata: ProductMetadata) -> I
             result=result,
         )
 
+    managed_directory_roots: list[str] = []
     for item in resource_manifest.get("directories", []):
         if not isinstance(item, dict):
             continue
         relative_source = _relative_manifest_path(item.get("source"), "source")
         relative_destination = _relative_manifest_path(item.get("destination"), "destination")
+        managed_directory_roots.append(relative_destination)
         source_root = paths.templates_root / relative_source
         destination_root = paths.data_root / relative_destination
         _sync_protected_directory(
@@ -515,7 +538,22 @@ def initialize_product_data(paths: ProductPaths, metadata: ProductMetadata) -> I
             state=state,
             protected_state=protected_state,
             result=result,
+            include_directories=tuple(
+                str(value)
+                for value in item.get("include_directories", [])
+                if isinstance(value, str) and value
+            ),
         )
+
+    _reconcile_removed_protected_resources(
+        paths=paths,
+        active_resources=active_resources,
+        managed_directory_roots=tuple(managed_directory_roots),
+        bundled_version=bundled_version,
+        state=state,
+        protected_state=protected_state,
+        result=result,
+    )
 
     next_state = {
         "schema_version": metadata.data_schema_version,

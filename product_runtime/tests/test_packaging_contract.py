@@ -145,7 +145,40 @@ class PackagingContractTests(unittest.TestCase):
             product["protected_resource_version"], protected["version"]
         )
 
-    def test_protected_skill_directory_is_deployed_as_a_managed_tree(self) -> None:
+    def test_packaged_autocount_plugin_is_generic_and_has_no_company_workflow(self) -> None:
+        plugin_root = (
+            ROOT
+            / "packaging"
+            / "templates"
+            / "protected"
+            / "runtime"
+            / "plugins"
+            / "macsoft-autocount"
+        )
+        entrypoint = (plugin_root / "__init__.py").read_text(encoding="utf-8")
+        plugin_yaml = (plugin_root / "plugin.yaml").read_text(encoding="utf-8")
+        protected = json.loads(
+            (ROOT / "packaging" / "templates" / "protected-resources.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        destinations = {item["destination"] for item in protected["resources"]}
+
+        for generic_tool in (
+            "autocount_get_connector_status",
+            "autocount_search_commands",
+            "autocount_get_command_schema",
+            "autocount_validate_command",
+            "autocount_execute_command",
+        ):
+            self.assertIn(generic_tool, entrypoint)
+            self.assertIn(generic_tool, plugin_yaml)
+        self.assertNotIn("workflow_", entrypoint)
+        self.assertNotIn("workflow_", plugin_yaml)
+        self.assertFalse(any("workflow_" in path for path in destinations))
+        self.assertFalse(any("pharmarise" in path.lower() for path in destinations))
+
+    def test_protected_skill_directory_is_deployed_as_an_allowlisted_managed_tree(self) -> None:
         product = json.loads((ROOT / "product.json").read_text(encoding="utf-8"))
         protected = json.loads(
             (ROOT / "packaging" / "templates" / "protected-resources.json").read_text(
@@ -153,12 +186,19 @@ class PackagingContractTests(unittest.TestCase):
             )
         )
         directories = protected.get("directories")
-        self.assertIn(
+        skill_tree = next(
+            item for item in directories if item["destination"] == "runtime/skills"
+        )
+        self.assertEqual(skill_tree["source"], "protected/runtime/skills")
+        self.assertEqual(
+            set(skill_tree["include_directories"]),
             {
-                "source": "protected/runtime/skills",
-                "destination": "runtime/skills",
+                "macsoft-chart-dashboard",
+                "macsoft-chart-visualization",
+                "kpi-dashboard-design",
+                "data-storytelling",
+                "web-design-engineer",
             },
-            directories,
         )
         self.assertEqual(product["protected_resource_version"], protected["version"])
         self.assertIn(

@@ -35,6 +35,19 @@ class SkillPackageTests(unittest.TestCase):
         "web-design-engineer",
     }
 
+    def test_packaged_top_level_skill_inventory_is_an_explicit_allowlist(self) -> None:
+        manifest = __import__("json").loads(
+            (ROOT / "packaging" / "templates" / "protected-resources.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        skill_tree = next(
+            item
+            for item in manifest["directories"]
+            if item["destination"] == "runtime/skills"
+        )
+        self.assertEqual(set(skill_tree["include_directories"]), self.expected)
+
     def test_selected_skills_have_valid_metadata_and_expected_references(self) -> None:
         self.assertTrue(SKILLS_ROOT.is_dir())
         self.assertTrue(self.expected <= {item.name for item in SKILLS_ROOT.iterdir()})
@@ -98,7 +111,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("Do not use an HTML/report", text)
         self.assertIn("command as a chart data source", text)
 
-    def test_bank_reconciliation_skill_uses_live_connector_contract(self) -> None:
+    def test_bank_reconciliation_source_uses_live_connector_contract(self) -> None:
         text = (
             SKILLS_ROOT / "autocount-bank-reconciliation" / "SKILL.md"
         ).read_text(encoding="utf-8")
@@ -115,7 +128,6 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("send `payload` as a quoted JSON string", text)
         self.assertIn("explicit confirmation before saving", text)
         self.assertIn("Report success only when", text)
-
 
 if __name__ == "__main__":
     unittest.main()

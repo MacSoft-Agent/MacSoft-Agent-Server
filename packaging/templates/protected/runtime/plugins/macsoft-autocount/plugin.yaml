@@ -7,11 +7,5 @@ provides_tools:
   - autocount_get_command_schema
   - autocount_validate_command
   - autocount_execute_command
-  - workflow_case_workspace
-  - workflow_resolve_whatsapp_identifier
-  - workflow_fifo_allocate
-  - workflow_archive_evidence
-  - workflow_approve_autocount_action
-  - workflow_send_approved_supplier_message
 provides_hooks:
   - pre_llm_call

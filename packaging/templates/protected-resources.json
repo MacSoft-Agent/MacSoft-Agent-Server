@@ -1,5 +1,5 @@
 {
-  "version": 4,
+  "version": 5,
   "resources": [
     {
       "source": "protected/runtime/plugins/macsoft-autocount/__init__.py",
@@ -22,30 +22,6 @@
       "destination": "runtime/plugins/macsoft-autocount/validator.py"
     },
     {
-      "source": "protected/runtime/plugins/macsoft-autocount/workflow_logic.py",
-      "destination": "runtime/plugins/macsoft-autocount/workflow_logic.py"
-    },
-    {
-      "source": "protected/runtime/plugins/macsoft-autocount/workflow_evidence.py",
-      "destination": "runtime/plugins/macsoft-autocount/workflow_evidence.py"
-    },
-    {
-      "source": "protected/runtime/plugins/macsoft-autocount/workflow_schemas.py",
-      "destination": "runtime/plugins/macsoft-autocount/workflow_schemas.py"
-    },
-    {
-      "source": "protected/runtime/plugins/macsoft-autocount/workflow_store.py",
-      "destination": "runtime/plugins/macsoft-autocount/workflow_store.py"
-    },
-    {
-      "source": "protected/runtime/plugins/macsoft-autocount/workflow_tools.py",
-      "destination": "runtime/plugins/macsoft-autocount/workflow_tools.py"
-    },
-    {
-      "source": "protected/runtime/plugins/macsoft-autocount/migrations/001_pharmarise_workflow.sql",
-      "destination": "runtime/plugins/macsoft-autocount/migrations/001_pharmarise_workflow.sql"
-    },
-    {
       "source": "protected/runtime/plugins/macsoft-autocount/skills/autocount-operations/SKILL.md",
       "destination": "runtime/plugins/macsoft-autocount/skills/autocount-operations/SKILL.md"
     }
@@ -53,7 +29,14 @@
   "directories": [
     {
       "source": "protected/runtime/skills",
-      "destination": "runtime/skills"
+      "destination": "runtime/skills",
+      "include_directories": [
+        "macsoft-chart-dashboard",
+        "macsoft-chart-visualization",
+        "kpi-dashboard-design",
+        "data-storytelling",
+        "web-design-engineer"
+      ]
     }
   ]
 }

@@ -412,9 +412,9 @@ export interface SaveServerAutoCountInput {
   aiServicePort: number
   aiServiceUrl: string
   apiKey?: string
-  cloudUrl: string
-  companyId: string
-  connectorId: string
+  cloudUrl?: string
+  companyId?: string
+  connectorId?: string
   serverPort: number
 }
 

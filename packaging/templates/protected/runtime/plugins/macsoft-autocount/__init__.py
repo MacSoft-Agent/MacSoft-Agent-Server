@@ -61,15 +61,37 @@ For every AutoCount request:
 </macsoft-autocount-policy>
 """.strip()
 
+_AUTOCOUNT_ADMIN_POLICY = """
+<macsoft-autocount-admin-policy>
+You are operating in the authenticated Server administrator's native Hermes workspace.
+When the administrator provides an AutoCount Cloud URL, API key, connectorId, and
+companyId, save it with autocount_manage_connections. Never repeat an API key in chat,
+Memory, or Skills. Multiple company connections are supported; pass company_id to select
+one or use the saved default. Use the live command catalog and schema, validate payloads,
+then execute generic official AutoCount commands. MacSoft adds no PharmaRise Case or
+workflow approval gate to Admin commands. AutoCount Cloud credentials, connector policy,
+company access, and native Hermes dangerous-operation approvals remain authoritative.
+</macsoft-autocount-admin-policy>
+""".strip()
+
 
 def _inject_policy(platform: str = "", **kwargs):
     del kwargs
     if platform and platform not in {"api_server", "whatsapp"}:
         return None
+    if platform == "api_server" and tools._is_admin_workspace():
+        return {"context": _AUTOCOUNT_ADMIN_POLICY}
     return {"context": _AUTOCOUNT_POLICY}
 
 
 def register(ctx):
+    ctx.register_tool(
+        name="autocount_manage_connections",
+        toolset="macsoft_autocount",
+        schema=schemas.AUTOCOUNT_MANAGE_CONNECTIONS,
+        handler=tools.autocount_manage_connections,
+        description="Manage private Admin AutoCount Cloud company connections.",
+    )
     ctx.register_tool(
         name="autocount_get_connector_status",
         toolset="macsoft_autocount",

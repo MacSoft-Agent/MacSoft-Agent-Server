@@ -1,5 +1,37 @@
 ﻿"""Tool schemas exposed to the Hermes model."""
 
+AUTOCOUNT_MANAGE_CONNECTIONS = {
+    "name": "autocount_manage_connections",
+    "description": (
+        "Server administrator tool for saving, listing, selecting, testing, or removing "
+        "AutoCount Cloud company connections. API keys are stored in the private Admin "
+        "workspace and are never returned."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["list", "save", "set_default", "remove", "test"]},
+            "company_id": {"type": "string"},
+            "connector_id": {"type": "string"},
+            "api_key": {"type": "string", "description": "Required for a new connection; never repeat it in chat."},
+            "base_url": {"type": "string", "default": "https://api.autocount.cloud"},
+            "name": {"type": "string"},
+            "set_default": {"type": "boolean"},
+            "request_timeout_seconds": {"type": "integer", "minimum": 120, "maximum": 7200},
+            "command_timeout_seconds": {"type": "integer", "minimum": 5, "maximum": 7200},
+        },
+        "required": ["action"],
+        "additionalProperties": False,
+    },
+}
+
+_CONNECTION_SELECTOR = {
+    "company_id": {
+        "type": "string",
+        "description": "Optional saved companyId. Omit it to use the Admin default connection.",
+    }
+}
+
 AUTOCOUT_GET_CONNECTOR_STATUS = {
     "name": "autocount_get_connector_status",
     "description": (
@@ -8,7 +40,7 @@ AUTOCOUT_GET_CONNECTOR_STATUS = {
     ),
     "parameters": {
         "type": "object",
-        "properties": {},
+        "properties": dict(_CONNECTION_SELECTOR),
         "additionalProperties": False,
     },
 }
@@ -23,6 +55,7 @@ AUTOCOUNT_SEARCH_COMMANDS = {
     "parameters": {
         "type": "object",
         "properties": {
+            **_CONNECTION_SELECTOR,
             "query": {
                 "type": "string",
                 "description": (
@@ -64,6 +97,7 @@ AUTOCOUNT_GET_COMMAND_SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
+            **_CONNECTION_SELECTOR,
             "command_type": {
                 "type": "string",
                 "description": "Exact official AutoCount command type.",
@@ -85,6 +119,7 @@ AUTOCOUNT_VALIDATE_COMMAND = {
     "parameters": {
         "type": "object",
         "properties": {
+            **_CONNECTION_SELECTOR,
             "command_type": {
                 "type": "string",
                 "description": "Exact official AutoCount command type.",
@@ -114,6 +149,7 @@ AUTOCOUNT_EXECUTE_COMMAND = {
     "parameters": {
         "type": "object",
         "properties": {
+            **_CONNECTION_SELECTOR,
             "command_type": {
                 "type": "string",
                 "description": "Exact official AutoCount command type.",
@@ -128,13 +164,14 @@ AUTOCOUNT_EXECUTE_COMMAND = {
             "timeout_seconds": {
                 "type": "integer",
                 "minimum": 5,
-                "maximum": 600,
+                "maximum": 7200,
                 "description": "Optional total wait time for the final result.",
             },
             "workflow_context": {
                 "type": "object",
                 "description": (
-                    "Required for consequential PharmaRise financial and Batch-control writes. "
+                    "Required only for legacy Client or WhatsApp consequential PharmaRise writes; "
+                    "Server Admin commands omit it. "
                     "Use the exact actionId and actionDigest returned by "
                     "workflow_approve_autocount_action."
                 ),

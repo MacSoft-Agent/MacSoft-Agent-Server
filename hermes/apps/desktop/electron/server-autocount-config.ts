@@ -54,9 +54,9 @@ export interface SaveServerAutoCountInput {
   aiServicePort: number
   aiServiceUrl: string
   apiKey?: string
-  cloudUrl: string
-  companyId: string
-  connectorId: string
+  cloudUrl?: string
+  companyId?: string
+  connectorId?: string
   serverPort: number
 }
 
@@ -824,28 +824,11 @@ export class ServerAutoCountConfigService {
     const aiUrl = new URL(rawAiUrl)
     aiUrl.port = String(aiServicePort)
     const normalizedAiUrl = aiUrl.toString().replace(/\/$/, '')
-    const cloudUrl = validateHttpUrl(input.cloudUrl, 'Cloud URL')
-    const connectorId = validateId(input.connectorId, 'Connector ID')
-    const companyId = validateId(input.companyId, 'Company ID')
-    const replacementKey = validateApiKey(input.apiKey, true)
     const serverOriginal = fs.readFileSync(this.paths.server, 'utf8')
     const runtimeOriginal = fs.readFileSync(this.paths.runtime, 'utf8')
-    const pluginSource = readJsonObject(this.paths.plugin)
-    const plugin = { ...pluginSource.object }
     let serverNext = patchYamlScalar(serverOriginal, ['server', 'port'], serverPort)
     serverNext = patchYamlScalar(serverNext, ['hermes', 'api_base_url'], normalizedAiUrl)
     const runtimeNext = patchYamlScalar(runtimeOriginal, ['platforms', 'api_server', 'extra', 'port'], aiServicePort)
-    plugin.baseUrl = cloudUrl
-    plugin.connectorId = connectorId
-    plugin.companyId = companyId
-
-    if (replacementKey) {
-      plugin.apiKey = replacementKey
-    } else if (!String(plugin.apiKey || '').trim()) {
-      throw new Error('Enter the AutoCount API Key. No saved key is available to keep.')
-    }
-
-    const pluginNext = encodeJsonLikeOriginal(pluginSource.raw, plugin)
     const changes = new Map<string, string>()
 
     if (serverNext !== serverOriginal) {
@@ -856,8 +839,29 @@ export class ServerAutoCountConfigService {
       changes.set(this.paths.runtime, runtimeNext)
     }
 
-    if (pluginNext !== pluginSource.raw) {
-      changes.set(this.paths.plugin, pluginNext)
+    const autoCountChangeRequested =
+      input.apiKey !== undefined ||
+      input.cloudUrl !== undefined ||
+      input.companyId !== undefined ||
+      input.connectorId !== undefined
+    if (autoCountChangeRequested) {
+      const pluginSource = readJsonObject(this.paths.plugin)
+      const plugin = { ...pluginSource.object }
+      plugin.baseUrl = validateHttpUrl(input.cloudUrl ?? plugin.baseUrl, 'Cloud URL')
+      plugin.connectorId = validateId(input.connectorId ?? plugin.connectorId, 'Connector ID')
+      plugin.companyId = validateId(input.companyId ?? plugin.companyId, 'Company ID')
+      const replacementKey = validateApiKey(input.apiKey, true)
+
+      if (replacementKey) {
+        plugin.apiKey = replacementKey
+      } else if (!String(plugin.apiKey || '').trim()) {
+        throw new Error('Enter the AutoCount API Key. No saved key is available to keep.')
+      }
+
+      const pluginNext = encodeJsonLikeOriginal(pluginSource.raw, plugin)
+      if (pluginNext !== pluginSource.raw) {
+        changes.set(this.paths.plugin, pluginNext)
+      }
     }
 
     const backups = writeTransaction(changes, this.now())

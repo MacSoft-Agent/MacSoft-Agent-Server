@@ -327,6 +327,33 @@ test('saveSettings creates backups, preserves unrelated data, and retains an unc
   result.backups.forEach(backup => assert.equal(fs.existsSync(backup), true))
 })
 
+test('saveSettings can update Server settings without requiring or changing AutoCount configuration', async t => {
+  const files = fixture()
+  t.after(() => fs.rmSync(files.root, { force: true, recursive: true }))
+  const emptyAutoCount = {
+    baseUrl: 'https://replace-with-autocount-cloud-url',
+    apiKey: '',
+    connectorId: '',
+    companyId: ''
+  }
+  fs.writeFileSync(files.pluginPath, JSON.stringify(emptyAutoCount, null, 2))
+  const beforePlugin = fs.readFileSync(files.pluginPath, 'utf8')
+  const service = new ServerAutoCountConfigService({
+    networkInterfaces: physicalNetworks,
+    projectRoot: files.root
+  })
+
+  const result = await service.saveSettings({
+    aiServicePort: 8642,
+    aiServiceUrl: 'http://127.0.0.1:8642',
+    serverPort: 8899
+  })
+
+  assert.equal(readYamlScalar(fs.readFileSync(files.serverPath, 'utf8'), ['server', 'port']), '8899')
+  assert.equal(fs.readFileSync(files.pluginPath, 'utf8'), beforePlugin)
+  assert.equal(result.changedFiles.includes(files.pluginPath), false)
+})
+
 test('saveSettings rejects accidental Bearer prefixes before writing', async t => {
   const files = fixture()
   t.after(() => fs.rmSync(files.root, { force: true, recursive: true }))

@@ -462,9 +462,9 @@ export const en: Translations = {
       }
     },
     serverAutoCount: {
-      title: 'Server & AutoCount',
+      title: 'Server',
       intro:
-        'Configure the Client-facing MacSoft Server, internal AI Service, and AutoCount Cloud connection. Saving never starts or stops a service automatically.',
+        'Configure the Client-facing MacSoft Server and internal AI Service. AutoCount connections are managed by AI in Admin Chat.',
       serviceControl: 'Service Control',
       aiService: 'AI Service',
       macsoftServer: 'MacSoft Server',
@@ -493,7 +493,7 @@ export const en: Translations = {
       noTestRun: 'No connection test has been run yet.',
       next: 'Next',
       desktopBridgeUnavailable: 'The Desktop configuration bridge is unavailable.',
-      settingsLoadFailed: 'Could not load Server & AutoCount settings.',
+      settingsLoadFailed: 'Could not load Server settings.',
       hostBridgeUnavailable: 'The Desktop Host bridge is unavailable.',
       hostUnavailable: 'MacSoft Agent Host is unavailable.',
       serviceActionFailed: 'The service action failed.',
@@ -509,10 +509,10 @@ export const en: Translations = {
       autoCountTestFailed: 'AutoCount test failed',
       savedRestartRequired: services => `Saved safely. Restart required: ${services}.`,
       savedNoRestart: 'Saved safely. No service restart is required.',
-      settingsSaved: 'Server & AutoCount settings saved',
+      settingsSaved: 'Server settings saved',
       settingsSaveFailed: 'The settings could not be saved.',
       saveFailed: 'Save failed',
-      loading: 'Loading Server & AutoCount settings...',
+      loading: 'Loading Server settings...',
       loadPageFailed: 'Settings could not be loaded',
       retry: 'Retry',
       serverPort: 'Server port',

@@ -5,6 +5,7 @@ import io
 import json
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -45,6 +46,13 @@ class AutoCountPolicyRoutingTests(unittest.TestCase):
         self.assertIsNotNone(plugin._inject_policy(platform="api_server"))
         self.assertIsNotNone(plugin._inject_policy(platform="whatsapp"))
         self.assertIsNone(plugin._inject_policy(platform="telegram"))
+
+    def test_admin_policy_uses_generic_commands_without_pharmarise_gate(self) -> None:
+        with patch.object(tools, "_is_admin_workspace", return_value=True):
+            policy = plugin._inject_policy(platform="api_server")["context"]
+        self.assertIn("administrator", policy)
+        self.assertIn("generic official AutoCount commands", policy)
+        self.assertNotIn("workflow_approve_autocount_action", policy)
 
 
 CATALOG = {
@@ -145,6 +153,66 @@ class AutoCountValidatorTests(unittest.TestCase):
             )
         self.assertTrue(result["ok"])
         self.assertTrue(result["data"]["valid"])
+
+    def test_admin_can_store_and_select_multiple_connections_without_echoing_keys(self) -> None:
+        from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            os.environ, {"HERMES_HOME": directory}
+        ):
+            token = set_hermes_home_override(Path(directory) / "admin")
+            try:
+                self.assertTrue(tools._is_admin_workspace())
+                self._assert_multiple_admin_connections()
+            finally:
+                reset_hermes_home_override(token)
+
+    def _assert_multiple_admin_connections(self) -> None:
+        first = json.loads(
+            tools.autocount_manage_connections(
+                {
+                    "action": "save",
+                    "company_id": "company-a",
+                    "api_key": "secret-a",
+                    "connector_id": "connector-a",
+                    "name": "Main company",
+                    "set_default": True,
+                }
+            )
+        )
+        second = json.loads(
+            tools.autocount_manage_connections(
+                {
+                    "action": "save",
+                    "company_id": "company-b",
+                    "api_key": "secret-b",
+                    "connector_id": "connector-b",
+                }
+            )
+        )
+        listed = json.loads(tools.autocount_manage_connections({"action": "list"}))
+
+        self.assertTrue(first["ok"])
+        self.assertTrue(second["ok"])
+        self.assertEqual(listed["data"]["defaultCompanyId"], "company-a")
+        self.assertEqual(len(listed["data"]["connections"]), 2)
+        self.assertNotIn("secret-a", json.dumps(listed))
+        self.assertNotIn("secret-b", json.dumps(listed))
+        self.assertEqual(tools._load_config("company-b")["connectorId"], "connector-b")
+
+    def test_connection_management_is_admin_only(self) -> None:
+        from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            os.environ, {"HERMES_HOME": directory}
+        ):
+            token = set_hermes_home_override(Path(directory) / "profiles" / "client")
+            try:
+                result = json.loads(tools.autocount_manage_connections({"action": "list"}))
+            finally:
+                reset_hermes_home_override(token)
+        self.assertFalse(result["ok"])
+        self.assertIn("Server administrator", result["error"]["message"])
 
     def test_guessed_command_is_rejected_with_suggestion(self) -> None:
         with patch.object(tools, "_request_json", side_effect=api_side_effect):
@@ -317,6 +385,50 @@ class AutoCountValidatorTests(unittest.TestCase):
         self.assertTrue(result["ok"], result)
         self.assertIn(("POST", "/v1/commands"), calls)
 
+    def test_admin_execution_selects_company_and_skips_client_workflow_gate(self) -> None:
+        submitted: dict[str, object] = {}
+        config = {
+            "baseUrl": "https://api.autocount.cloud",
+            "apiKey": "secret",
+            "connectorId": "connector-b",
+            "companyId": "company-b",
+            "pollIntervalSeconds": 1,
+            "commandTimeoutSeconds": 5,
+        }
+
+        def api(method: str, path: str, **kwargs):
+            if path in {"/v1/schema/modules", "/v1/schema/commands/create-sales-invoice"}:
+                return api_side_effect(method, path, **kwargs)
+            if path == "/v1/connectors/connector-b/status":
+                return {"online": True}
+            if method == "POST" and path == "/v1/commands":
+                submitted.update(kwargs["body"])
+                return {"status": "queued"}
+            if method == "GET" and path.startswith("/v1/commands/macsoft-create-sales-invoice-"):
+                return {"status": "done"}
+            raise AssertionError(f"Unexpected API call: {method} {path}")
+
+        params = {
+            "company_id": "company-b",
+            "command_type": "create-sales-invoice",
+            "payload": {
+                "debtorCode": "D-001",
+                "lines": [{"itemCode": "ITEM-001", "qty": 1, "uom": "UNIT"}],
+            },
+        }
+        with patch.object(tools, "_load_config", return_value=config) as loaded, patch.object(
+            tools, "_is_admin_workspace", return_value=True
+        ), patch.object(workflow_tools, "verify_execution_context") as workflow_gate, patch.object(
+            tools, "_request_json", side_effect=api
+        ), patch.object(tools.time, "sleep"):
+            result = json.loads(tools.autocount_execute_command(params))
+
+        self.assertTrue(result["ok"], result)
+        loaded.assert_called_once_with("company-b")
+        workflow_gate.assert_not_called()
+        self.assertEqual(submitted["connectorId"], "connector-b")
+        self.assertEqual(submitted["companyId"], "company-b")
+
     def test_approved_workflow_reuses_stable_action_id_without_blind_resubmit(self) -> None:
         config = {
             "connectorId": "connector",
@@ -437,7 +549,7 @@ class AutoCountValidatorTests(unittest.TestCase):
         context = Context()
         plugin.register(context)
         self.assertEqual(context.tools.count("autocount_validate_command"), 1)
-        self.assertEqual(len(context.tools), 11)
+        self.assertEqual(len(context.tools), 12)
         self.assertEqual(context.skills, ["autocount-operations"])
         manifest = yaml.safe_load((PLUGIN_DIR / "plugin.yaml").read_text(encoding="utf-8"))
         self.assertEqual(set(manifest["provides_tools"]), set(context.tools))

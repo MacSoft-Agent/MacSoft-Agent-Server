@@ -165,6 +165,7 @@ class PackagingContractTests(unittest.TestCase):
         destinations = {item["destination"] for item in protected["resources"]}
 
         for generic_tool in (
+            "autocount_manage_connections",
             "autocount_get_connector_status",
             "autocount_search_commands",
             "autocount_get_command_schema",

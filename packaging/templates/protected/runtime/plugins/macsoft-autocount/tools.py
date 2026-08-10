@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import hashlib
 import difflib
+import os
 import re
 import threading
 import time
@@ -18,6 +19,7 @@ from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 
@@ -34,6 +36,7 @@ _INVALID_FINGERPRINT_LIMIT = 256
 _invalid_fingerprints: deque[str] = deque()
 _invalid_fingerprint_set: set[str] = set()
 _invalid_fingerprint_lock = threading.Lock()
+_connection_store_lock = threading.Lock()
 
 
 class AutoCountToolError(RuntimeError):
@@ -54,7 +57,95 @@ def _json_text(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
-def _load_config() -> dict[str, Any]:
+def _active_hermes_home() -> Path:
+    try:
+        from hermes_constants import get_hermes_home
+
+        return Path(get_hermes_home())
+    except ImportError:
+        configured = os.environ.get("HERMES_HOME")
+        return Path(configured) if configured else Path.home() / ".hermes"
+
+
+def _is_admin_workspace() -> bool:
+    configured = Path(os.environ.get("HERMES_HOME", str(Path.home() / ".hermes")))
+    try:
+        return _active_hermes_home().resolve() == (configured / "admin").resolve()
+    except OSError:
+        return False
+
+
+def _connection_store_path() -> Path:
+    return _active_hermes_home() / "autocount" / "connections.json"
+
+
+def _empty_connection_store() -> dict[str, Any]:
+    return {"schemaVersion": 1, "defaultCompanyId": "", "connections": {}}
+
+
+def _read_connection_store() -> dict[str, Any]:
+    path = _connection_store_path()
+    try:
+        value = json.loads(path.read_text(encoding="utf-8-sig"))
+    except FileNotFoundError:
+        return _empty_connection_store()
+    except json.JSONDecodeError as exc:
+        raise AutoCountToolError("AutoCount connection store is invalid JSON.") from exc
+    if not isinstance(value, dict) or not isinstance(value.get("connections"), dict):
+        raise AutoCountToolError("AutoCount connection store is invalid.")
+    return value
+
+
+def _write_connection_store(value: dict[str, Any]) -> None:
+    path = _connection_store_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    try:
+        os.chmod(temporary, 0o600)
+    except OSError:
+        pass
+    temporary.replace(path)
+
+
+def _public_connections(store: dict[str, Any]) -> dict[str, Any]:
+    connections = []
+    for company_id, item in sorted(store.get("connections", {}).items()):
+        if not isinstance(item, dict):
+            continue
+        connections.append(
+            {
+                "companyId": company_id,
+                "name": str(item.get("name", "")),
+                "baseUrl": str(item.get("baseUrl", "")),
+                "connectorId": str(item.get("connectorId", "")),
+                "apiKeyConfigured": bool(str(item.get("apiKey", "")).strip()),
+            }
+        )
+    return {
+        "defaultCompanyId": str(store.get("defaultCompanyId", "")),
+        "connections": connections,
+    }
+
+
+def _validate_cloud_url(value: str) -> str:
+    normalized = value.rstrip("/")
+    parsed = urlparse(normalized)
+    if parsed.scheme != "https" or parsed.hostname != "api.autocount.cloud" or parsed.query or parsed.fragment:
+        raise AutoCountToolError("base_url must be https://api.autocount.cloud.")
+    return normalized
+
+
+def _load_config(company_id: str | None = None) -> dict[str, Any]:
+    selector = str(company_id or "").strip()
+    store = _read_connection_store()
+    stored_connections = store.get("connections", {})
+    selected_company = selector or str(store.get("defaultCompanyId", "")).strip()
+    if selected_company and isinstance(stored_connections.get(selected_company), dict):
+        return dict(stored_connections[selected_company])
+    if selector:
+        raise AutoCountToolError(f"AutoCount company connection is not configured: {selector}")
+
     try:
         with _CONFIG_PATH.open("r", encoding="utf-8-sig") as file:
             config = json.load(file)
@@ -73,14 +164,74 @@ def _load_config() -> dict[str, Any]:
     return config
 
 
+def autocount_manage_connections(params: dict[str, Any], **kwargs: Any) -> str:
+    del kwargs
+    try:
+        if not _is_admin_workspace():
+            raise AutoCountToolError("Only the Server administrator can manage AutoCount connections.")
+        action = str(params.get("action", "list")).strip().lower()
+        company_id = str(params.get("company_id", "")).strip()
+        if action == "test":
+            config = _load_config(company_id or None)
+            connector_id = quote(str(config["connectorId"]), safe="")
+            response = _request_json("GET", f"/v1/connectors/{connector_id}/status", config=config)
+            return _success(response, companyId=str(config["companyId"]))
+        with _connection_store_lock:
+            store = _read_connection_store()
+            connections = store["connections"]
+
+            if action == "list":
+                return _success(_public_connections(store))
+            if action == "save":
+                connector_id = str(params.get("connector_id", "")).strip()
+                if not company_id or not connector_id:
+                    raise AutoCountToolError("company_id and connector_id are required.")
+                existing = connections.get(company_id, {})
+                api_key = str(params.get("api_key", "")).strip() or str(existing.get("apiKey", "")).strip()
+                if not api_key:
+                    raise AutoCountToolError("api_key is required for a new connection.")
+                connections[company_id] = {
+                    "name": str(params.get("name", existing.get("name", ""))).strip(),
+                    "baseUrl": _validate_cloud_url(str(params.get("base_url", existing.get("baseUrl", "https://api.autocount.cloud"))).strip()),
+                    "apiKey": api_key,
+                    "connectorId": connector_id,
+                    "companyId": company_id,
+                    "requestTimeoutSeconds": max(120, min(int(params.get("request_timeout_seconds", existing.get("requestTimeoutSeconds", 120))), 7200)),
+                    "commandTimeoutSeconds": max(5, min(int(params.get("command_timeout_seconds", existing.get("commandTimeoutSeconds", 7200))), 7200)),
+                    "pollIntervalSeconds": max(0.5, min(float(existing.get("pollIntervalSeconds", 2)), 10.0)),
+                }
+                if bool(params.get("set_default")) or not str(store.get("defaultCompanyId", "")):
+                    store["defaultCompanyId"] = company_id
+                _write_connection_store(store)
+                return _success({"saved": True, "companyId": company_id, "default": store["defaultCompanyId"] == company_id})
+            if action == "set_default":
+                if company_id not in connections:
+                    raise AutoCountToolError(f"AutoCount company connection is not configured: {company_id}")
+                store["defaultCompanyId"] = company_id
+                _write_connection_store(store)
+                return _success({"defaultCompanyId": company_id})
+            if action == "remove":
+                if company_id not in connections:
+                    raise AutoCountToolError(f"AutoCount company connection is not configured: {company_id}")
+                del connections[company_id]
+                if store.get("defaultCompanyId") == company_id:
+                    store["defaultCompanyId"] = sorted(connections)[0] if connections else ""
+                _write_connection_store(store)
+                return _success({"removed": True, "companyId": company_id})
+            raise AutoCountToolError("action must be list, save, set_default, remove, or test.")
+    except Exception as exc:
+        return _failure(exc)
+
+
 def _request_json(
     method: str,
     path: str,
     *,
     body: dict[str, Any] | None = None,
     timeout_seconds: int | None = None,
+    config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    config = _load_config()
+    config = config or _load_config()
     base_url = str(config["baseUrl"]).rstrip("/")
     url = f"{base_url}{path}"
     timeout = max(
@@ -175,12 +326,16 @@ def _safe_failure_message(exc: Exception) -> str:
         return "AutoCount configuration is invalid."
     if "config is missing" in lowered:
         return message
+    if "company connection is not configured" in lowered:
+        return message
     if re.search(r"\bhttp 401\b", lowered):
         return "AutoCount API HTTP 401. Authentication failed."
     if re.search(r"\bhttp \d{3}\b", lowered):
         return message
     if "connector is offline" in lowered:
         return "AutoCount connector is offline. Command was not queued."
+    if "only the server administrator" in lowered:
+        return message
     if "timed out" in lowered or "cannot connect to autocount cloud" in lowered:
         return message
     if lowered.endswith("is required.") or "must be a json object" in lowered:
@@ -265,8 +420,8 @@ def _catalog_entries(catalog: dict[str, Any]) -> list[dict[str, Any]]:
     return list(unique.values())
 
 
-def _resolve_exact_command(command_type: str) -> dict[str, Any]:
-    catalog = _request_json("GET", "/v1/schema/modules")
+def _resolve_exact_command(command_type: str, config: dict[str, Any] | None = None) -> dict[str, Any]:
+    catalog = _request_json("GET", "/v1/schema/modules", config=config)
     entries = _catalog_entries(catalog)
     by_type = {
         str(entry.get("type") or entry.get("commandType") or ""): entry
@@ -284,10 +439,13 @@ def _resolve_exact_command(command_type: str) -> dict[str, Any]:
     raise AutoCountCommandResolutionError(command_type, suggestions)
 
 
-def _load_exact_command_schema(command_type: str) -> tuple[dict[str, Any], dict[str, Any]]:
-    command = _resolve_exact_command(command_type)
+def _load_exact_command_schema(
+    command_type: str,
+    config: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    command = _resolve_exact_command(command_type, config)
     encoded = quote(command_type, safe="")
-    schema = _request_json("GET", f"/v1/schema/commands/{encoded}")
+    schema = _request_json("GET", f"/v1/schema/commands/{encoded}", config=config)
     return command, schema
 
 
@@ -321,14 +479,15 @@ def autocount_get_connector_status(
     params: dict[str, Any] | None = None,
     **kwargs: Any,
 ) -> str:
-    del params, kwargs
+    del kwargs
 
     try:
-        config = _load_config()
+        config = _load_config(str((params or {}).get("company_id", "")).strip() or None)
         connector_id = quote(str(config["connectorId"]), safe="")
         response = _request_json(
             "GET",
             f"/v1/connectors/{connector_id}/status",
+            config=config,
         )
         return _success(response)
     except Exception as exc:
@@ -342,6 +501,8 @@ def autocount_search_commands(
     del kwargs
 
     try:
+        company_id = str(params.get("company_id", "")).strip()
+        config = _load_config(company_id) if company_id else None
         query = str(params.get("query", "")).strip()
         module_filter = str(params.get("module_id", "")).strip().lower()
         mode_filter = str(params.get("mode", "")).strip().lower()
@@ -351,7 +512,7 @@ def autocount_search_commands(
             raise AutoCountToolError("query is required.")
 
         query_words = _normalize_words(query)
-        catalog = _request_json("GET", "/v1/schema/modules")
+        catalog = _request_json("GET", "/v1/schema/modules", config=config)
         modules = catalog.get("modules", [])
 
         if not isinstance(modules, list):
@@ -463,11 +624,13 @@ def autocount_get_command_schema(
     del kwargs
 
     try:
+        company_id = str(params.get("company_id", "")).strip()
+        config = _load_config(company_id) if company_id else None
         command_type = str(params.get("command_type", "")).strip()
         if not command_type:
             raise AutoCountToolError("command_type is required.")
 
-        _, response = _load_exact_command_schema(command_type)
+        _, response = _load_exact_command_schema(command_type, config)
         return _success(response, commandType=command_type)
     except AutoCountCommandResolutionError as exc:
         return _failure(exc, commandType=command_type or None, suggestions=exc.suggestions)
@@ -484,11 +647,13 @@ def autocount_validate_command(
     command_type = str(params.get("command_type", "")).strip()
     payload = params.get("payload", {})
     try:
+        company_id = str(params.get("company_id", "")).strip()
+        config = _load_config(company_id) if company_id else None
         if not command_type:
             raise AutoCountToolError("command_type is required.")
         if not isinstance(payload, dict):
             raise AutoCountToolError("payload must be a JSON object.")
-        _, schema = _load_exact_command_schema(command_type)
+        _, schema = _load_exact_command_schema(command_type, config)
         validation = validate_command_payload(schema, payload)
         return _success(validation, commandType=command_type)
     except AutoCountCommandResolutionError as exc:
@@ -517,8 +682,8 @@ def autocount_execute_command(
 
         # Resolve the exact official command and reject invalid payloads before
         # connector checks or command submission.
-        _, schema = _load_exact_command_schema(command_type)
-        config = _load_config()
+        config = _load_config(str(params.get("company_id", "")).strip() or None)
+        _, schema = _load_exact_command_schema(command_type, config)
         validation = validate_command_payload(schema, payload)
         if not validation["valid"]:
             duplicate = _mark_invalid_payload(
@@ -549,6 +714,7 @@ def autocount_execute_command(
         connector_status = _request_json(
             "GET",
             f"/v1/connectors/{connector_id}/status",
+            config=config,
         )
         if connector_status.get("online") is False:
             raise AutoCountToolError(
@@ -557,11 +723,12 @@ def autocount_execute_command(
 
         from .workflow_tools import append_execution_event, verify_execution_context
 
-        verified_workflow = verify_execution_context(
-            command_type=command_type,
-            payload=payload,
-            context=workflow_context if isinstance(workflow_context, dict) else None,
-        )
+        if not _is_admin_workspace():
+            verified_workflow = verify_execution_context(
+                command_type=command_type,
+                payload=payload,
+                context=workflow_context if isinstance(workflow_context, dict) else None,
+            )
         command_id = str(verified_workflow.get("verified_action_id") or "")
         if not command_id:
             command_id = (
@@ -587,12 +754,14 @@ def autocount_execute_command(
             queued_response = _request_json(
                 "GET",
                 f"/v1/commands/{quote(command_id, safe='')}",
+                config=config,
             )
         else:
             queued_response = _request_json(
                 "POST",
                 "/v1/commands",
                 body=request_body,
+                config=config,
             )
 
         timeout_seconds = max(
@@ -604,7 +773,7 @@ def autocount_execute_command(
                         config.get("commandTimeoutSeconds", 180),
                     )
                 ),
-                600,
+                7200,
             ),
         )
         poll_interval = max(
@@ -618,6 +787,7 @@ def autocount_execute_command(
             last_response = _request_json(
                 "GET",
                 f"/v1/commands/{quote(command_id, safe='')}",
+                config=config,
             )
             status = _command_status(last_response)
 

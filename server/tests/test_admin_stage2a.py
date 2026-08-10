@@ -132,6 +132,38 @@ class AdminStage2ATests(unittest.TestCase):
         self.assertEqual([row[0] for row in rows], ["user", "assistant"])
         self.assertFalse(self.app.state.active_chat_runs.is_active(f"admin:{created['session_id']}"))
 
+    def test_admin_stream_uses_native_hermes_tools_without_client_capability_gate(self) -> None:
+        token = self.admin_token()
+        conn = connect_db(self.config)
+        try:
+            created = create_admin_session(conn, "Native tools")
+        finally:
+            conn.close()
+        body = AdminChatRequest(
+            session_id=created["session_id"],
+            message="What is the weather in Kuala Lumpur today?",
+        )
+        captured: dict[str, object] = {}
+
+        def native_reply(**kwargs):
+            captured.update(kwargs)
+            return iter([{"type": "text_delta", "text": "Native live result"}])
+
+        with patch(
+            "macsoft.gateway.routes_admin.stream_interruptible_hermes_reply_events",
+            side_effect=native_reply,
+        ):
+            response = admin_chat_stream(self.request, body, f"Bearer {token}")
+            events = "".join(asyncio.run(consume(response)))
+
+        messages = captured["messages"]
+        self.assertIsInstance(messages, list)
+        system_instruction = messages[0]["content"]
+        self.assertIn("native Hermes", system_instruction)
+        self.assertNotIn("[PERMISSION / TOOL GATE]", system_instruction)
+        self.assertIn("Native live result", events)
+        self.assertNotIn("no approved live-data Tool", events)
+
     def test_admin_stream_exposes_specific_provider_usage_limit(self) -> None:
         token = self.admin_token()
         conn = connect_db(self.config)

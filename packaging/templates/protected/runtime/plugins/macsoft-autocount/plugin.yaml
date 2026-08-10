@@ -2,6 +2,7 @@
 version: "0.1.0"
 description: Dynamic AutoCount Cloud tools for the MacSoft Agent runtime.
 provides_tools:
+  - autocount_manage_connections
   - autocount_get_connector_status
   - autocount_search_commands
   - autocount_get_command_schema

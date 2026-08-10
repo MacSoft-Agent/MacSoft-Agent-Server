@@ -363,9 +363,9 @@ export const ja = defineLocale({
       }
     },
     serverAutoCount: {
-      title: 'サーバーと AutoCount',
+      title: 'サーバー',
       intro:
-        'クライアント向け MacSoft Server、内部 AI サービス、AutoCount Cloud 接続を設定します。保存してもサービスは自動的に開始または停止されません。',
+        'クライアント向け MacSoft Server と内部 AI サービスを設定します。AutoCount 接続は Admin Chat で AI が管理します。',
       serviceControl: 'サービス制御',
       aiService: 'AI サービス',
       macsoftServer: 'MacSoft Server',
@@ -394,7 +394,7 @@ export const ja = defineLocale({
       noTestRun: '接続テストはまだ実行されていません。',
       next: '次へ',
       desktopBridgeUnavailable: 'デスクトップ設定ブリッジを利用できません。',
-      settingsLoadFailed: 'サーバーと AutoCount の設定を読み込めませんでした。',
+      settingsLoadFailed: 'サーバー設定を読み込めませんでした。',
       hostBridgeUnavailable: 'デスクトップホストブリッジを利用できません。',
       hostUnavailable: 'MacSoft Agent ホストを利用できません。',
       serviceActionFailed: 'サービス操作に失敗しました。',
@@ -410,10 +410,10 @@ export const ja = defineLocale({
       autoCountTestFailed: 'AutoCount テストに失敗しました',
       savedRestartRequired: services => `安全に保存しました。再起動が必要です：${services}。`,
       savedNoRestart: '安全に保存しました。サービスの再起動は不要です。',
-      settingsSaved: 'サーバーと AutoCount の設定を保存しました',
+      settingsSaved: 'サーバー設定を保存しました',
       settingsSaveFailed: '設定を保存できませんでした。',
       saveFailed: '保存に失敗しました',
-      loading: 'サーバーと AutoCount の設定を読み込み中…',
+      loading: 'サーバー設定を読み込み中…',
       loadPageFailed: '設定を読み込めませんでした',
       retry: '再試行',
       serverPort: 'サーバーポート',

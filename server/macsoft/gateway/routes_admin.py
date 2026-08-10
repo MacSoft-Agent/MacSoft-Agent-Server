@@ -18,7 +18,6 @@ from macsoft.admin.session_store import (
 )
 from macsoft.chat.active_runs import get_active_chat_registry
 from macsoft.chat.activity import ActivityKind, ActivityMapper, ActivityStatus
-from macsoft.chat.capability_policy import build_protected_system_instruction, enforce_capability_boundary
 from macsoft.chat.hermes_client import (
     HermesApiError,
     interrupt_hermes_run,
@@ -45,6 +44,12 @@ from macsoft.security import new_id
 
 router = APIRouter()
 ADMIN_INTERRUPT_RELEASE_WAIT_SECONDS = 10.0
+ADMIN_SYSTEM_INSTRUCTION = (
+    "The user is operating MacSoft Server from the authenticated local Server Desktop. "
+    "This is the Server administrator's native Hermes workspace. Use the available native Hermes tools, "
+    "writable Memory, and Skills when helpful. Preserve Hermes native approval requirements for dangerous "
+    "operations. Do not claim an action was completed without tool evidence."
+)
 
 class AdminSessionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -345,11 +350,7 @@ def admin_chat_stream(
             raise HTTPException(status_code=422, detail=error_response(error.code, str(error)))
         user_message = save_admin_message(conn, session_id=body.session_id, role="user", content=body.message)
         attach_admin_files_to_message(conn, session_id=body.session_id, message_id=user_message["message_id"], file_ids=body.uploaded_file_ids)
-        hermes_messages = [{"role": "system", "content": build_protected_system_instruction(
-            None,
-            "The user is operating MacSoft Server from the trusted local Server Desktop. "
-            "Do not invent privileged management capabilities or claim actions were performed.",
-        )}]
+        hermes_messages = [{"role": "system", "content": ADMIN_SYSTEM_INSTRUCTION}]
         hermes_messages.extend(list_admin_context(conn, body.session_id))
         hermes_messages[-1]["content"] = current_user_content
         for message in hermes_messages:
@@ -410,12 +411,9 @@ def admin_chat_stream(
                         mapped = mapper.observed_tool_event(internal_event)
                         if mapped is not None:
                             yield sse_event("activity", mapped)
-                    assistant_text = enforce_capability_boundary(
-                        user_message=body.message,
-                        assistant_text=format_assistant_reply(
-                            "".join(parts).strip(),
-                            preserve_json=user_requested_json(body.message),
-                        ),
+                    assistant_text = format_assistant_reply(
+                        "".join(parts).strip(),
+                        preserve_json=user_requested_json(body.message),
                     )
                 except HermesApiError as error:
                     if registry.interrupt_requested(run_key):

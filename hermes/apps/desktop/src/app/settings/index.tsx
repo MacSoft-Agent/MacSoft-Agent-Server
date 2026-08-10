@@ -178,7 +178,7 @@ export function SettingsView({ onClose, onConfigSaved, onMainModelChanged }: Set
       active: activeView === 'server-autocount',
       icon: Cpu,
       id: 'server-autocount',
-      label: 'Server & AutoCount',
+      label: t.settings.serverAutoCount.title,
       onSelect: () => setActiveView('server-autocount')
     },
     {

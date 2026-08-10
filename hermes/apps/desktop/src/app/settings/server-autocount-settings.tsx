@@ -3,7 +3,6 @@ import { useEffect, useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type {
-  AutoCountTestInput,
   MacSoftHostStatus,
   MacSoftServiceAction,
   MacSoftServiceName,
@@ -19,10 +18,7 @@ import {
   CheckCircle2,
   Copy,
   Cpu,
-  Eye,
-  EyeOff,
   Globe,
-  KeyRound,
   Loader2,
   Play,
   RefreshCw,
@@ -38,22 +34,12 @@ import { ListRow, LoadingState, SectionHeading, SettingsContent } from './primit
 interface FormState {
   aiServicePort: string
   aiServiceUrl: string
-  apiKey: string
-  apiKeyConfigured: boolean
-  cloudUrl: string
-  companyId: string
-  connectorId: string
   serverPort: string
 }
 
 const EMPTY_FORM: FormState = {
   aiServicePort: '8642',
   aiServiceUrl: 'http://127.0.0.1:8642',
-  apiKey: '',
-  apiKeyConfigured: false,
-  cloudUrl: '',
-  companyId: '',
-  connectorId: '',
   serverPort: '8787'
 }
 
@@ -74,11 +60,6 @@ function formFromSettings(settings: ServerAutoCountSettings): FormState {
   return {
     aiServicePort: String(settings.aiService.port),
     aiServiceUrl: settings.aiService.url,
-    apiKey: '',
-    apiKeyConfigured: settings.autoCount.apiKeyConfigured,
-    cloudUrl: settings.autoCount.cloudUrl,
-    companyId: settings.autoCount.companyId,
-    connectorId: settings.autoCount.connectorId,
     serverPort: String(settings.server.port)
   }
 }
@@ -215,14 +196,12 @@ export function ServerAutoCountSettingsPage() {
   const hostApi = window.hermesDesktop?.macSoftHost
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [testing, setTesting] = useState<'ai' | 'autocount' | 'server' | null>(null)
-  const [showApiKey, setShowApiKey] = useState(false)
+  const [testing, setTesting] = useState<'ai' | 'server' | null>(null)
   const [settings, setSettings] = useState<ServerAutoCountSettings | null>(null)
   const [form, setForm] = useState<FormState>(EMPTY_FORM)
   const [selectedAddress, setSelectedAddress] = useState('')
   const [serverStatus, setServerStatus] = useState<ReadableCheckResult | null>(null)
   const [aiStatus, setAiStatus] = useState<ReadableCheckResult | null>(null)
-  const [autoCountStatus, setAutoCountStatus] = useState<ReadableCheckResult | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [hostStatus, setHostStatus] = useState<MacSoftHostStatus | null>(null)
   const [hostError, setHostError] = useState<string | null>(null)
@@ -325,18 +304,7 @@ export function ServerAutoCountSettingsPage() {
   const savePayload = (): SaveServerAutoCountInput => ({
     aiServicePort: Number(form.aiServicePort),
     aiServiceUrl: form.aiServiceUrl,
-    apiKey: form.apiKey.trim() || undefined,
-    cloudUrl: form.cloudUrl,
-    companyId: form.companyId,
-    connectorId: form.connectorId,
     serverPort: Number(form.serverPort)
-  })
-
-  const autoCountPayload = (): AutoCountTestInput => ({
-    apiKey: form.apiKey.trim() || undefined,
-    cloudUrl: form.cloudUrl,
-    companyId: form.companyId,
-    connectorId: form.connectorId
   })
 
   const refreshNetworks = async () => {
@@ -416,27 +384,6 @@ export function ServerAutoCountSettingsPage() {
     }
   }
 
-  const testAutoCount = async () => {
-    if (!api) {
-      return
-    }
-
-    setTesting('autocount')
-
-    try {
-      setAutoCountStatus(await api.testAutoCount(autoCountPayload()))
-    } catch (error) {
-      setAutoCountStatus({
-        action: c.reviewFields,
-        ok: false,
-        summary: macSoftSettingsErrorMessage(error, c.connectionTestFailed),
-        title: c.autoCountTestFailed
-      })
-    } finally {
-      setTesting(null)
-    }
-  }
-
   const save = async () => {
     if (!api) {
       return
@@ -447,7 +394,6 @@ export function ServerAutoCountSettingsPage() {
     try {
       const result = await api.save(savePayload())
       applyLoadedSettings(result.settings)
-      setAutoCountStatus(null)
       notify({
         kind: 'success',
         message: result.restartRequired
@@ -691,84 +637,6 @@ export function ServerAutoCountSettingsPage() {
           </div>
         </div>
       </details>
-
-      <div className="mt-8">
-        <SectionHeading icon={KeyRound} title={c.autoCountConnection} />
-        <div className="grid gap-1">
-          <ListRow
-            action={
-              <Input
-                className={cn('h-8 font-mono', CONTROL_TEXT)}
-                onChange={event => setForm(current => ({ ...current, cloudUrl: event.target.value }))}
-                value={form.cloudUrl}
-              />
-            }
-            description={c.cloudUrlDesc}
-            title={c.cloudUrl}
-          />
-          <ListRow
-            action={
-              <div className="flex items-center gap-2">
-                <Input
-                  autoComplete="off"
-                  className={cn('h-8 font-mono', CONTROL_TEXT)}
-                  onChange={event => setForm(current => ({ ...current, apiKey: event.target.value }))}
-                  placeholder={form.apiKeyConfigured ? c.existingKeyPlaceholder : c.enterApiKeyPlaceholder}
-                  type={showApiKey ? 'text' : 'password'}
-                  value={form.apiKey}
-                />
-                <Button
-                  aria-label={showApiKey ? c.hideApiKey : c.revealApiKey}
-                  onClick={() => setShowApiKey(value => !value)}
-                  size="icon-sm"
-                  type="button"
-                  variant="outline"
-                >
-                  {showApiKey ? <EyeOff /> : <Eye />}
-                </Button>
-              </div>
-            }
-            description={c.apiKeyDesc}
-            title={c.apiKey}
-          />
-          <ListRow
-            action={
-              <Input
-                className={cn('h-8 font-mono', CONTROL_TEXT)}
-                onChange={event => setForm(current => ({ ...current, connectorId: event.target.value }))}
-                value={form.connectorId}
-              />
-            }
-            description={c.connectorIdDesc}
-            title={c.connectorId}
-          />
-          <ListRow
-            action={
-              <Input
-                className={cn('h-8 font-mono', CONTROL_TEXT)}
-                onChange={event => setForm(current => ({ ...current, companyId: event.target.value }))}
-                value={form.companyId}
-              />
-            }
-            description={c.companyIdDesc}
-            title={c.companyId}
-          />
-        </div>
-
-        <Button
-          className="mt-3"
-          disabled={testing === 'autocount'}
-          onClick={() => void testAutoCount()}
-          size="sm"
-          variant="outline"
-        >
-          {testing === 'autocount' ? <Loader2 className="animate-spin" /> : null}
-          {c.testAutoCount}
-        </Button>
-        <div className="mt-4">
-          <StatusPanel result={autoCountStatus} />
-        </div>
-      </div>
 
       <div className="mt-8 flex flex-wrap items-center justify-end gap-3 border-t border-(--ui-stroke-tertiary) pt-5">
         <p className="mr-auto max-w-xl text-xs leading-5 text-(--ui-text-tertiary)">{c.saveDesc}</p>

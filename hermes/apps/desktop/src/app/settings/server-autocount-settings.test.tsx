@@ -115,34 +115,27 @@ describe('ServerAutoCountSettingsPage', () => {
     delete (window as unknown as { hermesDesktop?: unknown }).hermesDesktop
   })
 
-  it('loads current values without exposing the existing API key', async () => {
+  it('keeps Server settings and removes the manual AutoCount connection form', async () => {
     render(<ServerAutoCountSettingsPage />)
 
-    expect(await screen.findByText('Server & AutoCount')).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: 'Server' })).toBeTruthy()
     expect(screen.getByDisplayValue('http://192.168.1.42:8787')).toBeTruthy()
-    expect((screen.getByPlaceholderText('Existing key configured · leave blank to keep') as HTMLInputElement).value).toBe('')
-    expect(document.body.textContent).not.toContain('existing-secret')
+    expect(screen.queryByText('AutoCount Connection')).toBeNull()
+    expect(screen.queryByText('API Key')).toBeNull()
+    expect(screen.queryByText('Connector ID')).toBeNull()
+    expect(screen.queryByText('Company ID')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Test AutoCount Connection' })).toBeNull()
   })
 
   it('regenerates and copies the Client URL from selected address and port', async () => {
     render(<ServerAutoCountSettingsPage />)
-    await screen.findByText('Server & AutoCount')
+    await screen.findByRole('heading', { name: 'Server' })
 
     fireEvent.change(screen.getByRole('spinbutton', { name: 'Server port' }), { target: { value: '8888' } })
     expect(screen.getByDisplayValue('http://192.168.1.42:8888')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Copy Client URL' }))
 
     await waitFor(() => expect(writeClipboard).toHaveBeenCalledWith('http://192.168.1.42:8888'))
-  })
-
-  it('formats AutoCount status instead of rendering raw JSON', async () => {
-    render(<ServerAutoCountSettingsPage />)
-    await screen.findByText('Server & AutoCount')
-    fireEvent.click(screen.getByRole('button', { name: 'Test AutoCount Connection' }))
-
-    expect(await screen.findByText('AutoCount connected')).toBeTruthy()
-    expect(screen.getByText('AED_Testing')).toBeTruthy()
-    expect(document.body.textContent).not.toContain('"ok":true')
   })
 
   it('routes service controls through the preload Host bridge', async () => {

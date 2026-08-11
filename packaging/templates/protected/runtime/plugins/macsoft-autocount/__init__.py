@@ -53,11 +53,18 @@ For every AutoCount request:
     sources. Preserve leading zeros, identify uncertain values, and prepare a
     draft first. Do not execute an AutoCount write from extracted values until
     the user explicitly confirms the reviewed draft.
-13. PharmaRise payment, PO, Purchase Invoice, supplier follow-up, and Batch-control
-    actions use persistent Cases. Never bypass workflow_case_workspace and
-    workflow_approve_autocount_action for a consequential write.
-14. A stale Case version or changed action digest invalidates approval. Generate a
-    new preview and ask again. Never blindly retry an uncertain action_id.
+13. Persistent workflow records exist only for cross-message continuation,
+    duplicate-write prevention, and failure recovery. For a new Payment Slip use
+    workflow_intake_payment while the attachment is current; do not manually
+    compose Case creation and evidence archival.
+14. Consequential writes require approval of the exact action payload. A changed
+    action digest invalidates approval; an unrelated workflow-record update does
+    not. Never blindly retry an uncertain action_id.
+15. For WhatsApp, distinguish staff from external senders with
+    workflow_current_context. When an external sender requests an action beyond
+    external intake permissions, reply exactly in the user's language with the
+    equivalent of: "This action requires staff permission. Please contact Admin:
+    +60 18-314 4861." Do not expose internal authorization details.
 </macsoft-autocount-policy>
 """.strip()
 
@@ -120,11 +127,32 @@ def register(ctx):
         description="Resolve an active WhatsApp workflow identity mapping.",
     )
     ctx.register_tool(
+        name="workflow_current_context",
+        toolset="macsoft_autocount",
+        schema=workflow_schemas.WORKFLOW_CURRENT_CONTEXT,
+        handler=workflow_tools.workflow_current_context,
+        description="Read the trusted current WhatsApp scope and staff/external sender classification.",
+    )
+    ctx.register_tool(
+        name="workflow_set_staff_phone",
+        toolset="macsoft_autocount",
+        schema=workflow_schemas.WORKFLOW_SET_STAFF_PHONE,
+        handler=workflow_tools.workflow_set_staff_phone,
+        description="Register or deactivate a WhatsApp staff phone number; Admin only.",
+    )
+    ctx.register_tool(
         name="workflow_fifo_allocate",
         toolset="macsoft_autocount",
         schema=workflow_schemas.WORKFLOW_FIFO_ALLOCATE,
         handler=workflow_tools.workflow_fifo_allocate,
         description="Prepare a deterministic FIFO payment allocation without writing AutoCount.",
+    )
+    ctx.register_tool(
+        name="workflow_intake_payment",
+        toolset="macsoft_autocount",
+        schema=workflow_schemas.WORKFLOW_INTAKE_PAYMENT,
+        handler=workflow_tools.workflow_intake_payment,
+        description="Preserve the current Payment Slip and create or reuse its durable payment job in one operation.",
     )
     ctx.register_tool(
         name="workflow_archive_evidence",

@@ -45,3 +45,21 @@ The connector times out. Search by stable action/reference and compare live outs
 ## 10. Invalid explicit invoice
 
 User names an invoice belonging to another debtor/account book. Reject the allocation and ask for correction. Do not reveal unrelated customer detail beyond what the actor may see, and do not fall back to FIFO without permission.
+
+## 11. Customer or invoice does not match the Payment Slip
+
+Payment Slip shows ABC Tradex Sdn. Bhd., invoice INV-PR2505-0148, and MYR 18,850. AutoCount finds ABC Trading Sdn. Bhd. with only invoice I-2608-047 for MYR 1,200. Do not narrate the lookup sequence, discuss payload validity, quote internal policy, or explain Case state.
+
+Prefer a compact business reply such as:
+
+> The ABC record I found in AutoCount does not match this Payment Slip:
+> - AutoCount: ABC Trading Sdn. Bhd. — invoice I-2608-047, MYR 1,200
+> - Payment Slip: ABC Tradex Sdn. Bhd. — invoice INV-PR2505-0148, MYR 18,850
+>
+> I cannot safely Knock-Off the payment until the correct customer and invoice are confirmed.
+>
+> Please confirm either:
+> 1. ABC Tradex Sdn. Bhd.'s correct AutoCount Debtor Code; or
+> 2. the actual AutoCount invoice number for INV-PR2505-0148.
+
+If the user is technical or specifically requests the internal identifier, add `DocKey` after the actual AutoCount invoice number. Otherwise omit it.

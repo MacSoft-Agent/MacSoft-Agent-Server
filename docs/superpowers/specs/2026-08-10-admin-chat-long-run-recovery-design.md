@@ -179,4 +179,3 @@ customer data is silently deleted.
 6. Newly uploaded malformed images are rejected before persistence.
 7. A legacy malformed historical image no longer prevents later text-only
    turns in that Admin session and is not silently deleted.
-

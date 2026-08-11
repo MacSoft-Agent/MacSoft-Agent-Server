@@ -185,10 +185,40 @@ def _safe_failure_message(exc: Exception) -> str:
         return message
     if lowered.endswith("is required.") or "must be a json object" in lowered:
         return message
+    if exc.__class__.__name__ in {"WorkflowStoreError", "WorkflowConflictError"}:
+        if "requires an approved pharmarise workflow_context" in lowered:
+            return "This AutoCount write has not completed the required preview and approval."
+        if "workflow_context is missing" in lowered:
+            return "The approved AutoCount action is incomplete and must be previewed again."
+        if any(
+            text in lowered
+            for text in (
+                "payload no longer matches",
+                "case changed after approval",
+                "no matching immutable approval",
+                "action_id is not the stable id",
+            )
+        ):
+            return "The approved AutoCount action is no longer current. Prepare a new preview and approval."
+        if any(
+            text in lowered
+            for text in (
+                "whatsapp chat is not mapped",
+                "company setup is missing or ambiguous",
+                "does not match the trusted whatsapp chat mapping",
+            )
+        ):
+            return "MacSoft could not confirm the company and account book for this WhatsApp write."
     return "The AutoCount request could not be completed."
 
 
-def _failure(exc: Exception, **extra: Any) -> str:
+def _failure(
+    exc: Exception,
+    *,
+    reason: str | None = None,
+    stage: str | None = None,
+    **extra: Any,
+) -> str:
     result = {
         "ok": False,
         "error": {
@@ -196,8 +226,42 @@ def _failure(exc: Exception, **extra: Any) -> str:
             "message": _safe_failure_message(exc),
         },
     }
+    if reason:
+        result["error"]["reason"] = reason
+    if stage:
+        result["stage"] = stage
     result.update(extra)
     return _json_text(result)
+
+
+def _workflow_failure_reason(exc: Exception) -> str | None:
+    if exc.__class__.__name__ not in {"WorkflowStoreError", "WorkflowConflictError"}:
+        return None
+    lowered = " ".join(str(exc).lower().split())
+    if "requires an approved pharmarise workflow_context" in lowered:
+        return "workflow_approval_required"
+    if "workflow_context is missing" in lowered:
+        return "workflow_context_invalid"
+    if any(
+        text in lowered
+        for text in (
+            "payload no longer matches",
+            "case changed after approval",
+            "no matching immutable approval",
+            "action_id is not the stable id",
+        )
+    ):
+        return "workflow_approval_stale_or_invalid"
+    if any(
+        text in lowered
+        for text in (
+            "whatsapp chat is not mapped",
+            "company setup is missing or ambiguous",
+            "does not match the trusted whatsapp chat mapping",
+        )
+    ):
+        return "workflow_scope_unavailable"
+    return "workflow_state_error"
 
 
 def _command_status(response: dict[str, Any]) -> str:
@@ -689,7 +753,11 @@ def autocount_execute_command(
                 )
             except Exception:
                 pass
+        workflow_reason = _workflow_failure_reason(exc)
         return _failure(
             exc,
+            reason=workflow_reason,
+            stage="workflow_authorization" if workflow_reason else None,
             commandType=command_type or None,
+            submitted=bool(execution_started),
         )

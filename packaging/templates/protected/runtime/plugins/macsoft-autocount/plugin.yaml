@@ -9,7 +9,10 @@ provides_tools:
   - autocount_execute_command
   - workflow_case_workspace
   - workflow_resolve_whatsapp_identifier
+  - workflow_current_context
+  - workflow_set_staff_phone
   - workflow_fifo_allocate
+  - workflow_intake_payment
   - workflow_archive_evidence
   - workflow_approve_autocount_action
   - workflow_send_approved_supplier_message

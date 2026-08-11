@@ -4,6 +4,7 @@ import os
 import pytest
 
 from gateway.config import Platform
+from gateway.platforms.base import MessageEvent
 from gateway.run import GatewayRunner
 from gateway.session import SessionContext, SessionSource
 from gateway.session_context import (
@@ -167,6 +168,29 @@ def test_set_session_env_handles_missing_optional_fields():
     assert get_session_env("HERMES_SESSION_THREAD_ID") == ""
 
     runner._clear_session_env(tokens)
+
+
+def test_set_session_env_uses_event_message_id_when_source_lacks_one():
+    runner = object.__new__(GatewayRunner)
+    source = SessionSource(
+        platform=Platform.WHATSAPP,
+        chat_id="93707747491924@lid",
+        chat_type="dm",
+        user_id="93707747491924@lid",
+    )
+    context = SessionContext(
+        source=source,
+        connected_platforms=[],
+        home_channels={},
+        session_key="agent:main:whatsapp:dm:601123389695",
+    )
+    event = MessageEvent(text="[document received]", source=source, message_id="wa-message-1")
+
+    tokens = runner._set_session_env(context, event)
+    try:
+        assert get_session_env("HERMES_SESSION_MESSAGE_ID") == "wa-message-1"
+    finally:
+        runner._clear_session_env(tokens)
 
 
 # ---------------------------------------------------------------------------

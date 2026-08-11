@@ -18,8 +18,7 @@ from macsoft.gateway.routes_health import router as health_router
 from macsoft.gateway.routes_sessions import router as sessions_router
 from macsoft.gateway.routes_skills import router as skills_router
 from macsoft.gateway.routes_profile_learning import router as profile_learning_router
-from macsoft.global_learning.gate import GlobalLearningGate
-from macsoft.global_learning.homes import ensure_server_hermes_homes
+from macsoft.server_home import ensure_server_home
 from macsoft.product import product_version
 
 
@@ -40,7 +39,7 @@ def create_app() -> FastAPI:
     config = load_config()
 
     init_db(config)
-    ensure_server_hermes_homes(config)
+    ensure_server_home(config)
 
     app = FastAPI(
         title="MacSoft Server",
@@ -52,7 +51,6 @@ def create_app() -> FastAPI:
     app.state.product_version = product_version()
     app.state.active_chat_runs = ActiveChatRunRegistry()
     app.state.admin_access_registry = AdminAccessRegistry()
-    app.state.global_learning_gate = GlobalLearningGate()
 
     register_exception_handlers(app)
 

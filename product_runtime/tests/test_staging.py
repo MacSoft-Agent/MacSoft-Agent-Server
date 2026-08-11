@@ -6,10 +6,67 @@ from pathlib import Path
 
 from macsoft_runtime.compatibility import expected_runtime_metadata, load_runtime_metadata
 from macsoft_runtime.metadata import load_product_metadata
-from macsoft_runtime.staging import _ignore_ai, _ignore_site_packages, audit_staging
+from macsoft_runtime.staging import (
+    _ignore_ai,
+    _ignore_site_packages,
+    _ignore_templates,
+    audit_staging,
+)
 
 
 class StagingAuditTests(unittest.TestCase):
+    def test_template_copy_includes_approved_workflows(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        skills = root / "packaging" / "templates" / "protected" / "runtime" / "skills"
+        ignored_skills = _ignore_templates(str(skills), [item.name for item in skills.iterdir()])
+        self.assertIn("autocount-bank-reconciliation", ignored_skills)
+        self.assertNotIn("pharmarise-company-configuration", ignored_skills)
+        self.assertNotIn("autocount-payment-knockoff-automation", ignored_skills)
+        self.assertNotIn("autocount-receiving-supplier-invoice-automation", ignored_skills)
+        self.assertNotIn("macsoft-chart-dashboard", ignored_skills)
+        self.assertNotIn("web-design-engineer", ignored_skills)
+
+        plugin = (
+            root
+            / "packaging"
+            / "templates"
+            / "protected"
+            / "runtime"
+            / "plugins"
+            / "macsoft-autocount"
+        )
+        ignored_plugin = _ignore_templates(str(plugin), [item.name for item in plugin.iterdir()])
+        self.assertNotIn("workflow_tools.py", ignored_plugin)
+        self.assertNotIn("migrations", ignored_plugin)
+        self.assertNotIn("tools.py", ignored_plugin)
+        self.assertNotIn("skills", ignored_plugin)
+
+        mutable_skills = root / "packaging" / "templates" / "runtime" / "skills"
+        ignored_mutable = _ignore_templates(
+            str(mutable_skills), [item.name for item in mutable_skills.iterdir()]
+        )
+        self.assertIn("pharmarise-company-configuration", ignored_mutable)
+
+    def test_template_allowlist_matches_protected_resource_manifest(self) -> None:
+        import json
+        from macsoft_runtime.staging import PACKAGED_SKILL_DIRECTORIES
+
+        root = Path(__file__).resolve().parents[2]
+        manifest = json.loads(
+            (root / "packaging" / "templates" / "protected-resources.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        skill_tree = next(
+            item
+            for item in manifest["directories"]
+            if item["destination"] == "runtime/skills"
+        )
+        self.assertEqual(
+            set(skill_tree["include_directories"]),
+            PACKAGED_SKILL_DIRECTORIES,
+        )
+
     def test_runtime_declaration_is_included_in_ai_service_payload(self) -> None:
         ignored = _ignore_ai(
             "C:/source/hermes",
@@ -30,7 +87,11 @@ class StagingAuditTests(unittest.TestCase):
             staging = Path(temp)
             import shutil
 
-            shutil.copytree(root / "packaging" / "templates", staging / "templates")
+            shutil.copytree(
+                root / "packaging" / "templates",
+                staging / "templates",
+                ignore=_ignore_templates,
+            )
             self.assertEqual(audit_staging(staging, root), [])
 
     def test_development_database_and_git_metadata_are_rejected(self) -> None:
@@ -74,6 +135,21 @@ class StagingAuditTests(unittest.TestCase):
             self.assertTrue(any("Pairing state" in issue for issue in issues))
             self.assertTrue(any("Runtime log" in issue for issue in issues))
             self.assertTrue(any("Runtime database" in issue for issue in issues))
+
+    def test_approved_company_workflow_and_plugin_module_are_accepted(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            staging = Path(temp)
+            skill = staging / "templates" / "runtime" / "skills" / "pharmarise-company-configuration"
+            plugin = staging / "templates" / "protected" / "runtime" / "plugins" / "macsoft-autocount"
+            skill.mkdir(parents=True)
+            plugin.mkdir(parents=True)
+            (skill / "SKILL.md").write_text("workflow", encoding="utf-8")
+            (plugin / "workflow_tools.py").write_text("workflow", encoding="utf-8")
+
+            issues = audit_staging(staging, Path("C:/MacSoft-Agent"))
+
+            self.assertFalse(any("Excluded company workflow" in issue for issue in issues))
+            self.assertFalse(any("Excluded AutoCount workflow module" in issue for issue in issues))
 
     def test_editable_python_install_metadata_is_excluded_and_rejected(self) -> None:
         names = [

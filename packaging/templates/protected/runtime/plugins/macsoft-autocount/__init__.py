@@ -147,7 +147,6 @@ def register(ctx):
         handler=workflow_tools.workflow_send_approved_supplier_message,
         description="Approve and send one exact supplier WhatsApp message for a receiving Case.",
     )
-
     ctx.register_hook("pre_llm_call", _inject_policy)
 
     skill_path = (

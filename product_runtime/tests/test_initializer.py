@@ -44,6 +44,28 @@ class FirstRunInitializationTests(unittest.TestCase):
         self.assertEqual(json.loads((self.paths.autocount_plugin_root / "config.json").read_text("utf-8"))["apiKey"], "")
         self.assertFalse((self.paths.runtime_root / "auth.json").exists())
         self.assertEqual(self.paths.server_database.stat().st_size, 0)
+        self.assertIn("request_timeout_seconds: 7200", server)
+
+    def test_upgrade_migrates_only_the_historical_server_timeout_default(self) -> None:
+        initialize_product_data(self.paths, self.metadata)
+        server = self.paths.server_config.read_text(encoding="utf-8")
+        server = server.replace("request_timeout_seconds: 7200", "request_timeout_seconds: 600 # old default")
+        server += "\n# customer server setting\n"
+        self.paths.server_config.write_text(server, encoding="utf-8")
+
+        initialize_product_data(self.paths, self.metadata)
+
+        updated = self.paths.server_config.read_text(encoding="utf-8")
+        self.assertIn("request_timeout_seconds: 7200 # old default", updated)
+        self.assertIn("# customer server setting", updated)
+
+        customized = updated.replace("request_timeout_seconds: 7200", "request_timeout_seconds: 3600")
+        self.paths.server_config.write_text(customized, encoding="utf-8")
+        initialize_product_data(self.paths, self.metadata)
+        self.assertIn(
+            "request_timeout_seconds: 3600 # old default",
+            self.paths.server_config.read_text(encoding="utf-8"),
+        )
 
     def test_upgrade_preserves_mutable_customer_data(self) -> None:
         initialize_product_data(self.paths, self.metadata)
@@ -75,8 +97,8 @@ class FirstRunInitializationTests(unittest.TestCase):
         initialize_product_data(self.paths, self.metadata)
         self.assertEqual(self.paths.soul_file.read_text(encoding="utf-8"), custom)
 
-    def test_company_configuration_references_are_created_once_and_preserved(self) -> None:
-        first = initialize_product_data(self.paths, self.metadata)
+    def test_company_configuration_is_not_seeded_into_a_clean_install(self) -> None:
+        initialize_product_data(self.paths, self.metadata)
         reference = (
             self.paths.runtime_root
             / "skills"
@@ -84,16 +106,7 @@ class FirstRunInitializationTests(unittest.TestCase):
             / "references"
             / "account-books.md"
         )
-        relative = reference.relative_to(self.paths.data_root).as_posix()
-        self.assertTrue(reference.is_file())
-        self.assertIn(relative, {Path(item).as_posix() for item in first.created})
-
-        customer_value = "# Account books\n\n- company_id: customer-company\n"
-        reference.write_text(customer_value, encoding="utf-8")
-        second = initialize_product_data(self.paths, self.metadata)
-
-        self.assertEqual(reference.read_text(encoding="utf-8"), customer_value)
-        self.assertIn(relative, {Path(item).as_posix() for item in second.preserved})
+        self.assertFalse(reference.exists())
 
     def test_upgrade_preserves_device_profile_tree_byte_for_byte(self) -> None:
         initialize_product_data(self.paths, self.metadata)
@@ -176,6 +189,27 @@ class FirstRunInitializationTests(unittest.TestCase):
         self.assertIn("runtime/plugins/macsoft-autocount/validator.py", second.conflicts)
         self.assertEqual(target.read_text("utf-8"), "# administrator change\n")
 
+    def test_removed_protected_resource_is_deleted_only_when_unchanged(self) -> None:
+        base_version = self.metadata.protected_resource_version
+        initialize_product_data(self.paths, self.metadata)
+        manifest_path = self.program / "templates" / "protected-resources.json"
+        manifest = json.loads(manifest_path.read_text("utf-8"))
+        destination = "runtime/plugins/macsoft-autocount/validator.py"
+        target = self.paths.data_root / destination
+        self.assertTrue(target.is_file())
+
+        manifest["resources"] = [
+            item for item in manifest["resources"] if item["destination"] != destination
+        ]
+        manifest["version"] = base_version + 1
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        removed = initialize_product_data(
+            self.paths,
+            replace(self.metadata, protected_resource_version=base_version + 1),
+        )
+        self.assertIn(destination, removed.removed_protected)
+        self.assertFalse(target.exists())
+
     def test_protected_skill_directory_syncs_and_reconciles_safely(self) -> None:
         base_version = self.metadata.protected_resource_version
         source_root = (
@@ -190,6 +224,16 @@ class FirstRunInitializationTests(unittest.TestCase):
         source_file.parent.mkdir(parents=True)
         source_file.write_text("version one\n", encoding="utf-8")
 
+        manifest_path = self.program / "templates" / "protected-resources.json"
+        manifest = json.loads(manifest_path.read_text("utf-8"))
+        skill_tree = next(
+            item
+            for item in manifest["directories"]
+            if item["destination"] == "runtime/skills"
+        )
+        skill_tree["include_directories"].append("fixture-skill")
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
         first = initialize_product_data(self.paths, self.metadata)
         target_file = self.paths.runtime_root / "skills" / "fixture-skill" / "SKILL.md"
         self.assertIn("runtime/skills/fixture-skill/SKILL.md", first.created)
@@ -197,8 +241,6 @@ class FirstRunInitializationTests(unittest.TestCase):
 
         # A new bundled version updates an unchanged managed file.
         source_file.write_text("version two\n", encoding="utf-8")
-        manifest_path = self.program / "templates" / "protected-resources.json"
-        manifest = json.loads(manifest_path.read_text("utf-8"))
         manifest["version"] = base_version + 1
         manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
         second = initialize_product_data(

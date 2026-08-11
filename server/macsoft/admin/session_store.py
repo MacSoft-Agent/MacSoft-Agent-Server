@@ -11,8 +11,7 @@ def _row(row: sqlite3.Row) -> dict[str, Any]:
         "id": row["session_id"],
         "session_id": row["session_id"],
         "title": row["title"],
-        "session_type": row["session_type"],
-        "workflow_target": row["workflow_target"],
+        "session_type": "chat",
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -21,15 +20,10 @@ def _row(row: sqlite3.Row) -> dict[str, Any]:
 def create_admin_session(
     conn: sqlite3.Connection,
     title: str,
-    *,
-    session_type: str = "chat",
-    workflow_target: str = "general",
 ) -> dict[str, Any]:
     now = utc_now_iso()
     session_id = new_id("admin_sess")
     clean_title = (title or "New Admin Chat").strip()[:80] or "New Admin Chat"
-    if session_type not in {"chat", "global_training"}:
-        raise ValueError("invalid_admin_session_type")
     conn.execute(
         """
         INSERT INTO admin_sessions (
@@ -37,7 +31,7 @@ def create_admin_session(
         )
         VALUES (?, ?, ?, ?, ?, ?, NULL)
         """,
-        (session_id, clean_title, session_type, workflow_target, now, now),
+        (session_id, clean_title, "chat", "general", now, now),
     )
     conn.commit()
     session = get_admin_session(conn, session_id)
@@ -51,7 +45,7 @@ def list_admin_sessions(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         """
         SELECT session_id, title, session_type, workflow_target, created_at, updated_at
         FROM admin_sessions
-        WHERE deleted_at IS NULL
+        WHERE deleted_at IS NULL AND session_type = 'chat'
         ORDER BY updated_at DESC
         """
     ).fetchall()
@@ -63,7 +57,7 @@ def get_admin_session(conn: sqlite3.Connection, session_id: str) -> dict[str, An
         """
         SELECT session_id, title, session_type, workflow_target, created_at, updated_at
         FROM admin_sessions
-        WHERE session_id = ? AND deleted_at IS NULL
+        WHERE session_id = ? AND deleted_at IS NULL AND session_type = 'chat'
         """,
         (session_id,),
     ).fetchone()

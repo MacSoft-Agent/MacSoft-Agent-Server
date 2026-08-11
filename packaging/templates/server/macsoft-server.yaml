@@ -10,7 +10,7 @@ hermes:
   profile_root: "../runtime/profiles"
   api_base_url: "http://127.0.0.1:8642"
   api_key: "${MACSOFT_LOCAL_API_KEY}"
-  request_timeout_seconds: 600
+  request_timeout_seconds: 7200
 
 models:
   default_model: "server-default"

@@ -27,13 +27,34 @@ def read_frontmatter(path: Path) -> tuple[str, str]:
 
 
 class SkillPackageTests(unittest.TestCase):
-    expected = {
+    workflow_skills = {
+        "autocount-local-direct-payment-knockoff",
+        "autocount-local-direct-purchase-invoice",
+        "autocount-payment-knockoff-automation",
+        "autocount-receiving-supplier-invoice-automation",
+        "pharmarise-company-configuration",
+    }
+    concise_skills = {
         "macsoft-chart-dashboard",
         "macsoft-chart-visualization",
         "kpi-dashboard-design",
         "data-storytelling",
         "web-design-engineer",
     }
+    expected = workflow_skills | concise_skills
+
+    def test_packaged_top_level_skill_inventory_is_an_explicit_allowlist(self) -> None:
+        manifest = __import__("json").loads(
+            (ROOT / "packaging" / "templates" / "protected-resources.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        skill_tree = next(
+            item
+            for item in manifest["directories"]
+            if item["destination"] == "runtime/skills"
+        )
+        self.assertEqual(set(skill_tree["include_directories"]), self.expected)
 
     def test_selected_skills_have_valid_metadata_and_expected_references(self) -> None:
         self.assertTrue(SKILLS_ROOT.is_dir())
@@ -45,7 +66,8 @@ class SkillPackageTests(unittest.TestCase):
             name, description = read_frontmatter(skill_md)
             self.assertEqual(name, directory_name)
             self.assertTrue(description.endswith("."), directory_name)
-            self.assertLessEqual(len(description), 60, directory_name)
+            if directory_name in self.concise_skills:
+                self.assertLessEqual(len(description), 60, directory_name)
 
         dashboard_refs = SKILLS_ROOT / "macsoft-chart-dashboard" / "references"
         self.assertEqual(
@@ -98,7 +120,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("Do not use an HTML/report", text)
         self.assertIn("command as a chart data source", text)
 
-    def test_bank_reconciliation_skill_uses_live_connector_contract(self) -> None:
+    def test_bank_reconciliation_source_uses_live_connector_contract(self) -> None:
         text = (
             SKILLS_ROOT / "autocount-bank-reconciliation" / "SKILL.md"
         ).read_text(encoding="utf-8")
@@ -115,7 +137,6 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("send `payload` as a quoted JSON string", text)
         self.assertIn("explicit confirmation before saving", text)
         self.assertIn("Report success only when", text)
-
 
 if __name__ == "__main__":
     unittest.main()

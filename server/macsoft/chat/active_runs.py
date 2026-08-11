@@ -16,6 +16,7 @@ class ActiveChatRunRegistry:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        self._released = threading.Condition(self._lock)
         self._sessions: dict[str, ActiveChatRun] = {}
 
     def reserve(self, session_id: str) -> bool:
@@ -48,8 +49,17 @@ class ActiveChatRunRegistry:
             return bool(active and active.interrupt_requested)
 
     def release(self, session_id: str) -> None:
-        with self._lock:
+        with self._released:
             self._sessions.pop(session_id, None)
+            self._released.notify_all()
+
+    def wait_until_released(self, session_id: str, timeout_seconds: float) -> bool:
+        """Wait for the stream owner to release a run; never force-unlock it."""
+        with self._released:
+            return self._released.wait_for(
+                lambda: session_id not in self._sessions,
+                timeout=max(0.0, float(timeout_seconds)),
+            )
 
     def is_active(self, session_id: str) -> bool:
         with self._lock:

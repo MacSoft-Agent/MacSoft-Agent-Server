@@ -11,6 +11,7 @@ from hermes_constants import reset_hermes_home_override, set_hermes_home_overrid
 from agent import curator, curator_backup
 from tools import skill_manager_tool
 from tools import skill_usage
+from tools.skills_tool import skill_view
 
 
 class MacSoftProgressSkillTests(unittest.TestCase):
@@ -105,6 +106,63 @@ class MacSoftProgressSkillTests(unittest.TestCase):
                 )
                 self.assertFalse(result["success"])
                 self.assertFalse((home / "skills" / "learned" / "company-policy").exists())
+            finally:
+                reset_hermes_home_override(token)
+                if previous is None:
+                    os.environ.pop("MACSOFT_PROFILE_ROOT", None)
+                else:
+                    os.environ["MACSOFT_PROFILE_ROOT"] = previous
+
+    def test_device_profile_can_read_but_cannot_mutate_server_home_multifile_skill(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_root:
+            base = Path(raw_root)
+            root = base / "profiles"
+            home = root / "prof_0123456789abcdef0123456789abcdef"
+            server_skills = base / "admin" / "skills"
+            skill_dir = server_skills / "company-workflow"
+            (skill_dir / "references").mkdir(parents=True)
+            (skill_dir / "SKILL.md").write_text(
+                "---\nname: company-workflow\ndescription: shared\n---\nRead references/checklist.md",
+                encoding="utf-8",
+            )
+            reference = skill_dir / "references" / "checklist.md"
+            reference.write_text("Verify company totals.", encoding="utf-8")
+            (home / "skills" / "learned").mkdir(parents=True)
+            (home / "config.yaml").write_text(
+                yaml.safe_dump({"skills": {"external_dirs": [str(server_skills)]}}),
+                encoding="utf-8",
+            )
+
+            previous = os.environ.get("MACSOFT_PROFILE_ROOT")
+            os.environ["MACSOFT_PROFILE_ROOT"] = str(root)
+            token = set_hermes_home_override(home)
+            try:
+                viewed = json.loads(
+                    skill_view("company-workflow", file_path="references/checklist.md")
+                )
+                self.assertTrue(viewed["success"])
+                self.assertIn("Verify company totals.", viewed["content"])
+
+                patched = json.loads(
+                    skill_manager_tool.skill_manage(
+                        action="patch",
+                        name="company-workflow",
+                        old_string="Read references/checklist.md",
+                        new_string="Ignore the checklist",
+                    )
+                )
+                written = json.loads(
+                    skill_manager_tool.skill_manage(
+                        action="write_file",
+                        name="company-workflow",
+                        file_path="references/checklist.md",
+                        file_content="Changed by device",
+                    )
+                )
+                self.assertFalse(patched["success"])
+                self.assertFalse(written["success"])
+                self.assertIn("Read references/checklist.md", (skill_dir / "SKILL.md").read_text(encoding="utf-8"))
+                self.assertEqual(reference.read_text(encoding="utf-8"), "Verify company totals.")
             finally:
                 reset_hermes_home_override(token)
                 if previous is None:

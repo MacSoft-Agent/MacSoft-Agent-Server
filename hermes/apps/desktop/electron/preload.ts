@@ -16,18 +16,6 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
   macSoftAdminChat: {
     listSessions: () => ipcRenderer.invoke('hermes:macsoft-admin:list-sessions'),
     createSession: (title?: string) => ipcRenderer.invoke('hermes:macsoft-admin:create-session', title),
-    createGlobalTrainingSession: (workflowTarget?: string) =>
-      ipcRenderer.invoke('hermes:macsoft-admin:create-global-training-session', workflowTarget),
-    getGlobalLearningStatus: (sessionId: string) => ipcRenderer.invoke('hermes:macsoft-admin:global-learning-status', sessionId),
-    toggleGlobalLearning: (input: { sessionId: string; enabled: boolean }) =>
-      ipcRenderer.invoke('hermes:macsoft-admin:toggle-global-learning', input),
-    listGlobalLearningProposals: () => ipcRenderer.invoke('hermes:macsoft-admin:list-global-learning-proposals'),
-    refreshGlobalLearningProposal: (sessionId: string) =>
-      ipcRenderer.invoke('hermes:macsoft-admin:refresh-global-learning-proposal', sessionId),
-    decideGlobalLearningProposal: (input: { proposalId: string; decision: 'approve' | 'reject' }) =>
-      ipcRenderer.invoke('hermes:macsoft-admin:decide-global-learning-proposal', input),
-    restoreGlobalLearningProposal: (proposalId: string) =>
-      ipcRenderer.invoke('hermes:macsoft-admin:restore-global-learning-proposal', proposalId),
     getMessages: (sessionId: string) => ipcRenderer.invoke('hermes:macsoft-admin:get-messages', sessionId),
     deleteSession: (sessionId: string) => ipcRenderer.invoke('hermes:macsoft-admin:delete-session', sessionId),
     uploadFile: (input: { sessionId: string; filename: string; dataUrl: string }) =>

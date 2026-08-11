@@ -14,6 +14,14 @@ from .metadata import ProductMetadata
 from .paths import ProductPaths
 
 
+_LEGACY_MACSOFT_SOUL = (
+    "Your name is MacSoft Agent.\n"
+    "When asked who you are in English, identify yourself only as MacSoft Agent.\n"
+    "When asked who you are in Chinese, identify yourself only as MacSoft 助手.\n"
+    "Do not mention the underlying framework or upstream product name."
+)
+
+
 @dataclass
 class InitializationResult:
     created: list[str] = field(default_factory=list)
@@ -77,6 +85,40 @@ def _synchronize_yaml_scalar(path: Path, key_path: tuple[str, ...], value: str) 
             if replacement == line:
                 return False
             lines[index] = replacement
+            _atomic_write(path, "".join(lines).encode("utf-8"))
+            return True
+        if not (remainder or "").strip() or (remainder or "").lstrip().startswith("#"):
+            parents.append((indent, key))
+
+    raise ValueError(f"{path.name} is missing required setting: {'.'.join(key_path)}")
+
+
+def _migrate_yaml_scalar_if_equal(
+    path: Path,
+    key_path: tuple[str, ...],
+    *,
+    old_value: str,
+    new_value: str,
+) -> bool:
+    """Migrate one exact historical scalar while retaining nearby customer text."""
+    lines = path.read_text(encoding="utf-8-sig").splitlines(keepends=True)
+    parents: list[tuple[int, str]] = []
+
+    for index, line in enumerate(lines):
+        match = _YAML_KEY_LINE.match(line)
+        if not match:
+            continue
+        prefix, key, remainder, newline = match.groups()
+        indent = len(prefix.expandtabs(8))
+        while parents and parents[-1][0] >= indent:
+            parents.pop()
+        current_path = tuple(item[1] for item in parents) + (key,)
+        if current_path == key_path:
+            raw_value, marker, comment = (remainder or "").partition("#")
+            if raw_value.strip() != old_value:
+                return False
+            suffix = f" #{comment}" if marker else ""
+            lines[index] = f"{prefix}{key}: {new_value}{suffix}{newline or ''}"
             _atomic_write(path, "".join(lines).encode("utf-8"))
             return True
         if not (remainder or "").strip() or (remainder or "").lstrip().startswith("#"):
@@ -261,6 +303,7 @@ def _sync_protected_directory(
     state: dict,
     protected_state: dict,
     result: InitializationResult,
+    include_directories: tuple[str, ...] = (),
 ) -> None:
     """Synchronize a managed directory without touching unknown runtime files.
 
@@ -272,6 +315,10 @@ def _sync_protected_directory(
         path.relative_to(source_root).as_posix(): path
         for path in source_root.rglob("*")
         if path.is_file()
+        and (
+            not include_directories
+            or path.relative_to(source_root).parts[0] in include_directories
+        )
     }
     managed_prefix = relative_destination_root.rstrip("/") + "/"
 
@@ -315,6 +362,43 @@ def _sync_protected_directory(
             result.conflicts.append(relative_destination)
 
 
+def _reconcile_removed_protected_resources(
+    *,
+    paths: ProductPaths,
+    active_resources: set[str],
+    managed_directory_roots: tuple[str, ...],
+    bundled_version: int,
+    state: dict,
+    protected_state: dict,
+    result: InitializationResult,
+) -> None:
+    """Remove obsolete unchanged managed files while preserving local edits."""
+    if int(state.get("protected_version", 0)) >= bundled_version:
+        return
+    for relative_destination in list(protected_state):
+        if relative_destination in active_resources:
+            continue
+        if any(
+            relative_destination.startswith(root.rstrip("/") + "/")
+            for root in managed_directory_roots
+        ):
+            # Managed-directory reconciliation owns these files.
+            continue
+        previous = protected_state.get(relative_destination, {})
+        previous_hash = previous.get("bundled_hash") if isinstance(previous, dict) else None
+        destination = paths.data_root / relative_destination
+        if not destination.exists():
+            protected_state.pop(relative_destination, None)
+            continue
+        current_hash = _sha256(destination)
+        if previous_hash and current_hash == previous_hash:
+            destination.unlink()
+            result.removed_protected.append(relative_destination)
+            protected_state.pop(relative_destination, None)
+        elif relative_destination not in result.conflicts:
+            result.conflicts.append(relative_destination)
+
+
 def initialize_product_data(paths: ProductPaths, metadata: ProductMetadata) -> InitializationResult:
     """Create packaged writable state without importing developer or customer data.
 
@@ -353,34 +437,22 @@ def initialize_product_data(paths: ProductPaths, metadata: ProductMetadata) -> I
         ),
         (paths.templates_root / "server" / "macsoft-server.yaml", paths.server_config),
     )
-    company_reference_names = (
-        "contacts-and-escalation.md",
-        "account-books.md",
-        "paths-and-storage.md",
-        "whatsapp-channels.md",
-    )
-    company_template_root = (
-        paths.templates_root
-        / "runtime"
-        / "skills"
-        / "pharmarise-company-configuration"
-        / "references"
-    )
-    company_runtime_root = (
-        paths.runtime_root
-        / "skills"
-        / "pharmarise-company-configuration"
-        / "references"
-    )
-    mutable_templates += tuple(
-        (company_template_root / name, company_runtime_root / name)
-        for name in company_reference_names
-    )
     for source, destination in mutable_templates:
         if _copy_template_once(source, destination, replacements):
             result.created.append(str(destination.relative_to(paths.data_root)))
         else:
             result.preserved.append(str(destination.relative_to(paths.data_root)))
+
+    # Identity is mutable customer data, so only migrate the exact historical
+    # MacSoft template. Any administrator-authored SOUL.md remains untouched.
+    try:
+        existing_soul = paths.soul_file.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        existing_soul = ""
+    normalized_soul = existing_soul.replace("\r\n", "\n").replace("\r", "\n").strip()
+    if normalized_soul == _LEGACY_MACSOFT_SOUL:
+        source_soul = (paths.templates_root / "runtime" / "SOUL.md").read_bytes()
+        _atomic_write(paths.soul_file, source_soul)
 
     # The localhost API credential is generated and owned by the Host. Keep the
     # independently preserved runtime and Server YAML files aligned while
@@ -412,6 +484,12 @@ def initialize_product_data(paths: ProductPaths, metadata: ProductMetadata) -> I
             ("hermes", "api_key"),
             local_api_key,
         )
+        _migrate_yaml_scalar_if_equal(
+            paths.server_config,
+            ("hermes", "request_timeout_seconds"),
+            old_value="600",
+            new_value="7200",
+        )
 
     if not paths.server_database.exists():
         connection = sqlite3.connect(paths.server_database)
@@ -424,11 +502,13 @@ def initialize_product_data(paths: ProductPaths, metadata: ProductMetadata) -> I
     if not isinstance(protected_state, dict):
         protected_state = {}
 
+    active_resources: set[str] = set()
     for item in resource_manifest.get("resources", []):
         if not isinstance(item, dict):
             continue
         relative_source = _relative_manifest_path(item.get("source"), "source")
         relative_destination = _relative_manifest_path(item.get("destination"), "destination")
+        active_resources.add(relative_destination)
         source = paths.templates_root / relative_source
         destination = paths.data_root / relative_destination
         _sync_protected_file(
@@ -441,11 +521,13 @@ def initialize_product_data(paths: ProductPaths, metadata: ProductMetadata) -> I
             result=result,
         )
 
+    managed_directory_roots: list[str] = []
     for item in resource_manifest.get("directories", []):
         if not isinstance(item, dict):
             continue
         relative_source = _relative_manifest_path(item.get("source"), "source")
         relative_destination = _relative_manifest_path(item.get("destination"), "destination")
+        managed_directory_roots.append(relative_destination)
         source_root = paths.templates_root / relative_source
         destination_root = paths.data_root / relative_destination
         _sync_protected_directory(
@@ -456,7 +538,22 @@ def initialize_product_data(paths: ProductPaths, metadata: ProductMetadata) -> I
             state=state,
             protected_state=protected_state,
             result=result,
+            include_directories=tuple(
+                str(value)
+                for value in item.get("include_directories", [])
+                if isinstance(value, str) and value
+            ),
         )
+
+    _reconcile_removed_protected_resources(
+        paths=paths,
+        active_resources=active_resources,
+        managed_directory_roots=tuple(managed_directory_roots),
+        bundled_version=bundled_version,
+        state=state,
+        protected_state=protected_state,
+        result=result,
+    )
 
     next_state = {
         "schema_version": metadata.data_schema_version,

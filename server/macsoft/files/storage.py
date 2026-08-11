@@ -4,8 +4,10 @@ import hashlib
 import os
 import re
 import sqlite3
+import warnings
 import zipfile
 from dataclasses import dataclass
+from io import BytesIO
 from pathlib import Path
 
 from macsoft.config import AppConfig
@@ -163,6 +165,32 @@ def detect_media_type(data: bytes, filename: str) -> str:
     )
 
 
+def validate_image_data(data: bytes, media_type: str) -> None:
+    """Require a complete image that Pillow can decode, not only magic bytes."""
+    from PIL import Image, UnidentifiedImageError
+
+    expected_format = {
+        "image/jpeg": "JPEG",
+        "image/png": "PNG",
+        "image/webp": "WEBP",
+    }.get(media_type)
+    if expected_format is None:
+        return
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(BytesIO(data)) as image:
+                actual_format = image.format
+                image.verify()
+        if actual_format != expected_format:
+            raise ValueError("image format does not match detected media type")
+    except (OSError, SyntaxError, ValueError, UnidentifiedImageError, Image.DecompressionBombWarning) as error:
+        raise UploadValidationError(
+            "invalid_image_data",
+            "The uploaded image is incomplete or invalid. Please upload it again.",
+        ) from error
+
+
 def validate_upload(data: bytes, filename: str | None) -> tuple[str, str]:
     if not data:
         raise UploadValidationError("empty_file", "The uploaded file is empty.")
@@ -172,7 +200,9 @@ def validate_upload(data: bytes, filename: str | None) -> tuple[str, str]:
             f"The uploaded file exceeds the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit.",
         )
     clean_name = _clean_filename(filename)
-    return clean_name, detect_media_type(data, clean_name)
+    media_type = detect_media_type(data, clean_name)
+    validate_image_data(data, media_type)
+    return clean_name, media_type
 
 
 def create_uploaded_file(

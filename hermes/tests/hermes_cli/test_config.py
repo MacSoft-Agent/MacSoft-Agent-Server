@@ -78,6 +78,27 @@ class TestEnsureHermesHome:
             ensure_hermes_home()
             assert soul_path.read_text(encoding="utf-8") == DEFAULT_SOUL_MD
 
+    def test_upgrades_upstream_default_identity_to_mac_soft_identity(self, tmp_path):
+        from hermes_cli.default_soul import DEFAULT_SOUL_MD
+
+        upstream_default = (
+            "You are Hermes Agent, an intelligent AI assistant created by Nous Research. "
+            "You are helpful, knowledgeable, and direct. You assist users with a wide "
+            "range of tasks including answering questions, writing and editing code, "
+            "analyzing information, creative work, and executing actions via your tools. "
+            "You communicate clearly, admit uncertainty when appropriate, and prioritize "
+            "being genuinely useful over being verbose unless otherwise directed below. "
+            "Be targeted and efficient in your exploration and investigations."
+        )
+        with patch.dict(os.environ, {"HERMES_HOME": str(tmp_path)}):
+            soul_path = tmp_path / "SOUL.md"
+            soul_path.write_text(upstream_default, encoding="utf-8")
+            ensure_hermes_home()
+            assert soul_path.read_text(encoding="utf-8") == DEFAULT_SOUL_MD
+            assert "Mac Soft AI Agent" in DEFAULT_SOUL_MD
+            assert "Hermes Agent" not in DEFAULT_SOUL_MD
+            assert "Nous Research" not in DEFAULT_SOUL_MD
+
     def test_preserves_legacy_template_with_user_persona(self, tmp_path):
         # If the user typed a persona alongside the scaffold, the content no
         # longer matches the known empty template — leave it untouched.

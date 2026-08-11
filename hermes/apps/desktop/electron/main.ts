@@ -94,7 +94,10 @@ import {
 } from './hardening'
 import { createLinkTitleWindow, guardLinkTitleSession, readLinkTitleWindowTitle } from './link-title-window'
 import { MacSoftDesktopChatClient } from './macsoft-desktop-chat-client'
-import { MacSoftDesktopAdminChatClient } from './macsoft-desktop-admin-chat-client'
+import {
+  MacSoftDesktopAdminChatClient,
+  recoverDisconnectedAdminStream
+} from './macsoft-desktop-admin-chat-client'
 import { MacSoftHostClient } from './macsoft-host-client'
 import { verifyMacSoftInstallerAuthenticode } from './macsoft-update-authenticode'
 import { loadMacSoftProductMetadata, resolveMacSoftProductPaths, resolvePackagedRuntimeHome } from './macsoft-product'
@@ -7402,7 +7405,6 @@ const macSoftAdminStreams = new Map<
   { controller: AbortController; onDestroyed: () => void; sessionId: string; webContents: WebContents }
 >()
 const MACSOFT_ADMIN_SESSION_ID_RE = /^admin_sess_[a-z0-9]+$/
-const MACSOFT_GLOBAL_PROPOSAL_ID_RE = /^global_prop_[a-z0-9]+$/
 const MACSOFT_ADMIN_MAX_MESSAGE_BYTES = 32_000
 const MACSOFT_ADMIN_MAX_UPLOAD_DATA_URL_BYTES = 28 * 1024 * 1024
 const MACSOFT_ADMIN_STREAM_EVENTS = new Set(['message_start', 'activity', 'token_delta', 'error', 'message_done'])
@@ -7453,6 +7455,7 @@ function cleanupMacSoftAdminStream(streamId: string) {
 
 async function pumpMacSoftAdminStream(
   streamId: string,
+  sessionId: string,
   response: Response,
   webContents: Electron.WebContents,
   controller: AbortController
@@ -7460,6 +7463,7 @@ async function pumpMacSoftAdminStream(
   const reader = response.body?.getReader()
   let buffer = ''
   const decoder = new TextDecoder()
+  let terminalEventSeen = false
 
   const emitRecord = (record: string) => {
     let event = ''
@@ -7469,6 +7473,7 @@ async function pumpMacSoftAdminStream(
       if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart())
     }
     if (!MACSOFT_ADMIN_STREAM_EVENTS.has(event) || dataLines.length === 0) return
+    if (event === 'message_done') terminalEventSeen = true
     try {
       sendMacSoftAdminStreamEvent(streamId, webContents, event, JSON.parse(dataLines.join('\n')))
     } catch {
@@ -7491,11 +7496,19 @@ async function pumpMacSoftAdminStream(
     }
     buffer += decoder.decode()
     if (buffer.trim()) emitRecord(buffer)
+    if (!controller.signal.aborted && !terminalEventSeen) {
+      throw new Error('Admin chat stream ended before completion.')
+    }
   } catch {
     if (!controller.signal.aborted) {
+      await recoverDisconnectedAdminStream(
+        sessionId,
+        controller.signal,
+        activeSessionId => getMacSoftDesktopAdminChatClient().interruptAdminChat(activeSessionId)
+      )
       sendMacSoftAdminStreamEvent(streamId, webContents, 'error', {
         code: 'stream_disconnected',
-        message: 'MacSoft Server chat stream disconnected.'
+        message: 'MacSoft Server chat stream disconnected. The previous reply is being stopped.'
       })
     }
   } finally {
@@ -7507,41 +7520,6 @@ ipcMain.handle('hermes:macsoft-admin:list-sessions', () => getMacSoftDesktopAdmi
 ipcMain.handle('hermes:macsoft-admin:create-session', (_event, title) => {
   if (title !== undefined && (typeof title !== 'string' || title.length > 80)) throw new Error('Invalid Admin session title.')
   return getMacSoftDesktopAdminChatClient().createAdminSession(title)
-})
-ipcMain.handle('hermes:macsoft-admin:create-global-training-session', (_event, workflowTarget) =>
-  getMacSoftDesktopAdminChatClient().createGlobalTrainingSession(
-    typeof workflowTarget === 'string' && workflowTarget.length <= 80 ? workflowTarget : 'general'
-  )
-)
-ipcMain.handle('hermes:macsoft-admin:global-learning-status', (_event, sessionId) =>
-  getMacSoftDesktopAdminChatClient().globalLearningStatus(validateMacSoftAdminSessionId(sessionId))
-)
-ipcMain.handle('hermes:macsoft-admin:toggle-global-learning', (_event, request) =>
-  getMacSoftDesktopAdminChatClient().toggleGlobalLearning(
-    validateMacSoftAdminSessionId(request?.sessionId),
-    request?.enabled === true
-  )
-)
-ipcMain.handle('hermes:macsoft-admin:list-global-learning-proposals', () =>
-  getMacSoftDesktopAdminChatClient().listGlobalLearningProposals()
-)
-ipcMain.handle('hermes:macsoft-admin:refresh-global-learning-proposal', (_event, sessionId) =>
-  getMacSoftDesktopAdminChatClient().refreshGlobalLearningProposal(validateMacSoftAdminSessionId(sessionId))
-)
-ipcMain.handle('hermes:macsoft-admin:decide-global-learning-proposal', (_event, request) => {
-  if (typeof request?.proposalId !== 'string' || !MACSOFT_GLOBAL_PROPOSAL_ID_RE.test(request.proposalId)) {
-    throw new Error('Invalid Global Learning proposal.')
-  }
-  if (request?.decision !== 'approve' && request?.decision !== 'reject') {
-    throw new Error('Invalid Global Learning decision.')
-  }
-  return getMacSoftDesktopAdminChatClient().decideGlobalLearningProposal(request.proposalId, request.decision)
-})
-ipcMain.handle('hermes:macsoft-admin:restore-global-learning-proposal', (_event, proposalId) => {
-  if (typeof proposalId !== 'string' || !MACSOFT_GLOBAL_PROPOSAL_ID_RE.test(proposalId)) {
-    throw new Error('Invalid Global Learning proposal.')
-  }
-  return getMacSoftDesktopAdminChatClient().restoreGlobalLearningProposal(proposalId)
 })
 ipcMain.handle('hermes:macsoft-admin:get-messages', (_event, sessionId) =>
   getMacSoftDesktopAdminChatClient().readAdminMessages(validateMacSoftAdminSessionId(sessionId))
@@ -7583,7 +7561,7 @@ ipcMain.handle('hermes:macsoft-admin:start-stream', async (event, request) => {
   webContents.once('destroyed', onDestroyed)
   try {
     const response = await getMacSoftDesktopAdminChatClient().startAdminChatStream(sessionId, message, uploadedFileIds, controller.signal)
-    void pumpMacSoftAdminStream(streamId, response, webContents, controller)
+    void pumpMacSoftAdminStream(streamId, sessionId, response, webContents, controller)
     return { streamId }
   } catch (error) {
     cleanupMacSoftAdminStream(streamId)

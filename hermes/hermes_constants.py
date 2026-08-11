@@ -121,28 +121,6 @@ def get_writable_skills_dir() -> Path:
             resolved_root = Path(macsoft_root).expanduser().resolve()
             if resolved_home.parent == resolved_root and resolved_home.name.startswith("prof_"):
                 return resolved_home / "skills" / "learned"
-            runtime_root = resolved_root.parent
-            staging_root = (runtime_root / "global-staging").resolve()
-            if (
-                resolved_home.parent == staging_root
-                and resolved_home.name.startswith("admin_sess_")
-            ):
-                # Global learning never writes into Plugin/Company/Workflow
-                # Skills. Its native writable root is a Server-owned overlay.
-                target = "general"
-                try:
-                    config_text = (resolved_home / "config.yaml").read_text(encoding="utf-8")
-                    match = re.search(
-                        r"^macsoft_global_workflow_target:\s*['\"]?([a-z0-9._-]+)",
-                        config_text,
-                        re.MULTILINE,
-                    )
-                    if match:
-                        target = match.group(1)
-                except (OSError, UnicodeDecodeError):
-                    pass
-                overlay_root = resolved_home / "skills" / "learned" / "workflow-improvements"
-                return overlay_root
         except OSError:
             pass
     return home / "skills"

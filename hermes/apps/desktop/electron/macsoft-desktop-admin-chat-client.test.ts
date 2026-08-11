@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { MacSoftDesktopAdminChatClient } from './macsoft-desktop-admin-chat-client'
+import {
+  MacSoftDesktopAdminChatClient,
+  recoverDisconnectedAdminStream
+} from './macsoft-desktop-admin-chat-client'
 
 test('Admin client bootstraps with Host token and retries one 401 once', async () => {
   const calls: Array<{ url: string; authorization: string | null }> = []
@@ -53,6 +56,43 @@ test('Admin interrupt stays on the authenticated 8787 Admin path', async () => {
   assert.equal(calls[1].url, 'http://127.0.0.1:8787/api/admin/chat/interrupt')
   assert.equal(calls[1].method, 'POST')
   assert.deepEqual(JSON.parse(calls[1].body || '{}'), { session_id: 'admin_sess_123' })
+})
+
+test('Admin client exposes a safe session-busy explanation from a 409 response', async () => {
+  const client = new MacSoftDesktopAdminChatClient(
+    { trustedHostToken: () => 'host-secret' },
+    async input => {
+      if (String(input).endsWith('/auth/session')) {
+        return new Response(JSON.stringify({ access_token: 'admin-secret' }), { status: 200 })
+      }
+      return new Response(JSON.stringify({
+        detail: {
+          error: {
+            code: 'admin_session_busy',
+            message: 'raw server text must not be shown'
+          }
+        }
+      }), { status: 409 })
+    }
+  )
+
+  await assert.rejects(
+    client.startAdminChatStream('admin_sess_123', 'retry'),
+    /This Admin chat is still stopping\. Please retry shortly\./
+  )
+})
+
+test('unexpected Admin stream disconnect requests cleanup for the owning session', async () => {
+  const interrupted: string[] = []
+
+  const requested = await recoverDisconnectedAdminStream(
+    'admin_sess_123',
+    new AbortController().signal,
+    async sessionId => { interrupted.push(sessionId) }
+  )
+
+  assert.equal(requested, true)
+  assert.deepEqual(interrupted, ['admin_sess_123'])
 })
 
 test('Admin file upload remains on the separate authenticated Admin session path', async () => {

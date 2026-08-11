@@ -1,4 +1,9 @@
-# WP-011 - Server-global Hermes learning
+# WP-011 - Server-global Hermes learning (superseded)
+
+> Superseded on 2026-08-10 by
+> `docs/superpowers/specs/2026-08-10-server-hermes-default-learning-design.md`.
+> Global Training is no longer executable product behavior. This document is
+> retained only as historical architecture evidence.
 
 ## Status
 

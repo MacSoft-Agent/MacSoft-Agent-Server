@@ -42,6 +42,21 @@ FORBIDDEN_NAMES = {
     "state.db",
     "client_skills",
 }
+PACKAGED_SKILL_DIRECTORIES = {
+    "autocount-local-direct-payment-knockoff",
+    "autocount-local-direct-purchase-invoice",
+    "autocount-payment-knockoff-automation",
+    "autocount-receiving-supplier-invoice-automation",
+    "macsoft-chart-dashboard",
+    "macsoft-chart-visualization",
+    "kpi-dashboard-design",
+    "data-storytelling",
+    "web-design-engineer",
+    "pharmarise-company-configuration",
+}
+EXCLUDED_PACKAGED_WORKFLOW_DIRECTORIES = {
+    "autocount-bank-reconciliation",
+}
 
 
 def _ignore_ai(directory: str, names: list[str]) -> set[str]:
@@ -65,6 +80,16 @@ def _ignore_python(directory: str, names: list[str]) -> set[str]:
 
 def _ignore_generated(directory: str, names: list[str]) -> set[str]:
     return {name for name in names if name == "__pycache__" or name.endswith((".pyc", ".log", ".backup"))}
+
+
+def _ignore_templates(directory: str, names: list[str]) -> set[str]:
+    ignored = _ignore_generated(directory, names)
+    normalized = Path(directory).as_posix().lower().rstrip("/")
+    if normalized.endswith("/protected/runtime/skills"):
+        ignored.update(name for name in names if name not in PACKAGED_SKILL_DIRECTORIES)
+    elif normalized.endswith("/templates/runtime/skills"):
+        ignored.update(names)
+    return ignored
 
 
 def _ignore_site_packages(directory: str, names: list[str]) -> set[str]:
@@ -174,6 +199,8 @@ def audit_staging(root: Path, development_root: Path) -> list[str]:
             )
         ):
             issues.append(f"WhatsApp session state included: {relative}")
+        if any(part.lower() in EXCLUDED_PACKAGED_WORKFLOW_DIRECTORIES for part in path.parts):
+            issues.append(f"Excluded company workflow included: {relative}")
         lowered_name = path.name.lower()
         if path.is_file() and (
             lowered_name.startswith("__editable__.")
@@ -235,7 +262,7 @@ def build_staging(source_root: Path, desktop_directory: Path, output: Path) -> d
 
     shutil.copy2(source_root / "product.json", output / "product.json")
     shutil.copytree(source_root / "product_runtime" / "macsoft_runtime", output / "macsoft_runtime", ignore=_ignore_generated)
-    shutil.copytree(source_root / "packaging" / "templates", output / "templates", ignore=_ignore_generated)
+    shutil.copytree(source_root / "packaging" / "templates", output / "templates", ignore=_ignore_templates)
     shutil.copytree(source_root / "server" / "macsoft", output / "server" / "macsoft", ignore=_ignore_generated)
     shutil.copytree(source_root / "hermes", output / "ai-service", ignore=_ignore_ai)
     shutil.copytree(desktop_directory.resolve(), output / "desktop")

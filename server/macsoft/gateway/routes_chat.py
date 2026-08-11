@@ -69,7 +69,7 @@ _HTML_DOCUMENT_EXTRACT_RE = re.compile(
 )
 from macsoft.profiles.registry import require_device_profile
 from macsoft.profiles.runs import record_run_finished, record_run_started
-from macsoft.global_learning.homes import read_approved_global_memory
+from macsoft.server_home import read_or_create_server_context_snapshot
 
 # Keep the established test/extension seam name while routing it through the
 # structured Runs implementation.  This is not the legacy chat-completions
@@ -500,7 +500,11 @@ def chat_stream(
                     "role": "system",
                     "content": build_protected_system_instruction(
                         client_skill_instruction,
-                        global_learning_instruction=read_approved_global_memory(config),
+                        server_learning_instruction=read_or_create_server_context_snapshot(
+                            config,
+                            profile_id=profile_id,
+                            session_id=body.session_id,
+                        ),
                     ),
                 },
             )

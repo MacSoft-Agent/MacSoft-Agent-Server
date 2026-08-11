@@ -98,47 +98,8 @@ CHAT_COMPLETIONS_SSE_KEEPALIVE_SECONDS = 30.0
 MAX_NORMALIZED_TEXT_LENGTH = 65_536  # 64 KB cap for normalized content parts
 MAX_CONTENT_LIST_SIZE = 1_000  # Max items when content is an array
 _MACSOFT_PROFILE_ID_RE = re.compile(r"^prof_[a-f0-9]{32}$")
-_MACSOFT_ADMIN_SESSION_ID_RE = re.compile(r"^admin_sess_[a-f0-9]{32}$")
 _MACSOFT_SKILL_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$")
 _MACSOFT_BACKUP_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,191}$")
-
-_MACSOFT_GLOBAL_REVIEW_RULES = """You are reviewing a Server-wide Global Training session.
-Any accepted learning may affect every paired MacSoft Client.
-
-Extract only broadly reusable operational knowledge: event analysis and
-handling procedures, task decomposition, validation methods, failure
-prevention, decision rules, safe tool-use improvements, and workflow or
-response-quality improvements. Prefer improvements to how a problem is solved,
-not facts about the person who raised it.
-
-Never learn personal preferences, names, identities, credentials, account
-details, local file paths, one person's tone, customer-specific facts,
-temporary conversation context, or unsupported assumptions. If the session
-does not contain a safe reusable improvement, make no change and stop.
-
-For this Global Home, USER.md is the MacSoft Agent service profile: product
-goals, global service principles, and administrator-approved quality
-expectations. MEMORY.md contains only cross-client methods, lessons and
-workflow improvements. Skills may only be created or changed in
-skills/learned. Do not modify Core, Company, Workflow, Private, or device
-skills. Do not use AutoCount write actions."""
-
-_MACSOFT_GLOBAL_MEMORY_REVIEW_PROMPT = (
-    "Review the conversation above for a safe Server-global Memory improvement.\n\n"
-    + _MACSOFT_GLOBAL_REVIEW_RULES
-    + "\n\nUse the memory tool only when the proposed entry satisfies those rules."
-)
-_MACSOFT_GLOBAL_SKILL_REVIEW_PROMPT = (
-    "Review the conversation above for a safe Server-global Progress Skill improvement.\n\n"
-    + _MACSOFT_GLOBAL_REVIEW_RULES
-    + "\n\nUse the existing skill tools only when a reusable class-level procedure is justified."
-)
-_MACSOFT_GLOBAL_COMBINED_REVIEW_PROMPT = (
-    "Review the conversation above for safe Server-global Memory and Progress Skill improvements.\n\n"
-    + _MACSOFT_GLOBAL_REVIEW_RULES
-    + "\n\nMake only justified native memory or learned-skill changes; otherwise make no change."
-)
-
 
 def _resolve_macsoft_profile_home(request: "web.Request") -> tuple[Optional[Path], Optional["web.Response"]]:
     """Resolve the Server-issued device profile without accepting a path.
@@ -161,18 +122,6 @@ def _resolve_macsoft_profile_home(request: "web.Request") -> tuple[Optional[Path
         root = Path(shared_runtime).expanduser().resolve()
         if admin_scope == "admin":
             home = (root / "admin").resolve()
-        elif admin_scope.startswith("global-training:"):
-            session_id = admin_scope.split(":", 1)[1]
-            if not _MACSOFT_ADMIN_SESSION_ID_RE.fullmatch(session_id):
-                return None, web.json_response(
-                    _openai_error("Invalid Global Training scope"), status=400
-                )
-            staging_root = (root / "global-staging").resolve()
-            home = (staging_root / session_id).resolve()
-            if home.parent != staging_root:
-                return None, web.json_response(
-                    _openai_error("Invalid Global Training scope"), status=400
-                )
         else:
             return None, web.json_response(_openai_error("Invalid MacSoft Admin scope"), status=400)
         if not home.is_dir():
@@ -252,30 +201,6 @@ def _write_macsoft_learning_event(
     }
     temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     os.replace(temporary, target)
-
-
-def _configure_global_training_review(agent: Any, profile_home: Path) -> None:
-    """Customize only the native review prompt of a Global Training agent."""
-    if profile_home.parent.name != "global-staging":
-        return
-    try:
-        import yaml
-        config = yaml.safe_load((profile_home / "config.yaml").read_text(encoding="utf-8")) or {}
-        target = str(config.get("macsoft_global_workflow_target") or "general")
-    except Exception:
-        target = "general"
-    target_rule = (
-        "Classify this event to exactly one existing Workflow Improvement Overlay or general. "
-        "Only high-confidence classification may write; otherwise make no change. "
-        "When creating a global improvement Skill, use skill_manage category equal to the chosen workflow id."
-        if target == "general"
-        else f"This is targeted training for '{target}'. Only improve that Workflow Improvement Overlay; do not write general Memory or any other workflow. Use skill_manage category='{target}'."
-    )
-    # `spawn_background_review_thread` deliberately supports these per-agent
-    # overrides.  Hermes still decides cadence, tool execution and mutations.
-    agent._MEMORY_REVIEW_PROMPT = _MACSOFT_GLOBAL_MEMORY_REVIEW_PROMPT + "\n\n" + target_rule
-    agent._SKILL_REVIEW_PROMPT = _MACSOFT_GLOBAL_SKILL_REVIEW_PROMPT + "\n\n" + target_rule
-    agent._COMBINED_REVIEW_PROMPT = _MACSOFT_GLOBAL_COMBINED_REVIEW_PROMPT + "\n\n" + target_rule
 
 
 def _run_audited_macsoft_mutation(source: str, skill_id: str | None, operation):
@@ -4672,8 +4597,6 @@ class APIServerAdapter(BasePlatformAdapter):
                                 gateway_session_key=gateway_session_key,
                                 route=route,
                             )
-                            if profile_home is not None:
-                                _configure_global_training_review(agent, profile_home)
                             if profile_home is not None:
                                 # The review itself is a daemon thread and must
                                 # never hold the foreground SSE open. Its native

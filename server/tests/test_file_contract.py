@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import tempfile
 import unittest
 from io import BytesIO
@@ -17,7 +18,9 @@ from macsoft.gateway.errors import register_exception_handlers
 from macsoft.gateway.routes_files import router as files_router
 
 
-PNG = b"\x89PNG\r\n\x1a\n" + b"macsoft-test-image"
+PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
 
 
 class FileContractTests(unittest.TestCase):

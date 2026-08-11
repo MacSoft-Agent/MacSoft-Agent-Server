@@ -203,7 +203,6 @@ interface ChatSidebarProps extends React.ComponentProps<typeof Sidebar> {
   macSoftCustomerRuntime?: boolean
   macSoftSourceTestRuntime?: boolean
   onNavigate: (item: SidebarNavItem) => void
-  onOpenGlobalTraining?: () => void
   onLoadMoreSessions: () => Promise<void> | void
   onLoadMoreProfileSessions?: (profile: string) => Promise<void> | void
   onLoadMoreMessaging?: (platform: string) => Promise<void> | void
@@ -221,7 +220,6 @@ export function ChatSidebar({
   macSoftCustomerRuntime = false,
   macSoftSourceTestRuntime = false,
   onNavigate,
-  onOpenGlobalTraining,
   onLoadMoreSessions,
   onLoadMoreProfileSessions,
   onLoadMoreMessaging,
@@ -1118,19 +1116,6 @@ export function ChatSidebar({
                   </SidebarMenuItem>
                 )
               })}
-              {macSoftCustomerRuntime && (
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    className="flex h-7 w-full justify-start gap-2 rounded-md border border-transparent px-2 text-left text-[0.8125rem] font-medium text-(--ui-text-secondary) [-webkit-app-region:no-drag] hover:bg-(--ui-control-hover-background) hover:text-foreground"
-                    onClick={onOpenGlobalTraining}
-                    tooltip="Global Training"
-                    type="button"
-                  >
-                    <Codicon className="size-4 shrink-0" name="beaker" />
-                    {contentVisible && <span className="min-w-0 flex-1 truncate">Global Training</span>}
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              )}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

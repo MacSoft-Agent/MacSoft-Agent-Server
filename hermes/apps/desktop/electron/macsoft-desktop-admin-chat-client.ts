@@ -10,29 +10,9 @@ export interface AdminSessionSummary {
   id: string
   session_id: string
   title: string
-  session_type: 'chat' | 'global_training'
-  workflow_target: string
+  session_type: 'chat'
   created_at: string
   updated_at: string
-}
-
-export interface GlobalLearningProposal {
-  proposal_id: string
-  training_session_id: string
-  run_id: string | null
-  kind: string
-  workflow_target: string
-  status: 'pending' | 'approved' | 'rejected'
-  created_at: string
-  decided_at: string | null
-  previous_hash: string | null
-  new_hash: string | null
-  changes: Array<{
-    path: string
-    action: 'create' | 'update' | 'delete'
-    previous_hash: string | null
-    new_hash: string | null
-  }>
 }
 
 export interface AdminMessage {
@@ -59,6 +39,23 @@ export interface AdminUploadedFile {
   sha256: string
   created_at: string
   createdAt: string
+}
+
+const SAFE_ADMIN_ERROR_MESSAGES: Record<string, string> = {
+  admin_session_busy: 'This Admin chat is still stopping. Please retry shortly.',
+  admin_run_not_active: 'The previous Admin reply has already stopped.',
+  invalid_image: 'The attached image is invalid. Please upload it again.',
+  invalid_image_data: 'The attached image is invalid. Please upload it again.'
+}
+
+export async function recoverDisconnectedAdminStream(
+  sessionId: string,
+  signal: AbortSignal,
+  interrupt: (sessionId: string) => Promise<void>
+): Promise<boolean> {
+  if (signal.aborted) return false
+  await interrupt(sessionId).catch(() => undefined)
+  return true
 }
 
 export class MacSoftDesktopAdminChatClient {
@@ -99,67 +96,6 @@ export class MacSoftDesktopAdminChatClient {
     })
     if (!body?.session) throw new Error('MacSoft Server returned an invalid Admin session.')
     return body.session as AdminSessionSummary
-  }
-
-  async createGlobalTrainingSession(workflowTarget = 'general'): Promise<AdminSessionSummary> {
-    const body = await this.requestJson('/api/admin/global-learning/sessions', {
-      method: 'POST', body: JSON.stringify({ workflow_target: workflowTarget })
-    })
-    if (!body?.session) throw new Error('MacSoft Server returned an invalid Global Training session.')
-    return body.session as AdminSessionSummary
-  }
-
-  async globalLearningStatus(sessionId: string): Promise<{ enabled: boolean; session_id: string | null }> {
-    const body = await this.requestJson(
-      `/api/admin/global-learning/status?session_id=${encodeURIComponent(sessionId)}`,
-      { method: 'GET' }
-    )
-    return { enabled: body?.enabled === true, session_id: typeof body?.session_id === 'string' ? body.session_id : null }
-  }
-
-  async toggleGlobalLearning(sessionId: string, enabled: boolean): Promise<{ enabled: boolean }> {
-    const body = await this.requestJson('/api/admin/global-learning/toggle', {
-      method: 'POST',
-      body: JSON.stringify({
-        session_id: sessionId,
-        enabled,
-        confirmation: enabled ? 'ENABLE GLOBAL LEARNING' : ''
-      })
-    })
-    return { enabled: body?.enabled === true }
-  }
-
-  async listGlobalLearningProposals(): Promise<GlobalLearningProposal[]> {
-    const body = await this.requestJson('/api/admin/global-learning/proposals', { method: 'GET' })
-    return Array.isArray(body?.proposals) ? body.proposals as GlobalLearningProposal[] : []
-  }
-
-  async refreshGlobalLearningProposal(sessionId: string): Promise<GlobalLearningProposal | null> {
-    const body = await this.requestJson('/api/admin/global-learning/proposals/refresh', {
-      method: 'POST',
-      body: JSON.stringify({ session_id: sessionId })
-    })
-    return body?.proposal ? body.proposal as GlobalLearningProposal : null
-  }
-
-  async decideGlobalLearningProposal(proposalId: string, decision: 'approve' | 'reject'): Promise<GlobalLearningProposal> {
-    const body = await this.requestJson(
-      `/api/admin/global-learning/proposals/${encodeURIComponent(proposalId)}/${decision}`,
-      { method: 'POST' }
-    )
-    if (!body?.proposal) throw new Error('MacSoft Server returned an invalid Global Learning proposal.')
-    return body.proposal as GlobalLearningProposal
-  }
-
-  async restoreGlobalLearningProposal(proposalId: string): Promise<GlobalLearningProposal> {
-    const body = await this.requestJson(
-      `/api/admin/global-learning/proposals/${encodeURIComponent(proposalId)}/restore`,
-      { method: 'POST' }
-    )
-    if (!body?.proposal || body?.restored !== true) {
-      throw new Error('MacSoft Server could not restore this Global Learning proposal.')
-    }
-    return body.proposal as GlobalLearningProposal
   }
 
   async readAdminMessages(sessionId: string): Promise<AdminMessage[]> {
@@ -225,7 +161,10 @@ export class MacSoftDesktopAdminChatClient {
       response = await this.send(pathname, init, timeoutMs)
     }
     if (!response.ok) {
-      throw new Error('MacSoft Server Admin request failed.')
+      const body = await this.readJson(response)
+      const code = body?.detail?.error?.code
+      const safeMessage = typeof code === 'string' ? SAFE_ADMIN_ERROR_MESSAGES[code] : undefined
+      throw new Error(safeMessage || 'MacSoft Server Admin request failed.')
     }
     return response
   }

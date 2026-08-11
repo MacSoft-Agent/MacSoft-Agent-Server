@@ -6,7 +6,13 @@ from io import BytesIO, StringIO
 from typing import Any
 
 from macsoft.config import AppConfig
-from macsoft.files.storage import AdminUploadedFileRecord, UploadedFileRecord, stored_path
+from macsoft.files.storage import (
+    AdminUploadedFileRecord,
+    UploadedFileRecord,
+    UploadValidationError,
+    stored_path,
+    validate_image_data,
+)
 
 
 MAX_EXTRACTED_TEXT_CHARS = 80_000
@@ -123,6 +129,7 @@ def build_hermes_user_content(
     *,
     message: str,
     files: list[UploadedFileRecord | AdminUploadedFileRecord],
+    skip_unreadable_images: bool = False,
 ) -> str | list[dict[str, Any]]:
     if not files:
         return message
@@ -141,6 +148,15 @@ def build_hermes_user_content(
             )
         )
         if record.media_type.startswith("image/"):
+            try:
+                validate_image_data(data, record.media_type)
+            except UploadValidationError as error:
+                if skip_unreadable_images:
+                    text_parts.append(
+                        f"[Previously attached image unavailable: {record.original_name}]"
+                    )
+                    continue
+                raise AttachmentContentError(error.code, str(error)) from error
             encoded = base64.b64encode(data).decode("ascii")
             image_parts.append(
                 {

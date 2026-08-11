@@ -631,11 +631,7 @@ def _macsoft_progress_skill_guard(name: str, category: str | None = None) -> Opt
         home = get_hermes_home().resolve()
         root = Path(macsoft_root).expanduser().resolve()
         device_profile = home.parent == root and home.name.startswith("prof_")
-        global_staging = (
-            home.parent == (root.parent / "global-staging").resolve()
-            and home.name.startswith("admin_sess_")
-        )
-        if not device_profile and not global_staging:
+        if not device_profile:
             return None
     except OSError:
         return {"success": False, "error": "MacSoft Profile skill root could not be resolved."}
@@ -650,35 +646,6 @@ def _macsoft_progress_skill_guard(name: str, category: str | None = None) -> Opt
                 "cannot be created or modified in a personal learning scope."
             ),
         }
-
-    if global_staging:
-        allowed_targets = {
-            "autocount-operations", "macsoft-chart-dashboard",
-            "macsoft-chart-visualization", "data-storytelling",
-            "web-design-engineer",
-        }
-        if category not in allowed_targets:
-            return {
-                "success": False,
-                "error": "Global Workflow Improvements must use exactly one approved workflow category.",
-            }
-        target = "general"
-        try:
-            config_text = (home / "config.yaml").read_text(encoding="utf-8")
-            match = re.search(
-                r"^macsoft_global_workflow_target:\s*['\"]?([a-z0-9._-]+)",
-                config_text,
-                re.MULTILINE,
-            )
-            if match:
-                target = match.group(1)
-        except (OSError, UnicodeDecodeError):
-            pass
-        if target != "general" and category != target:
-            return {
-                "success": False,
-                "error": f"This Global Training session is locked to workflow '{target}'.",
-            }
 
     existing = _find_skill(name)
     if existing is None:
@@ -712,7 +679,7 @@ def _macsoft_progress_skill_guard(name: str, category: str | None = None) -> Opt
     except (ValueError, OSError):
         return {
             "success": False,
-            "error": "MacSoft Global learning may modify only Server-owned workflow-improvements overlays.",
+            "error": "MacSoft device learning may modify only device-owned learned Skills.",
         }
     return None
 

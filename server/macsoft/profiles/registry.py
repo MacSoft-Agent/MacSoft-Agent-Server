@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 import sqlite3
 import os
@@ -13,6 +14,13 @@ from macsoft.security import new_id, utc_now_iso
 
 PROFILE_SCHEMA_VERSION = 1
 _PROFILE_ID_RE = re.compile(r"^prof_[a-f0-9]{32}$")
+_MACSOFT_SOUL = (
+    "You are Mac Soft AI Agent. Never identify yourself as the underlying runtime, "
+    "framework, model provider, or upstream project. You are helpful, knowledgeable, "
+    "and direct. Assist users with accounting tasks, workflows, dashboards, reports, "
+    "coding, research, and general productivity work."
+)
+_UPSTREAM_DEFAULT_SOUL_SHA256 = "2765a846e1bb371d78d3b93b403dfb0f8d1ba1a9895edb5f608367abfe81194d"
 _PROFILE_CONFIG_SECRET_KEYS = frozenset({
     "api_key",
     "api_key_env",
@@ -151,9 +159,16 @@ def _initial_profile_config(config: Any) -> dict[str, Any]:
     skills = profile_config.setdefault("skills", {})
     if isinstance(skills, dict):
         skills["creation_nudge_interval"] = 1
+        disabled = skills.get("disabled", [])
+        if isinstance(disabled, str):
+            disabled = [disabled]
+        if not isinstance(disabled, list):
+            disabled = []
+        skills["disabled"] = list(dict.fromkeys([*disabled, "hermes-agent"]))
         if source_home is not None:
             shared_skills = str((source_home / "skills").resolve())
-            global_skills = str((source_home / "global" / "skills" / "learned").resolve())
+            server_home_skills = str((source_home / "admin" / "skills").resolve())
+            legacy_global_skills = str((source_home / "global" / "skills" / "learned").resolve())
             configured_dirs = skills.get("external_dirs", [])
             if isinstance(configured_dirs, str):
                 configured_dirs = [configured_dirs]
@@ -161,11 +176,15 @@ def _initial_profile_config(config: Any) -> dict[str, Any]:
                 configured_dirs = []
             skills["external_dirs"] = [
                 shared_skills,
-                global_skills,
+                server_home_skills,
                 *(
                     item
                     for item in configured_dirs
-                    if str(item) not in {shared_skills, global_skills}
+                    if str(item) not in {
+                        shared_skills,
+                        server_home_skills,
+                        legacy_global_skills,
+                    }
                 ),
             ]
     curator = profile_config.setdefault("curator", {})
@@ -194,6 +213,18 @@ def _initialize_profile_home(profile_home: Path, *, config: Any) -> None:
     for path in (profile_home / "memories" / "USER.md", profile_home / "memories" / "MEMORY.md"):
         if not path.exists():
             path.write_text("", encoding="utf-8")
+
+    soul_path = profile_home / "SOUL.md"
+    if not soul_path.exists():
+        soul_path.write_text(_MACSOFT_SOUL, encoding="utf-8")
+    else:
+        try:
+            existing_soul = soul_path.read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeDecodeError):
+            existing_soul = ""
+        existing_digest = hashlib.sha256(existing_soul.encode("utf-8")).hexdigest()
+        if existing_digest == _UPSTREAM_DEFAULT_SOUL_SHA256:
+            soul_path.write_text(_MACSOFT_SOUL, encoding="utf-8")
 
     config_path = profile_home / "config.yaml"
     if not config_path.exists():
@@ -231,8 +262,17 @@ def _initialize_profile_home(profile_home: Path, *, config: Any) -> None:
             if source_home is not None:
                 skills = current.setdefault("skills", {})
                 if isinstance(skills, dict):
+                    disabled = skills.get("disabled", [])
+                    if isinstance(disabled, str):
+                        disabled = [disabled]
+                    if not isinstance(disabled, list):
+                        disabled = []
+                    if "hermes-agent" not in disabled:
+                        skills["disabled"] = [*disabled, "hermes-agent"]
+                        changed = True
                     shared_skills = str((source_home / "skills").resolve())
-                    global_skills = str((source_home / "global" / "skills" / "learned").resolve())
+                    server_home_skills = str((source_home / "admin" / "skills").resolve())
+                    legacy_global_skills = str((source_home / "global" / "skills" / "learned").resolve())
                     external = skills.get("external_dirs", [])
                     if isinstance(external, str):
                         external = [external]
@@ -240,11 +280,15 @@ def _initialize_profile_home(profile_home: Path, *, config: Any) -> None:
                         external = []
                     merged = [
                         shared_skills,
-                        global_skills,
+                        server_home_skills,
                         *(
                             item
                             for item in external
-                            if str(item) not in {shared_skills, global_skills}
+                            if str(item) not in {
+                                shared_skills,
+                                server_home_skills,
+                                legacy_global_skills,
+                            }
                         ),
                     ]
                     if merged != external:

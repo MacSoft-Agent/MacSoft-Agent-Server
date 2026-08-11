@@ -35,6 +35,10 @@ Require one company/account book, authenticated authorized actor, current Paymen
 
 On timeout or disconnect, never retry immediately. Search Case events and live AutoCount by the stable action/reference and compare invoice balances. Record success only when read-back proves it. If the outcome remains uncertain, escalate for manual verification.
 
+If execution returns `workflow_approval_required`, `workflow_context_invalid`, or `workflow_approval_stale_or_invalid`, the final action is not ready. Do not retry or switch command paths. Return to `autocount-payment-knockoff-automation` for a current preview and approval. A local Workflow error is not evidence of an AutoCount license failure; only report licensing when AutoCount explicitly rejects the submitted command for that reason.
+
+Keep the customer reply natural and short. Say what is ready, what still needs confirmation, or what was saved and verified. Do not expose workflow-context fields, action digests, Tool names, or Case mechanics unless the user explicitly asks for technical detail.
+
 ## Never
 
 - execute for an unmapped/unapproved actor;

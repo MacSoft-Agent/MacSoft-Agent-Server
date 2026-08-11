@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -25,6 +26,21 @@ _CONSEQUENTIAL_COMMANDS = {
     "update-purchase-invoice",
     "transfer-purchase-order-to-purchase-invoice",
 }
+_WHATSAPP_WRITE_PREFIXES = {
+    "create",
+    "delete",
+    "edit",
+    "post",
+    "save",
+    "set",
+    "transfer",
+    "update",
+    "void",
+}
+_COMPANY_SCOPE_KEY = re.compile(
+    r"(?:^|[|,{])\s*(?:[-*]\s*)?(company_id|account_book_id)\s*(?::|=|\|)\s*([^|,}\]\s]+)",
+    re.IGNORECASE,
+)
 
 
 def _response(ok: bool, **values: Any) -> str:
@@ -46,6 +62,16 @@ def _session_value(name: str) -> str:
         return ""
 
 
+def _canonical_whatsapp_user_id(value: str) -> str:
+    """Use Hermes' stable phone identity instead of a display name or raw LID."""
+    try:
+        from gateway.whatsapp_identity import canonical_whatsapp_identifier
+
+        return canonical_whatsapp_identifier(value) or value.strip()
+    except Exception:
+        return value.strip()
+
+
 def current_actor() -> dict[str, str]:
     return {
         "user_id": _session_value("HERMES_SESSION_USER_ID"),
@@ -60,8 +86,9 @@ def _resolve_whatsapp_actor(actor: dict[str, str]) -> dict[str, str]:
     """Map a trusted WhatsApp sender to the existing MacSoft user authority."""
     if actor["platform"] != "whatsapp":
         return actor
+    canonical_user_id = _canonical_whatsapp_user_id(actor["user_id"])
     mapping = workflow_store.resolve_whatsapp_identifier(
-        _config(), identifier_type="user", identifier_value=actor["user_id"]
+        _config(), identifier_type="user", identifier_value=canonical_user_id
     )
     internal_user_id = str((mapping or {}).get("internal_user_id") or "").strip()
     if not internal_user_id:
@@ -86,7 +113,11 @@ def _resolve_whatsapp_actor(actor: dict[str, str]) -> dict[str, str]:
     user = payload.get("user") if isinstance(payload, dict) else None
     if not isinstance(user, dict) or str(user.get("user_id", "")) != internal_user_id:
         raise workflow_store.WorkflowStoreError("MacSoft user-role lookup returned an invalid identity.")
-    return {**actor, "user_id": internal_user_id, "role": str(user.get("role", "")).strip()}
+    return {
+        **actor,
+        "user_id": internal_user_id,
+        "role": str(user.get("role", "")).strip(),
+    }
 
 
 def _require_actor(*, financial: bool = False) -> dict[str, str]:
@@ -97,9 +128,66 @@ def _require_actor(*, financial: bool = False) -> dict[str, str]:
         )
     if financial and actor["role"].strip().lower() not in _FINANCIAL_APPROVER_ROLES:
         raise workflow_store.WorkflowStoreError(
-            "This financial action requires an authenticated Admin or Accountant role."
+            "This action requires staff permission. Please contact Admin: +60 18-314 4861."
         )
     return actor
+
+
+def _account_book_reference_path() -> Path:
+    runtime_root = Path(__file__).resolve().parents[2]
+    return (
+        runtime_root
+        / "skills"
+        / "pharmarise-company-configuration"
+        / "references"
+        / "account-books.md"
+    )
+
+
+def _configured_account_book_scopes(
+    path: Path | None = None, config: dict[str, Any] | None = None
+) -> list[tuple[str, str]]:
+    """Return the one Server-selected scope, with the legacy reference as fallback."""
+    plugin_config = config if config is not None else _config()
+    configured_company_id = str(
+        plugin_config.get("workflowCompanyId") or plugin_config.get("companyId") or ""
+    ).strip()
+    configured_account_book_id = str(
+        plugin_config.get("workflowAccountBookId")
+        or plugin_config.get("companyId")
+        or ""
+    ).strip()
+    if configured_company_id and configured_account_book_id:
+        # Server Desktop's companyId is the selected AutoCount company/account-book
+        # key. Reusing it as the workflow book key keeps one stable scope without
+        # requiring a second customer-managed mapping.
+        return [(configured_company_id, configured_account_book_id)]
+
+    reference = path or _account_book_reference_path()
+    try:
+        lines = reference.read_text(encoding="utf-8-sig").splitlines()
+    except (FileNotFoundError, OSError, UnicodeError):
+        return []
+
+    scopes: list[tuple[str, str]] = []
+    current: dict[str, str] = {}
+    for line in lines:
+        matches = _COMPANY_SCOPE_KEY.findall(line)
+        for raw_key, raw_value in matches:
+            key = raw_key.lower()
+            value = raw_value.strip().strip("`'\"")
+            if not value:
+                continue
+            if key == "company_id" and current.get("company_id"):
+                if current.get("account_book_id"):
+                    scopes.append((current["company_id"], current["account_book_id"]))
+                current = {}
+            current[key] = value
+            if current.get("company_id") and current.get("account_book_id"):
+                scopes.append((current["company_id"], current["account_book_id"]))
+                current = {}
+
+    return list(dict.fromkeys(scopes))
 
 
 def _enforce_trusted_scope(
@@ -112,9 +200,16 @@ def _enforce_trusted_scope(
         _config(), identifier_type="chat", identifier_value=actor["chat_id"]
     )
     if mapping is None:
-        raise workflow_store.WorkflowStoreError(
-            "This WhatsApp chat is not mapped to a MacSoft company and account book."
-        )
+        configured_scopes = _configured_account_book_scopes(config=_config())
+        if len(configured_scopes) != 1:
+            raise workflow_store.WorkflowStoreError(
+                "MacSoft company setup is missing or ambiguous. An administrator must configure exactly one account book for automatic WhatsApp processing."
+            )
+        configured_company_id, configured_account_book_id = configured_scopes[0]
+        mapping = {
+            "company_id": configured_company_id,
+            "account_book_id": configured_account_book_id,
+        }
     if (
         str(mapping.get("company_id")) != company_id
         or str(mapping.get("account_book_id")) != account_book_id
@@ -124,18 +219,49 @@ def _enforce_trusted_scope(
         )
 
 
+def _trusted_scope(actor: dict[str, str]) -> tuple[str, str]:
+    """Resolve workflow scope independently from the sender's staff identity."""
+    if actor["platform"] != "whatsapp":
+        raise workflow_store.WorkflowStoreError(
+            "Automatic workflow scope is available only for the current WhatsApp session."
+        )
+    config = _config()
+    mapping = workflow_store.resolve_whatsapp_identifier(
+        config, identifier_type="chat", identifier_value=actor["chat_id"]
+    )
+    if mapping is not None:
+        return str(mapping["company_id"]), str(mapping["account_book_id"])
+    scopes = _configured_account_book_scopes(config=config)
+    if len(scopes) != 1:
+        raise workflow_store.WorkflowStoreError(
+            "MacSoft Server does not have one trusted AutoCount account book selected."
+        )
+    return scopes[0]
+
+
 def workflow_case_workspace(params: dict[str, Any], **kwargs: Any) -> str:
     del kwargs
     try:
         operation = str(params.get("operation", "")).strip()
         case_type = str(params.get("case_type", "")).strip()
+        actor = _require_actor()
         company_id = str(params.get("company_id", "")).strip()
         account_book_id = str(params.get("account_book_id", "")).strip()
+        if actor["platform"] == "whatsapp":
+            trusted_company_id, trusted_account_book_id = _trusted_scope(actor)
+            if company_id and company_id != trusted_company_id:
+                raise workflow_store.WorkflowStoreError(
+                    "The requested company does not match the trusted WhatsApp scope."
+                )
+            if account_book_id and account_book_id != trusted_account_book_id:
+                raise workflow_store.WorkflowStoreError(
+                    "The requested account book does not match the trusted WhatsApp scope."
+                )
+            company_id, account_book_id = trusted_company_id, trusted_account_book_id
         if not all((operation, case_type, company_id, account_book_id)):
             raise workflow_store.WorkflowStoreError(
                 "operation, case_type, company_id, and account_book_id are required."
             )
-        actor = _require_actor()
         _enforce_trusted_scope(actor, company_id, account_book_id)
         config = _config()
         if operation == "create":
@@ -192,7 +318,14 @@ def workflow_case_workspace(params: dict[str, Any], **kwargs: Any) -> str:
                 company_id=company_id,
                 account_book_id=account_book_id,
                 status=str(params.get("status", "")).strip() or None,
+                statuses=params.get("statuses") if isinstance(params.get("statuses"), list) else None,
                 reference=str(params.get("reference", "")).strip() or None,
+                amount=params.get("amount"),
+                currency=str(params.get("currency", "")).strip() or None,
+                date_from=str(params.get("date_from", "")).strip() or None,
+                date_to=str(params.get("date_to", "")).strip() or None,
+                payer=str(params.get("payer", "")).strip() or None,
+                invoice_reference=str(params.get("invoice_reference", "")).strip() or None,
                 limit=int(params.get("limit", 50)),
             )
             return _response(True, cases=cases)
@@ -235,12 +368,85 @@ def workflow_case_workspace(params: dict[str, Any], **kwargs: Any) -> str:
 def workflow_resolve_whatsapp_identifier(params: dict[str, Any], **kwargs: Any) -> str:
     del kwargs
     try:
+        config = _config()
         mapping = workflow_store.resolve_whatsapp_identifier(
-            _config(),
+            config,
             identifier_type=str(params.get("identifier_type", "")).strip(),
             identifier_value=str(params.get("identifier_value", "")).strip(),
         )
+        if mapping is None and str(params.get("identifier_type", "")).strip() == "chat":
+            configured_scopes = _configured_account_book_scopes(config=config)
+            if len(configured_scopes) == 1:
+                company_id, account_book_id = configured_scopes[0]
+                mapping = {
+                    "company_id": company_id,
+                    "account_book_id": account_book_id,
+                    "inherited_from": "server_autocount_configuration",
+                }
         return _response(True, mapping=mapping)
+    except Exception as exc:
+        return _response(False, error={"type": type(exc).__name__, "message": str(exc)})
+
+
+def workflow_current_context(params: dict[str, Any], **kwargs: Any) -> str:
+    del params, kwargs
+    try:
+        actor = current_actor()
+        if actor["platform"] != "whatsapp" or not actor["user_id"] or not actor["chat_id"]:
+            raise workflow_store.WorkflowStoreError(
+                "A trusted current WhatsApp session is required."
+            )
+        config = _config()
+        identity = workflow_store.resolve_whatsapp_identifier(
+            config,
+            identifier_type="user",
+            identifier_value=_canonical_whatsapp_user_id(actor["user_id"]),
+        )
+        company_id, account_book_id = _trusted_scope(actor)
+        internal_user_id = str((identity or {}).get("internal_user_id") or "").strip()
+        return _response(
+            True,
+            sender={
+                "kind": "staff" if internal_user_id else "external",
+                "internal_user_id": internal_user_id or None,
+            },
+            workflow_scope={
+                "company_id": company_id,
+                "account_book_id": account_book_id,
+            },
+        )
+    except Exception as exc:
+        return _response(False, error={"type": type(exc).__name__, "message": str(exc)})
+
+
+def workflow_set_staff_phone(params: dict[str, Any], **kwargs: Any) -> str:
+    del kwargs
+    try:
+        actor = _require_actor()
+        if actor["role"].strip().lower() != "admin":
+            raise workflow_store.WorkflowStoreError(
+                "Only a MacSoft Admin may register staff phone numbers."
+            )
+        phone = re.sub(r"\D", "", str(params.get("phone_number") or ""))
+        if not phone.isdigit() or not 8 <= len(phone) <= 15:
+            raise workflow_store.WorkflowStoreError(
+                "Enter a valid international WhatsApp phone number."
+            )
+        company_id, account_book_id = _trusted_scope(actor)
+        registration = workflow_store.set_whatsapp_staff_phone(
+            _config(),
+            phone=phone,
+            company_id=company_id,
+            account_book_id=account_book_id,
+            internal_user_id=actor["user_id"],
+            active=bool(params.get("active", True)),
+            actor_user_id=actor["user_id"],
+        )
+        return _response(
+            True,
+            phone_number=phone,
+            staff=bool(registration.get("active")),
+        )
     except Exception as exc:
         return _response(False, error={"type": type(exc).__name__, "message": str(exc)})
 
@@ -253,6 +459,114 @@ def workflow_fifo_allocate(params: dict[str, Any], **kwargs: Any) -> str:
             raise ValueError("documents must be an array.")
         return _response(True, **fifo_allocate(params.get("payment_amount"), documents))
     except Exception as exc:
+        return _response(False, error={"type": type(exc).__name__, "message": str(exc)})
+
+
+def workflow_intake_payment(params: dict[str, Any], **kwargs: Any) -> str:
+    """Preserve one current Payment Slip and its continuation record as one operation."""
+    del kwargs
+    archived_path: Path | None = None
+    try:
+        actor = _require_actor()
+        if actor["platform"] != "whatsapp":
+            raise workflow_store.WorkflowStoreError(
+                "Payment intake requires the trusted current WhatsApp attachment."
+            )
+        company_id, account_book_id = _trusted_scope(actor)
+        source_path = str(params.get("source_path") or "").strip()
+        facts = params.get("payment_facts")
+        if not source_path or not isinstance(facts, dict):
+            raise workflow_store.WorkflowStoreError(
+                "The current Payment Slip and extracted payment facts are required."
+            )
+        source_event_key = trusted_media_source_key(
+            message_id=actor["message_id"], source_path=source_path
+        )
+        config = _config()
+        existing = workflow_store.get_case_by_source(
+            config,
+            case_type="payment",
+            company_id=company_id,
+            account_book_id=account_book_id,
+            source_channel="whatsapp",
+            source_event_key=source_event_key,
+        )
+        if existing is not None:
+            return _response(True, payment=existing, created=False, duplicate=True)
+
+        evidence = archive_current_media(config, source_path=source_path)
+        archived_path = Path(str(evidence["stored_path"]))
+        initial_status = str(params.get("initial_status") or "waiting_bank").strip()
+        if initial_status not in {"waiting_bank", "captured"}:
+            raise workflow_store.WorkflowStoreError(
+                "initial_status must be waiting_bank or captured."
+            )
+        values = {
+            "status": initial_status,
+            "debtor_code": facts.get("debtor_code"),
+            "amount": facts.get("amount"),
+            "payment_date": facts.get("payment_date"),
+            "payment_reference": facts.get("payment_reference"),
+            "working_data": {
+                "payment_facts": facts,
+                "intent": "customer_payment_knockoff",
+                "next_required_evidence": "bank_transaction_or_statement",
+                "evidence": [{**evidence, "kind": "payment_slip"}],
+            },
+        }
+        payment, created = workflow_store.create_case(
+            config,
+            case_type="payment",
+            company_id=company_id,
+            account_book_id=account_book_id,
+            source_channel="whatsapp",
+            source_event_key=source_event_key,
+            actor_user_id=actor["user_id"],
+            values=values,
+        )
+        if not created:
+            archived_path.unlink(missing_ok=True)
+            archived_path = None
+            return _response(True, payment=payment, created=False, duplicate=True)
+        # The durable payment record and evidence are the intake result. An
+        # auxiliary history-row failure must not delete evidence already linked
+        # by that record or turn a successful intake into a retry/duplicate risk.
+        archived_path = None
+        event_recorded = True
+        try:
+            workflow_store.append_event(
+                config,
+                case_type="payment",
+                case_id=str(payment["id"]),
+                case_version=int(payment["version"]),
+                company_id=company_id,
+                account_book_id=account_book_id,
+                event_type=(
+                    "payment_waiting_bank"
+                    if initial_status == "waiting_bank"
+                    else "payment_captured"
+                ),
+                actor_user_id=actor["user_id"],
+                actor_role=actor["role"],
+                event_data={
+                    "evidence_id": evidence["evidence_id"],
+                    "sha256": evidence["sha256"],
+                    "source_event_key": source_event_key,
+                },
+            )
+        except Exception:
+            event_recorded = False
+        return _response(
+            True,
+            payment=payment,
+            evidence=evidence,
+            created=True,
+            duplicate=False,
+            historyRecorded=event_recorded,
+        )
+    except Exception as exc:
+        if archived_path is not None:
+            archived_path.unlink(missing_ok=True)
         return _response(False, error={"type": type(exc).__name__, "message": str(exc)})
 
 
@@ -337,9 +651,9 @@ def workflow_approve_autocount_action(params: dict[str, Any], **kwargs: Any) -> 
             company_id=company_id,
             account_book_id=account_book_id,
         )
-        if current is None or int(current["version"]) != case_version:
+        if current is None:
             raise workflow_store.WorkflowConflictError(
-                "The Case changed before approval. Reload it and generate a new preview."
+                "The payment or receiving work record no longer exists."
             )
         digest = action_digest(
             case_type=case_type,
@@ -566,7 +880,12 @@ def workflow_send_approved_supplier_message(params: dict[str, Any], **kwargs: An
 def command_requires_workflow_approval(command_type: str, payload: dict[str, Any]) -> bool:
     if command_type in _CONSEQUENTIAL_COMMANDS:
         return True
-    return command_type in {"create-item", "update-item"} and "hasBatchNo" in payload
+    if command_type in {"create-item", "update-item"} and "hasBatchNo" in payload:
+        return True
+    if current_actor()["platform"] != "whatsapp":
+        return False
+    prefix = command_type.strip().lower().split("-", 1)[0]
+    return prefix in _WHATSAPP_WRITE_PREFIXES
 
 
 def verify_execution_context(
@@ -619,9 +938,9 @@ def verify_execution_context(
         company_id=str(context["company_id"]),
         account_book_id=str(context["account_book_id"]),
     )
-    if current is None or int(current["version"]) != int(context["case_version"]):
+    if current is None:
         raise workflow_store.WorkflowConflictError(
-            "The Case changed after approval. Generate a new preview and approval."
+            "The payment or receiving work record no longer exists."
         )
     approval = workflow_store.find_action_event(
         config,

@@ -20,11 +20,18 @@ WORKFLOW_CASE_WORKSPACE = {
             "source_event_key": {"type": "string"},
             "source_media_path": {"type": "string"},
             "status": {"type": "string"},
+            "statuses": {"type": "array", "items": {"type": "string"}, "maxItems": 20},
             "reference": {"type": "string"},
+            "amount": {"type": ["number", "string"]},
+            "currency": {"type": "string"},
+            "date_from": {"type": "string", "format": "date"},
+            "date_to": {"type": "string", "format": "date"},
+            "payer": {"type": "string"},
+            "invoice_reference": {"type": "string"},
             "values": {"type": "object", "additionalProperties": True},
             "limit": {"type": "integer", "minimum": 1, "maximum": 200},
         },
-        "required": ["operation", "case_type", "company_id", "account_book_id"],
+        "required": ["operation", "case_type"],
         "additionalProperties": False,
     },
 }
@@ -43,6 +50,30 @@ WORKFLOW_RESOLVE_WHATSAPP_IDENTIFIER = {
     },
 }
 
+WORKFLOW_CURRENT_CONTEXT = {
+    "name": "workflow_current_context",
+    "description": "Return the trusted current WhatsApp workflow scope and whether the sender is staff or external. The sender's identity mapping never determines the account-book scope.",
+    "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": False,
+    },
+}
+
+WORKFLOW_SET_STAFF_PHONE = {
+    "name": "workflow_set_staff_phone",
+    "description": "Admin-only registration or deactivation of a WhatsApp staff phone number. Accepts a human-formatted phone number and stores its canonical digits-only identity.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "phone_number": {"type": "string", "minLength": 8},
+            "active": {"type": "boolean"},
+        },
+        "required": ["phone_number"],
+        "additionalProperties": False,
+    },
+}
+
 WORKFLOW_FIFO_ALLOCATE = {
     "name": "workflow_fifo_allocate",
     "description": "Prepare a deterministic oldest-invoice-first allocation with partial knock-off support; this does not judge bank evidence or write AutoCount.",
@@ -57,9 +88,28 @@ WORKFLOW_FIFO_ALLOCATE = {
     },
 }
 
+WORKFLOW_INTAKE_PAYMENT = {
+    "name": "workflow_intake_payment",
+    "description": "Atomically preserve the current trusted Payment Slip and create or reuse its durable payment job for cross-message continuation, duplicate prevention, and recovery.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "source_path": {"type": "string", "minLength": 1},
+            "payment_facts": {"type": "object", "additionalProperties": True},
+            "initial_status": {
+                "type": "string",
+                "enum": ["waiting_bank", "captured"],
+                "default": "waiting_bank"
+            },
+        },
+        "required": ["source_path", "payment_facts"],
+        "additionalProperties": False,
+    },
+}
+
 WORKFLOW_APPROVE_AUTOCOUNT_ACTION = {
     "name": "workflow_approve_autocount_action",
-    "description": "Use the existing Hermes human-confirmation gate to approve one exact versioned PharmaRise AutoCount action and append its immutable approval event.",
+    "description": "Use the existing Hermes human-confirmation gate to approve one exact AutoCount action. Approval follows the action payload digest, not unrelated payment-job updates.",
     "parameters": {
         "type": "object",
         "properties": {

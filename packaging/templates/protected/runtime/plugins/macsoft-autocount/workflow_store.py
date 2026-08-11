@@ -195,14 +195,26 @@ def search_cases(
     company_id: str,
     account_book_id: str,
     status: str | None = None,
+    statuses: list[str] | None = None,
     reference: str | None = None,
+    amount: Any | None = None,
+    currency: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    payer: str | None = None,
+    invoice_reference: str | None = None,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
     ensure_schema(config)
     table = _table(case_type)
     clauses = ["company_id = %s", "account_book_id = %s"]
     params: list[Any] = [company_id, account_book_id]
-    if status:
+    if statuses:
+        normalized_statuses = [str(item).strip() for item in statuses if str(item).strip()]
+        if normalized_statuses:
+            clauses.append("status = ANY(%s)")
+            params.append(normalized_statuses)
+    elif status:
         clauses.append("status = %s")
         params.append(status)
     if reference:
@@ -212,6 +224,24 @@ def search_cases(
             clauses.append("(supplier_invoice_no = %s OR po_no = %s)")
             params.append(reference)
         params.append(reference)
+    if amount is not None and str(amount).strip():
+        clauses.append("amount = %s")
+        params.append(amount)
+    if date_from:
+        clauses.append("payment_date >= %s")
+        params.append(date_from)
+    if date_to:
+        clauses.append("payment_date <= %s")
+        params.append(date_to)
+    if currency:
+        clauses.append("UPPER(COALESCE(working_data #>> '{payment_facts,currency}', '')) = UPPER(%s)")
+        params.append(currency)
+    if payer:
+        clauses.append("COALESCE(working_data #>> '{payment_facts,payer}', working_data #>> '{payment_facts,payer_name}', working_data #>> '{payment_facts,customer_name}', '') ILIKE %s")
+        params.append(f"%{payer}%")
+    if invoice_reference:
+        clauses.append("COALESCE(working_data #>> '{payment_facts,invoice_reference}', working_data #>> '{payment_facts,invoice_no}', '') = %s")
+        params.append(invoice_reference)
     params.append(max(1, min(int(limit), 200)))
     with connection(config) as conn:
         with conn.cursor() as cursor:
@@ -380,3 +410,74 @@ def resolve_whatsapp_identifier(
                 (identifier_type, identifier_value),
             )
             return public_record(cursor.fetchone())
+
+
+def get_case_by_source(
+    config: dict[str, Any],
+    *,
+    case_type: str,
+    company_id: str,
+    account_book_id: str,
+    source_channel: str,
+    source_event_key: str,
+) -> dict[str, Any] | None:
+    """Find the durable job created from one trusted source attachment."""
+    ensure_schema(config)
+    table = _table(case_type)
+    with connection(config) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                f"""
+                SELECT * FROM {table}
+                WHERE company_id = %s AND account_book_id = %s
+                  AND source_channel = %s AND source_event_key = %s
+                """,
+                (company_id, account_book_id, source_channel, source_event_key),
+            )
+            return public_record(cursor.fetchone())
+
+
+def set_whatsapp_staff_phone(
+    config: dict[str, Any],
+    *,
+    phone: str,
+    company_id: str,
+    account_book_id: str,
+    internal_user_id: str,
+    active: bool,
+    actor_user_id: str,
+) -> dict[str, Any]:
+    """Create or update one canonical WhatsApp phone staff registration."""
+    ensure_schema(config)
+    record_id = uuid.uuid4()
+    with connection(config) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO whatsapp_identifiers (
+                    id, platform, identifier_type, identifier_value,
+                    company_id, account_book_id, purpose, internal_user_id,
+                    active, created_by, updated_by
+                ) VALUES (%s, 'whatsapp', 'user', %s, %s, %s, 'staff', %s, %s, %s, %s)
+                ON CONFLICT (platform, identifier_type, identifier_value)
+                DO UPDATE SET company_id = EXCLUDED.company_id,
+                              account_book_id = EXCLUDED.account_book_id,
+                              purpose = 'staff',
+                              internal_user_id = EXCLUDED.internal_user_id,
+                              active = EXCLUDED.active,
+                              updated_by = EXCLUDED.updated_by,
+                              updated_at = CURRENT_TIMESTAMP
+                RETURNING *
+                """,
+                (
+                    record_id,
+                    phone,
+                    company_id,
+                    account_book_id,
+                    internal_user_id,
+                    bool(active),
+                    actor_user_id,
+                    actor_user_id,
+                ),
+            )
+            return public_record(cursor.fetchone()) or {}

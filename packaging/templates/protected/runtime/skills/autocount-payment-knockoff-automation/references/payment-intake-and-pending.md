@@ -35,14 +35,14 @@ Before creating a Case, search by stable source event/evidence identity. Also co
 
 ## Pending behavior
 
-If cleared bank evidence is missing, first show the material facts extracted from the Payment Slip and ask whether the user wants the payment recorded for later verification. Do not begin AutoCount invoice or posting work while waiting for that answer.
+If cleared bank evidence is missing, call `workflow_intake_payment` with `initial_status=waiting_bank` immediately while the Payment Slip is still the trusted current attachment and before replying. That single operation preserves the evidence and creates or reuses the pending payment record. Do not split this into manual Case creation and evidence archival, do not create a second Case with `workflow_case_workspace`, and never retry later with an old temporary attachment path.
 
-After the user agrees, save a coarse pending status and useful `working_data`, then tell the user in ordinary accounting language:
+For a staff sender, check the exact debtor and referenced AR invoice/outstanding status before replying. Successful prerequisite checks stay quiet; report only missing or conflicting data. Then tell the user in ordinary accounting language:
 
 1. what was captured;
 2. that receipt into the company bank is still unverified;
-3. that a Bank Transaction or Bank Statement can be sent later for matching;
-4. any short business reference useful for later continuation, without exposing internal table or Tool terminology.
+3. that Knock-Off is the assumed intent;
+4. say that it is pending while waiting for a Bank Transaction or Bank Statement.
 
 Do not repeatedly ask for facts already present in registered evidence. Do not require the original employee/session to continue.
 
@@ -62,31 +62,24 @@ Configuration is separate from payment processing.
 
 Adapt naturally rather than copying word for word:
 
-> I received the Payment Slip and read the following:
-> - Payer: ABC Trading Sdn Bhd
-> - Amount: MYR 1,200.00
-> - Date: 08/08/2026
-> - Reference: TXN-PR-10021
-> - Invoice reference shown: INV-10001
->
-> This confirms the payer's transfer claim, but it does not yet confirm that the money reached the company bank account. Would you like me to record it and wait for the Bank Transaction or Bank Statement for matching?
+> 我读到的是一张 Payment Slip，已经纳入 Knock-Off 待处理。我会等你发送 Bank Transaction 或 Bank Statement 后继续匹配。
 
 If the document visibly says sample/test, mention that fact and ask whether to record it as a test payment. Do not reinterpret it as a request to post a real accounting document.
 
-## Response after the user agrees
+## User decision
 
-Confirm briefly that the payment has been recorded for follow-up. Tell the user they may send the Bank Transaction or Bank Statement later and that the payment will then be matched before any invoice Knock-Off is proposed. Do not mention PostgreSQL, `payment_cases`, `working_data`, or internal status names.
+The Payment Slip is already `waiting_bank` before the first reply. A later acknowledgement does not require another preview or status update; reply only that the system is waiting for the bank document. If the user says not to continue, update the same payment to `dismissed` and ask whether the document was sent by mistake or what other task they intended. Never create a second Case merely because the answer arrives in a later message.
 
-Do not resolve or ask for Debtor Code yet. After bank evidence produces an acceptable match, search AutoCount for the debtor yourself. Present a unique result for confirmation if necessary; present distinguishing candidates when ambiguous; ask about creating a debtor only when no suitable debtor exists.
+For staff, perform exact read-only checks using the debtor code, customer name, and invoice reference visible on the slip. Report only whether the referenced debtor/invoice matches current AutoCount data. Do not prepare a posting until bank evidence is accepted. For external senders, do not disclose internal AutoCount records.
 
 ## When bank evidence arrives
 
 1. Recognize whether the new document is bank-side transaction/statement evidence.
-2. Show the relevant bank facts that were read.
-3. Find recorded payment candidates in the same company/account book.
+2. Find `waiting_bank` payment candidates in the same company/account book.
+3. Compare the relevant bank facts against those candidates.
 4. Compare reference, amount, payer, currency, date/value date, and beneficiary context.
-5. Explain the match result in business language.
-6. Only after an acceptable match, read live debtor and invoice information.
+5. For one row, explain the match result briefly. For many rows, summarize matched, review-needed, and unmatched counts and show exceptions only on request.
+6. Ask whether to use the proposed match result. Only after acceptance, read live debtor and invoice information.
 7. Honor a valid specified invoice; otherwise apply Invoice-Date FIFO.
 8. Show the exact proposed allocation and ask for fresh Knock-Off approval.
 

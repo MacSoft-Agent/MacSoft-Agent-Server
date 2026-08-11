@@ -20,6 +20,7 @@ If accepted:
 8. when required by the active Tool contract, use its exposed approval capability (currently `workflow_approve_autocount_action` when available) and pass the returned Case version, action ID, action digest, scope, and other required values unchanged as execution `workflow_context`;
 9. create the PO once; do not execute if required workflow context is absent or the payload differs from the approved payload;
 10. read back PO number, status, lines, and totals.
+11. compare the created PO with the supplier evidence and, when aligned, continue the normal Batch/Expiry/Short Expiry and PI path.
 
 ## Existing PO correction
 
@@ -33,6 +34,18 @@ First ask whether the PO is truly outdated/wrong or the supplier document/delive
 6. execute once and read back;
 7. re-run supplier-document comparison.
 
+When the corrected PO aligns with the accepted supplier facts, continue the normal Batch/Expiry/Short Expiry and PI path. Do not treat PO correction as the end of the receiving workflow.
+
 If PO update is unsupported or PO state prevents safe editing, state the exact manual operation. Do not recreate a second PO to simulate an edit without explicit approval.
 
 User-provided corrected PO information is input, not automatic write authority. Validate it against live Item/UOM/schema facts and preview it.
+
+## Normal-path convergence
+
+The workflow converges after any one of these is verified:
+
+- an existing PO matches;
+- a corrected PO matches after approval and read-back;
+- a newly created PO matches after approval and read-back.
+
+From that point, verify Item batch control, classify Batch/Expiry/Short Expiry, prepare the exact PI preview, obtain fresh approval, create/transfer the PI, and read it back.

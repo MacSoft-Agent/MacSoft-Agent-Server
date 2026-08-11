@@ -119,7 +119,15 @@ Compare each meaningful field:
 - supplier invoice/DO references;
 - batch and expiry facts where available.
 
-Present differences as neutral facts. Ask whether the PO is outdated, the supplier document is wrong, a partial delivery is intended, or another explanation applies.
+Present differences as neutral business facts. Do not send a matching PO into an exception conversation. If the PO matches, continue directly to Item batch control, Batch/Expiry/Short Expiry review, and the PI preview.
+
+If differences exist, show the user what differs and its quantity or financial effect, then ask which source reflects the accepted deal. The primary decisions are:
+
+- the PO is correct and the supplier document is wrong;
+- the supplier document is correct and the PO contains outdated or incorrect facts;
+- a partial delivery or another explained difference is intentional.
+
+Do not decide from document authority alone. A difference is not automatically a CN case.
 
 ### 6. Handle no-PO or PO correction
 
@@ -129,15 +137,27 @@ Enter the no-PO branch only after an authoritative live read proves absence. An 
 
 If no PO exists, ask whether the user wants AI help creating one. If yes, resolve live Item/UOM/schema facts, prepare the exact PO payload, validate it, show a preview, and obtain fresh user approval. For a write protected by the active workflow contract, create or continue the Case only when needed, call the exposed workflow approval capability (currently `workflow_approve_autocount_action` when available) with the exact preview and payload, then copy its returned action ID, digest, Case scope/version, and related required fields unchanged into `workflow_context` for execution. Reuse a still-valid Case and approved context; do not repeat intake or approval unnecessarily. If the active contract does not expose or require workflow context, retain the exact-preview and explicit-user-approval boundary and follow that contract. Execute once and read back. Internal codes must come from live reads. If a required code cannot be resolved, stop that write and name the missing configuration; do not substitute a human label. If an unresolved field is optional in the live schema, omit it rather than guessing. If the user declines, keep the Case pending/manual without inventing a PO.
 
-If a PO is outdated, re-read it, show before/after values and affected downstream consequences, validate the supported update, obtain fresh approval, execute `update-purchase-order`, and read back. If the connector cannot perform the required edit, state the exact manual requirement.
+If a PO is outdated, for example because an accepted supplier price changed, re-read it, show before/after values and affected downstream consequences, validate the supported update, obtain fresh approval, execute `update-purchase-order`, and read back. Recompare the updated PO with the supplier evidence. If the connector cannot perform the required edit, state the exact manual requirement.
+
+These three accepted paths converge on the same normal receiving path:
+
+1. the existing PO matched;
+2. the user approved a PO correction and the corrected PO was read back;
+3. no PO existed, the user approved a new PO, and the new PO was read back.
+
+After convergence, continue to Batch/Expiry/Short Expiry review and PI preparation. Do not stop merely because a PO had to be created or corrected.
 
 ### 7. Handle supplier discrepancy and CN
 
 Read `references/supplier-discrepancy-and-cn-follow-up.md`.
 
-If the user decides the supplier document is wrong, explain the discrepancy and optionally prepare a supplier message. Resolve the trusted supplier contact, show recipient, exact message, evidence/case reference, and purpose. Send only after approval.
+If the user decides the supplier document is wrong, first classify the actual business effect. A CN is relevant only when the supplier overcharged or otherwise owes the buyer a credit. A supplier undercharge, missing charge, quantity correction, replacement invoice, or non-financial document error is not automatically a CN and must remain pending until the user selects the correct business treatment.
 
-Persist a waiting state. When a CN/corrected document arrives, link it to this Case, show its material content to the user, and ask whether this exact version is accepted. Acceptance does not itself authorize an AutoCount CN-status write. Ask separately and execute only if a verified command exists and a second approval is granted. If no verified connector command exists, mark CN-status handling manual/connector-blocked.
+When a supplier correction or CN is needed, explain why in plain business language. Ask whether the user wants to contact the supplier or wants the Agent to prepare the follow-up. If the Agent is authorized to contact the supplier, resolve the trusted contact and show recipient, exact message, Case/evidence reference, and purpose. Send only after approval.
+
+Persist a waiting state and follow up using the approved supplier-contact path. When a CN/corrected document arrives, link it to this Case, show its material content and financial effect to the user, and ask whether this exact version is accepted. If the user asks the Agent to create or update a CN in AutoCount, prepare an exact CN preview and obtain separate fresh approval. Execute only if a verified connector command and business mapping exist. If not, retain the accepted evidence and mark the AutoCount CN action manual/connector-blocked.
+
+After an accepted correction makes the PO and effective supplier facts suitable for receiving, return to the normal Batch/Expiry/Short Expiry and PI path. Do not create the PI while a material supplier discrepancy remains unresolved.
 
 ### 8. Verify Item batch control and expiry
 

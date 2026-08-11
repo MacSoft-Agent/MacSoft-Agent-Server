@@ -28,7 +28,6 @@ def action_digest(
     document = {
         "case_type": case_type,
         "case_id": case_id,
-        "case_version": int(case_version),
         "action_type": action_type,
         "command_type": command_type,
         "payload": payload,
@@ -45,7 +44,11 @@ def stable_action_id(
     digest: str,
 ) -> str:
     normalized = "-".join(part.strip().lower().replace("_", "-") for part in (case_type, action_type))
-    return f"macsoft-{normalized}-{case_id}-v{int(case_version)}-{digest[:16]}"
+    # The Case identifies the logical job. Its mutable progress version is not
+    # part of the approved accounting action: harmless notes/evidence updates
+    # must not invalidate an otherwise identical approved payload.
+    del case_version
+    return f"macsoft-{normalized}-{case_id}-{digest[:16]}"
 
 
 def parse_money(value: Any, field: str) -> Decimal:

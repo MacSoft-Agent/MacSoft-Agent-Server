@@ -203,7 +203,7 @@ Never ask “OK?” without showing the consequential target and amounts.
 
 ### 8. Obtain fresh approval
 
-Use the existing Hermes human-confirmation interaction. Persist the meaningful approval event against the durable payment ID, company/account-book scope, action type, stable action ID, and exact action digest. The digest must cover the consequential AutoCount payload; unrelated payment-record updates must not invalidate approval.
+Call `workflow_approve_autocount_action` with the existing Case, exact validated payload, and concise business preview. This atomically persists an immutable prepared action before invoking the existing Hermes human-confirmation interaction. Keep the returned `action_id`; it is the only input needed to resume execution. The digest must cover the consequential AutoCount payload; unrelated payment-record updates must not invalidate approval.
 
 If the debtor, evidence judgement, live invoice state, amount, allocation, or consequential payload changes, discard the old approval and generate a new preview. Do not discard approval merely because a note or workflow status changed.
 
@@ -213,7 +213,7 @@ Route the final action through `autocount-local-direct-payment-knockoff`.
 
 The real payload uses current connector names such as `debtorCode`, `docDate`, total `amount`, and `knockOffs`. Construct each line from freshly read `docType`, `docKey`, `docNo`, and the approved allocation. Do not infer internal identifiers.
 
-Execute `create-ar-payment` with the stable `action_id`. Read back with the supported payment read operation and refresh outstanding documents. Confirm that the resulting payment and invoice balances agree with the approved allocation.
+After approval, call `workflow_execute_approved_autocount_action` with only the stable `action_id`. Do not search commands, reload schemas, query Connector status, repeat the preview, or reconstruct `workflow_context` at this stage. Read back with the supported payment read operation and refresh outstanding documents. Confirm that the resulting payment and invoice balances agree with the approved allocation.
 
 If execution returns `reason=workflow_approval_required`, the command was not submitted to AutoCount. Do not retry it, choose another write route, or blame the AutoCount API/Control API license. Return to the existing payment work, produce the missing business preview, obtain approval, and execute once with the resulting exact workflow context. If it returns `workflow_context_invalid` or `workflow_approval_stale_or_invalid`, re-read the current work and live accounting state, then prepare a fresh preview and approval.
 

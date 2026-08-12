@@ -202,6 +202,13 @@ def audit_staging(root: Path, development_root: Path) -> list[str]:
         if any(part.lower() in EXCLUDED_PACKAGED_WORKFLOW_DIRECTORIES for part in path.parts):
             issues.append(f"Excluded company workflow included: {relative}")
         lowered_name = path.name.lower()
+        if (
+            path.is_file()
+            and path.name == "SKILL.md"
+            and len(path.parts) >= 3
+            and path.parent.name == path.parent.parent.name
+        ):
+            issues.append(f"Skill nested inside itself: {relative}")
         if path.is_file() and (
             lowered_name.startswith("__editable__.")
             or lowered_name.startswith("__editable___")

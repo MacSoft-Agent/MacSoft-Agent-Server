@@ -8,7 +8,7 @@ CASE_PROPERTIES = {
 
 WORKFLOW_CASE_WORKSPACE = {
     "name": "workflow_case_workspace",
-    "description": "Create, read, search, or version-update one isolated PharmaRise payment or receiving Case in PostgreSQL.",
+    "description": "Create, read, search, or version-update one durable payment or receiving work record. Client and WhatsApp automatically use the trusted Server-selected account book.",
     "parameters": {
         "type": "object",
         "properties": {
@@ -28,6 +28,12 @@ WORKFLOW_CASE_WORKSPACE = {
             "date_to": {"type": "string", "format": "date"},
             "payer": {"type": "string"},
             "invoice_reference": {"type": "string"},
+            "debtor_code": {"type": "string"},
+            "payment_date": {"type": "string", "format": "date"},
+            "payment_reference": {"type": "string"},
+            "supplier_code": {"type": "string"},
+            "supplier_invoice_no": {"type": "string"},
+            "po_no": {"type": "string"},
             "values": {"type": "object", "additionalProperties": True},
             "limit": {"type": "integer", "minimum": 1, "maximum": 200},
         },
@@ -52,7 +58,7 @@ WORKFLOW_RESOLVE_WHATSAPP_IDENTIFIER = {
 
 WORKFLOW_CURRENT_CONTEXT = {
     "name": "workflow_current_context",
-    "description": "Return the trusted current WhatsApp workflow scope and whether the sender is staff or external. The sender's identity mapping never determines the account-book scope.",
+    "description": "Return the trusted current Client or WhatsApp workflow scope and whether the sender is staff or external. Sender identity never determines the account-book scope.",
     "parameters": {
         "type": "object",
         "properties": {},
@@ -109,7 +115,7 @@ WORKFLOW_INTAKE_PAYMENT = {
 
 WORKFLOW_APPROVE_AUTOCOUNT_ACTION = {
     "name": "workflow_approve_autocount_action",
-    "description": "Use the existing Hermes human-confirmation gate to approve one exact AutoCount action. Approval follows the action payload digest, not unrelated payment-job updates.",
+    "description": "Persist and approve one exact AutoCount action. Returns a stable action_id that is sufficient for deterministic execution after approval.",
     "parameters": {
         "type": "object",
         "properties": {
@@ -122,9 +128,23 @@ WORKFLOW_APPROVE_AUTOCOUNT_ACTION = {
             "preview": {"type": "string", "minLength": 1},
         },
         "required": [
-            "case_type", "company_id", "account_book_id", "case_id",
+            "case_type", "case_id",
             "case_version", "action_type", "command_type", "payload", "preview"
         ],
+        "additionalProperties": False,
+    },
+}
+
+WORKFLOW_EXECUTE_APPROVED_AUTOCOUNT_ACTION = {
+    "name": "workflow_execute_approved_autocount_action",
+    "description": "Execute or recover the exact persisted and approved AutoCount action by stable action_id. Do not rediscover commands, rebuild payloads, or supply workflow context.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "action_id": {"type": "string", "minLength": 1},
+            "timeout_seconds": {"type": "integer", "minimum": 5, "maximum": 600},
+        },
+        "required": ["action_id"],
         "additionalProperties": False,
     },
 }

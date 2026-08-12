@@ -198,30 +198,43 @@ def _configured_account_book_scopes(
 def _enforce_trusted_scope(
     actor: dict[str, str], company_id: str, account_book_id: str
 ) -> None:
-    """Prevent model arguments from changing a WhatsApp group's configured scope."""
-    if actor["platform"] != "whatsapp":
+    """Prevent model arguments from changing the transport's configured scope."""
+    if actor["platform"] not in {"api_server", "whatsapp"}:
         return
-    mapping = workflow_store.resolve_whatsapp_identifier(
-        _config(), identifier_type="chat", identifier_value=actor["chat_id"]
-    )
-    if mapping is None:
-        configured_scopes = _configured_account_book_scopes(config=_config())
-        if len(configured_scopes) != 1:
-            raise workflow_store.WorkflowStoreError(
-                "MacSoft company setup is missing or ambiguous. An administrator must configure exactly one account book for automatic WhatsApp processing."
-            )
-        configured_company_id, configured_account_book_id = configured_scopes[0]
-        mapping = {
-            "company_id": configured_company_id,
-            "account_book_id": configured_account_book_id,
-        }
+    trusted_company_id, trusted_account_book_id = _trusted_scope(actor)
     if (
-        str(mapping.get("company_id")) != company_id
-        or str(mapping.get("account_book_id")) != account_book_id
+        trusted_company_id != company_id
+        or trusted_account_book_id != account_book_id
     ):
         raise workflow_store.WorkflowStoreError(
-            "The requested company/account book does not match the trusted WhatsApp chat mapping."
+            "The requested company/account book does not match the trusted current workflow scope."
         )
+
+
+def _case_create_values(params: dict[str, Any], case_type: str) -> dict[str, Any]:
+    """Accept ergonomic direct Case facts without silently discarding them."""
+    values = dict(params.get("values") or {}) if isinstance(params.get("values"), dict) else {}
+    direct_fields = (
+        ("status", "debtor_code", "amount", "payment_date", "payment_reference")
+        if case_type == "payment"
+        else ("status", "supplier_code", "supplier_invoice_no", "po_no")
+    )
+    for field in direct_fields:
+        if field in params and params.get(field) not in (None, ""):
+            values.setdefault(field, params[field])
+    if case_type == "payment" and params.get("reference"):
+        values.setdefault("payment_reference", params["reference"])
+    working_data = dict(values.get("working_data") or {})
+    if case_type == "payment":
+        payment_facts = dict(working_data.get("payment_facts") or {})
+        for field in ("payer", "invoice_reference", "currency"):
+            if params.get(field) not in (None, ""):
+                payment_facts.setdefault(field, params[field])
+        if payment_facts:
+            working_data["payment_facts"] = payment_facts
+    if working_data:
+        values["working_data"] = working_data
+    return values
 
 
 def _trusted_scope(actor: dict[str, str]) -> tuple[str, str]:
@@ -229,9 +242,13 @@ def _trusted_scope(actor: dict[str, str]) -> tuple[str, str]:
     config = _config()
     if actor["platform"] == "api_server":
         scopes = _configured_account_book_scopes(config=config)
-        if len(scopes) != 1:
+        if not scopes:
             raise workflow_store.WorkflowStoreError(
-                "MacSoft Server does not have one trusted AutoCount account book selected."
+                "MacSoft Server is missing a trusted AutoCount account book selection."
+            )
+        if len(scopes) > 1:
+            raise workflow_store.WorkflowStoreError(
+                "MacSoft Server has an ambiguous AutoCount account book selection."
             )
         return scopes[0]
     if actor["platform"] != "whatsapp":
@@ -244,9 +261,13 @@ def _trusted_scope(actor: dict[str, str]) -> tuple[str, str]:
     if mapping is not None:
         return str(mapping["company_id"]), str(mapping["account_book_id"])
     scopes = _configured_account_book_scopes(config=config)
-    if len(scopes) != 1:
+    if not scopes:
         raise workflow_store.WorkflowStoreError(
-            "MacSoft Server does not have one trusted AutoCount account book selected."
+            "MacSoft Server is missing a trusted AutoCount account book selection."
+        )
+    if len(scopes) > 1:
+        raise workflow_store.WorkflowStoreError(
+            "MacSoft Server has an ambiguous AutoCount account book selection."
         )
     return scopes[0]
 
@@ -259,15 +280,15 @@ def workflow_case_workspace(params: dict[str, Any], **kwargs: Any) -> str:
         actor = _require_actor()
         company_id = str(params.get("company_id", "")).strip()
         account_book_id = str(params.get("account_book_id", "")).strip()
-        if actor["platform"] == "whatsapp":
+        if actor["platform"] in {"api_server", "whatsapp"}:
             trusted_company_id, trusted_account_book_id = _trusted_scope(actor)
             if company_id and company_id != trusted_company_id:
                 raise workflow_store.WorkflowStoreError(
-                    "The requested company does not match the trusted WhatsApp scope."
+                    "The requested company does not match the trusted current workflow scope."
                 )
             if account_book_id and account_book_id != trusted_account_book_id:
                 raise workflow_store.WorkflowStoreError(
-                    "The requested account book does not match the trusted WhatsApp scope."
+                    "The requested account book does not match the trusted current workflow scope."
                 )
             company_id, account_book_id = trusted_company_id, trusted_account_book_id
         if not all((operation, case_type, company_id, account_book_id)):
@@ -296,7 +317,7 @@ def workflow_case_workspace(params: dict[str, Any], **kwargs: Any) -> str:
                 source_channel=source_channel,
                 source_event_key=source_event_key,
                 actor_user_id=actor["user_id"],
-                values=params.get("values") if isinstance(params.get("values"), dict) else {},
+                values=_case_create_values(params, case_type),
             )
             workflow_store.append_event(
                 config,
@@ -404,22 +425,36 @@ def workflow_current_context(params: dict[str, Any], **kwargs: Any) -> str:
     del params, kwargs
     try:
         actor = current_actor()
-        if actor["platform"] != "whatsapp" or not actor["user_id"] or not actor["chat_id"]:
+        if actor["platform"] not in {"api_server", "whatsapp"} or not actor["user_id"]:
             raise workflow_store.WorkflowStoreError(
-                "A trusted current WhatsApp session is required."
+                "A trusted current Client or WhatsApp session is required."
             )
         config = _config()
-        identity = workflow_store.resolve_whatsapp_identifier(
-            config,
-            identifier_type="user",
-            identifier_value=_canonical_whatsapp_user_id(actor["user_id"]),
-        )
+        identity: dict[str, Any] | None = None
+        if actor["platform"] == "whatsapp":
+            if not actor["chat_id"]:
+                raise workflow_store.WorkflowStoreError(
+                    "A trusted current WhatsApp chat is required."
+                )
+            identity = workflow_store.resolve_whatsapp_identifier(
+                config,
+                identifier_type="user",
+                identifier_value=_canonical_whatsapp_user_id(actor["user_id"]),
+            )
         company_id, account_book_id = _trusted_scope(actor)
-        internal_user_id = str((identity or {}).get("internal_user_id") or "").strip()
+        internal_user_id = (
+            str((identity or {}).get("internal_user_id") or "").strip()
+            if actor["platform"] == "whatsapp"
+            else actor["user_id"]
+        )
+        is_staff = bool(internal_user_id) and (
+            actor["platform"] == "whatsapp" or bool(actor["role"].strip())
+        )
         return _response(
             True,
+            transport=actor["platform"],
             sender={
-                "kind": "staff" if internal_user_id else "external",
+                "kind": "staff" if is_staff else "external",
                 "internal_user_id": internal_user_id or None,
             },
             workflow_scope={
@@ -646,8 +681,9 @@ def workflow_approve_autocount_action(params: dict[str, Any], **kwargs: Any) -> 
         actor = _require_actor(financial=True)
         config = _config()
         case_type = str(params["case_type"])
-        company_id = str(params["company_id"])
-        account_book_id = str(params["account_book_id"])
+        trusted_company_id, trusted_account_book_id = _trusted_scope(actor)
+        company_id = str(params.get("company_id") or trusted_company_id)
+        account_book_id = str(params.get("account_book_id") or trusted_account_book_id)
         _enforce_trusted_scope(actor, company_id, account_book_id)
         case_id = str(params["case_id"])
         case_version = int(params["case_version"])
@@ -682,6 +718,43 @@ def workflow_approve_autocount_action(params: dict[str, Any], **kwargs: Any) -> 
             action_type=action_type,
             digest=digest,
         )
+        prepared_event, prepared_created = workflow_store.append_event(
+            config,
+            case_type=case_type,
+            case_id=case_id,
+            case_version=case_version,
+            company_id=company_id,
+            account_book_id=account_book_id,
+            event_type="action_prepared",
+            action_type=action_type,
+            action_id=action_id,
+            action_digest=digest,
+            actor_user_id=actor["user_id"],
+            actor_role=actor["role"],
+            event_data={
+                "command_type": command_type,
+                "payload": payload,
+                "preview": str(params["preview"]),
+            },
+        )
+        already_approved = workflow_store.find_action_event(
+            config,
+            action_id=action_id,
+            event_type="action_approved",
+            company_id=company_id,
+            account_book_id=account_book_id,
+        )
+        if already_approved is not None:
+            return _response(
+                True,
+                approved=True,
+                alreadyApproved=True,
+                actionId=action_id,
+                actionDigest=digest,
+                preparedEvent=prepared_event,
+                preparedEventCreated=prepared_created,
+                approvalEvent=already_approved,
+            )
         from tools.approval import request_tool_approval
 
         decision = request_tool_approval(
@@ -690,7 +763,14 @@ def workflow_approve_autocount_action(params: dict[str, Any], **kwargs: Any) -> 
             rule_key=f"pharmarise:{action_id}:{digest}",
         )
         if not decision.get("approved"):
-            return _response(False, approval=decision, actionId=action_id, actionDigest=digest)
+            return _response(
+                False,
+                approval=decision,
+                actionId=action_id,
+                actionDigest=digest,
+                preparedEvent=prepared_event,
+                preparedEventCreated=prepared_created,
+            )
         event, created = workflow_store.append_event(
             config,
             case_type=case_type,
@@ -711,8 +791,79 @@ def workflow_approve_autocount_action(params: dict[str, Any], **kwargs: Any) -> 
             approved=True,
             actionId=action_id,
             actionDigest=digest,
+            preparedEvent=prepared_event,
+            preparedEventCreated=prepared_created,
             approvalEvent=event,
             eventCreated=created,
+        )
+    except Exception as exc:
+        return _response(False, error={"type": type(exc).__name__, "message": str(exc)})
+
+
+def workflow_execute_approved_autocount_action(
+    params: dict[str, Any], **kwargs: Any
+) -> str:
+    """Execute the exact persisted action; the model supplies only its stable ID."""
+    del kwargs
+    try:
+        actor = _require_actor(financial=True)
+        company_id, account_book_id = _trusted_scope(actor)
+        action_id = str(params.get("action_id") or "").strip()
+        if not action_id:
+            raise workflow_store.WorkflowStoreError("action_id is required.")
+        config = _config()
+        prepared = workflow_store.find_action_event(
+            config,
+            action_id=action_id,
+            event_type="action_prepared",
+            company_id=company_id,
+            account_book_id=account_book_id,
+        )
+        if prepared is None:
+            raise workflow_store.WorkflowConflictError(
+                "No prepared action exists for this action_id in the trusted account book."
+            )
+        approved = workflow_store.find_action_event(
+            config,
+            action_id=action_id,
+            event_type="action_approved",
+            company_id=company_id,
+            account_book_id=account_book_id,
+        )
+        if approved is None or approved.get("action_digest") != prepared.get("action_digest"):
+            raise workflow_store.WorkflowConflictError(
+                "This prepared action has not received matching exact-payload approval."
+            )
+        event_data = prepared.get("event_data")
+        if not isinstance(event_data, dict):
+            raise workflow_store.WorkflowConflictError(
+                "The prepared action record is incomplete."
+            )
+        command_type = str(event_data.get("command_type") or "").strip()
+        payload = event_data.get("payload")
+        if not command_type or not isinstance(payload, dict):
+            raise workflow_store.WorkflowConflictError(
+                "The prepared action does not contain an executable command and payload."
+            )
+        context = {
+            "case_type": str(prepared["case_type"]),
+            "case_id": str(prepared["case_id"]),
+            "case_version": int(prepared["case_version"]),
+            "company_id": company_id,
+            "account_book_id": account_book_id,
+            "action_type": str(prepared["action_type"]),
+            "action_id": action_id,
+            "action_digest": str(prepared["action_digest"]),
+        }
+        from .tools import autocount_execute_command
+
+        return autocount_execute_command(
+            {
+                "command_type": command_type,
+                "payload": payload,
+                "workflow_context": context,
+                "timeout_seconds": params.get("timeout_seconds"),
+            }
         )
     except Exception as exc:
         return _response(False, error={"type": type(exc).__name__, "message": str(exc)})

@@ -179,6 +179,7 @@ class PackagingContractTests(unittest.TestCase):
             "workflow_fifo_allocate",
             "workflow_archive_evidence",
             "workflow_approve_autocount_action",
+            "workflow_execute_approved_autocount_action",
             "workflow_send_approved_supplier_message",
         ):
             self.assertIn(workflow_tool, entrypoint)

@@ -85,6 +85,33 @@ class WorkflowLogicTests(unittest.TestCase):
 
 
 class WorkflowPersistenceContractTests(unittest.TestCase):
+    def test_metadata_cache_is_bounded_and_isolated_by_connector_and_company(self) -> None:
+        cloud_tools._metadata_cache.clear()
+        configs = [
+            {"baseUrl": "https://api.autocount.test", "connectorId": "c1", "companyId": "a"},
+            {"baseUrl": "https://api.autocount.test", "connectorId": "c2", "companyId": "b"},
+        ]
+        calls: list[str] = []
+
+        def request(method, path):
+            calls.append(f"{method}:{path}")
+            return {"call": len(calls)}
+
+        with patch.object(cloud_tools, "_load_config", side_effect=lambda: configs[0]), patch.object(
+            cloud_tools, "_request_json", side_effect=request
+        ):
+            first = cloud_tools._cached_request_json("/v1/schema/modules", ttl_seconds=300)
+            second = cloud_tools._cached_request_json("/v1/schema/modules", ttl_seconds=300)
+        self.assertEqual(first, second)
+        self.assertEqual(len(calls), 1)
+
+        with patch.object(cloud_tools, "_load_config", side_effect=lambda: configs[1]), patch.object(
+            cloud_tools, "_request_json", side_effect=request
+        ):
+            third = cloud_tools._cached_request_json("/v1/schema/modules", ttl_seconds=300)
+        self.assertNotEqual(first, third)
+        self.assertEqual(len(calls), 2)
+
     def test_whatsapp_bank_recon_bypasses_payment_case_for_staff(self) -> None:
         actor = {"platform": "whatsapp", "user_id": "60183144861", "role": ""}
         with patch.object(tools, "current_actor", return_value=actor), patch.object(
@@ -630,6 +657,65 @@ class WorkflowPersistenceContractTests(unittest.TestCase):
         self.assertEqual(response["sender"]["kind"], "staff")
         self.assertEqual(response["sender"]["internal_user_id"], "user_admin")
 
+    def test_client_current_context_uses_authenticated_actor_and_server_scope(self) -> None:
+        actor = {
+            "platform": "api_server",
+            "chat_id": "",
+            "user_id": "client-accountant",
+            "role": "accountant",
+            "message_id": "client-message-1",
+        }
+        with patch.object(tools, "current_actor", return_value=actor), patch.object(
+            tools, "_config", return_value={"companyId": "macsoftsolutions"}
+        ), patch.object(store, "resolve_whatsapp_identifier") as resolver:
+            response = json.loads(tools.workflow_current_context({}))
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["transport"], "api_server")
+        self.assertEqual(response["sender"], {"kind": "staff", "internal_user_id": "client-accountant"})
+        self.assertEqual(
+            response["workflow_scope"],
+            {"company_id": "macsoftsolutions", "account_book_id": "macsoftsolutions"},
+        )
+        resolver.assert_not_called()
+
+    def test_client_case_create_autofills_scope_and_preserves_direct_payment_facts(self) -> None:
+        actor = {
+            "platform": "api_server",
+            "chat_id": "",
+            "user_id": "client-accountant",
+            "role": "accountant",
+            "message_id": "client-message-2",
+        }
+        case = {"id": "payment-1", "version": 1}
+        with patch.object(tools, "_require_actor", return_value=actor), patch.object(
+            tools, "_trusted_scope", return_value=("company-a", "book-a")
+        ), patch.object(tools, "_enforce_trusted_scope"), patch.object(
+            tools, "_config", return_value={}
+        ), patch.object(store, "create_case", return_value=(case, True)) as create, patch.object(
+            store, "append_event", return_value=({"event_type": "case_created"}, True)
+        ):
+            response = json.loads(
+                tools.workflow_case_workspace(
+                    {
+                        "operation": "create",
+                        "case_type": "payment",
+                        "amount": "1200.00",
+                        "reference": "PAY-260810-001",
+                        "payer": "ABC Trading",
+                        "invoice_reference": "I-000028",
+                        "currency": "MYR",
+                    }
+                )
+            )
+        self.assertTrue(response["ok"])
+        self.assertEqual(create.call_args.kwargs["company_id"], "company-a")
+        self.assertEqual(create.call_args.kwargs["account_book_id"], "book-a")
+        values = create.call_args.kwargs["values"]
+        self.assertEqual(values["amount"], "1200.00")
+        self.assertEqual(values["payment_reference"], "PAY-260810-001")
+        self.assertEqual(values["working_data"]["payment_facts"]["payer"], "ABC Trading")
+        self.assertEqual(values["working_data"]["payment_facts"]["invoice_reference"], "I-000028")
+
     def test_admin_can_register_staff_with_phone_number_only(self) -> None:
         actor = {
             "platform": "whatsapp",
@@ -764,6 +850,79 @@ class WorkflowPersistenceContractTests(unittest.TestCase):
                 payload=changed_payload,
                 context=context,
             )
+
+    def test_approval_persists_exact_prepared_action_before_approval(self) -> None:
+        params = {
+            "case_type": "payment",
+            "case_id": "11111111-1111-1111-1111-111111111111",
+            "case_version": 2,
+            "action_type": "payment_knockoff",
+            "command_type": "create-ar-payment",
+            "payload": {"debtorCode": "300-A006", "amount": 1200},
+            "preview": "Create one MYR 1,200 payment for invoice I-000028.",
+        }
+        actor = {"platform": "api_server", "user_id": "user-1", "role": "accountant"}
+        approval_module = types.ModuleType("tools.approval")
+        approval_module.request_tool_approval = MagicMock(return_value={"approved": False})
+        appended: list[dict] = []
+
+        def append_event(*args, **kwargs):
+            del args
+            appended.append(kwargs)
+            return {**kwargs, "event_data": kwargs.get("event_data", {})}, True
+
+        with patch.dict(sys.modules, {"tools.approval": approval_module}), patch.object(
+            tools, "_require_actor", return_value=actor
+        ), patch.object(tools, "_trusted_scope", return_value=("company-a", "book-a")), patch.object(
+            tools, "_enforce_trusted_scope"
+        ), patch.object(tools, "_config", return_value={}), patch.object(
+            store, "get_case", return_value={"id": params["case_id"], "version": 2}
+        ), patch.object(store, "append_event", side_effect=append_event), patch.object(
+            store, "find_action_event", return_value=None
+        ):
+            response = json.loads(tools.workflow_approve_autocount_action(params))
+        self.assertFalse(response["ok"])
+        self.assertEqual(appended[0]["event_type"], "action_prepared")
+        self.assertEqual(appended[0]["event_data"]["payload"], params["payload"])
+        self.assertEqual(appended[0]["event_data"]["preview"], params["preview"])
+        self.assertEqual(response["actionId"], appended[0]["action_id"])
+
+    def test_execute_approved_action_rehydrates_exact_payload_from_action_id(self) -> None:
+        actor = {"platform": "api_server", "user_id": "user-1", "role": "accountant"}
+        prepared = {
+            "case_type": "payment",
+            "case_id": "11111111-1111-1111-1111-111111111111",
+            "case_version": 2,
+            "action_type": "payment_knockoff",
+            "action_digest": "digest-1",
+            "event_data": {
+                "command_type": "create-ar-payment",
+                "payload": {"debtorCode": "300-A006", "amount": 1200},
+                "preview": "preview",
+            },
+        }
+        approved = {"action_digest": "digest-1"}
+
+        def find_event(*args, **kwargs):
+            del args
+            return prepared if kwargs["event_type"] == "action_prepared" else approved
+
+        with patch.object(tools, "_require_actor", return_value=actor), patch.object(
+            tools, "_trusted_scope", return_value=("company-a", "book-a")
+        ), patch.object(tools, "_config", return_value={}), patch.object(
+            store, "find_action_event", side_effect=find_event
+        ), patch.object(cloud_tools, "autocount_execute_command", return_value='{"ok":true}') as execute:
+            response = json.loads(
+                tools.workflow_execute_approved_autocount_action(
+                    {"action_id": "action-1", "timeout_seconds": 240}
+                )
+            )
+        self.assertTrue(response["ok"])
+        supplied = execute.call_args.args[0]
+        self.assertEqual(supplied["command_type"], "create-ar-payment")
+        self.assertEqual(supplied["payload"], prepared["event_data"]["payload"])
+        self.assertEqual(supplied["workflow_context"]["action_id"], "action-1")
+        self.assertEqual(supplied["timeout_seconds"], 240)
 
     def test_supplier_message_uses_exact_approval_and_existing_whatsapp_transport(self) -> None:
         params = {

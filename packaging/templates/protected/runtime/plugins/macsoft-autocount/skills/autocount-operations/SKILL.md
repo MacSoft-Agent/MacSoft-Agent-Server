@@ -1,4 +1,9 @@
-﻿# MacSoft AutoCount Operations
+---
+name: autocount-operations
+description: Discover, validate, execute, and verify official AutoCount Cloud operations through the configured Connector, while preserving exact identifiers, live schema authority, workflow approval, and real result reporting.
+---
+
+# MacSoft AutoCount Operations
 
 ## Purpose
 
@@ -18,21 +23,41 @@ Use only:
 - `autocount_get_command_schema`
 - `autocount_validate_command`
 - `autocount_execute_command`
+- `workflow_approve_autocount_action`
+- `workflow_execute_approved_autocount_action`
 
 The executor is generic and can run every command that the official live
 catalog, API key, connector policy, account book, and AutoCount license allow.
 
 ## Workflow
 
+### Company workflow routing takes priority
+
+Before applying the generic ambiguity rule below, identify whether the request
+is evidence intake for an established company workflow.
+
+- A newly received customer Payment Slip, transfer proof, or payer-side receipt
+  routes to `autocount-payment-knockoff-automation`. It creates the pending
+  payment record and waits for bank-side evidence; do not replace this with a
+  menu of accounting commands.
+- A later Bank Transaction or Bank Statement for customer-payment verification
+  also routes to `autocount-payment-knockoff-automation`, which searches pending
+  records before invoice allocation.
+- Supplier invoice, delivery, receiving, PO, CN, Batch, or Expiry evidence routes
+  to `autocount-receiving-supplier-invoice-automation`.
+
+The generic command workflow applies only after the owning business Skill
+reaches an AutoCount read or write step.
+
 1. Understand the user's business intent.
 2. When wording is ambiguous, ask which document or operation they mean.
-3. Search the live command catalog when the canonical command is uncertain.
-4. Fetch the live full schema for the selected command.
+3. Search the live command catalog only when the canonical command is uncertain. A command explicitly named by an active packaged workflow Skill is already resolved.
+4. Fetch the live full schema for a newly prepared action; reuse the established schema for that same action.
 5. Build a candidate payload only from official fields and aliases.
 6. Validate the candidate without submission.
 7. Resolve internal codes with official read/list commands when possible.
 8. Ask the user only for schema-reported missing or ambiguous business information.
-9. Once valid, execute directly without an extra confirmation.
+9. For a consequential workflow write, persist/approve the exact action, then execute it by stable `action_id` only. For ordinary commands, execute directly without an extra confirmation.
 10. Wait for the final command result.
 11. Report real identifiers and official errors accurately.
 
@@ -66,8 +91,9 @@ machine-readable sources instead of browsing the site at random:
 - `https://api.autocount.cloud/ai/autocount-ontology.json` for AutoCount business terms and relationships.
 - `https://api.autocount.cloud/openapi.json` for the HTTP contract.
 
-Use them for discovery and explanation. Before an execution, the current live
-command schema and its validator remain authoritative. If an example or static
+Use them for discovery and explanation. When preparing a new action, the current
+live command schema and its validator remain authoritative. Do not rediscover
+metadata after the exact action is persisted and approved. If an example or static
 document advertises a field that the live validator rejects, report the
 connector mismatch and do not force the field into a write.
 

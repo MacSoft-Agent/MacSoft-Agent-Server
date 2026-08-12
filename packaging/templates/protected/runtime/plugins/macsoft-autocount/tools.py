@@ -287,6 +287,15 @@ def _command_status(response: dict[str, Any]) -> str:
     return ""
 
 
+def _command_wait_timeout(params: dict[str, Any], config: dict[str, Any]) -> int:
+    """Use the Server timeout as a floor; callers may extend but not shorten it."""
+    configured = max(5, min(int(config.get("commandTimeoutSeconds", 180)), 600))
+    requested = params.get("timeout_seconds")
+    if requested is None:
+        return configured
+    return max(configured, min(int(requested), 600))
+
+
 def _normalize_words(value: str) -> list[str]:
     return [
         word
@@ -659,18 +668,7 @@ def autocount_execute_command(
                 body=request_body,
             )
 
-        timeout_seconds = max(
-            5,
-            min(
-                int(
-                    params.get(
-                        "timeout_seconds",
-                        config.get("commandTimeoutSeconds", 180),
-                    )
-                ),
-                600,
-            ),
-        )
+        timeout_seconds = _command_wait_timeout(params, config)
         poll_interval = max(
             0.5,
             min(float(config.get("pollIntervalSeconds", 2)), 10.0),

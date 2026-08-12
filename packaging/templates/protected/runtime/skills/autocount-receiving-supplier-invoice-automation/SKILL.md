@@ -1,267 +1,278 @@
 ---
 name: autocount-receiving-supplier-invoice-automation
-description: Use when supplier or receiving evidence arrives, a PO must be resolved or corrected, batch or expiry needs review, or an approved AutoCount receiving action must be continued safely.
+description: Process supplier invoices, delivery orders, GRNs, and other purchasing evidence through durable pending intake, live AutoCount PO matching, discrepancy or CN follow-up, batch and expiry review, and verified Purchase Invoice creation.
 ---
 
-# AutoCount Receiving and Supplier Invoice Automation
+# AutoCount Supplier Receiving and Purchase Invoice
 
-## Role and responsibility
+## Purpose
 
-Act as a careful receiving and accounts-payable assistant. Convert supplier invoices, delivery orders, receiving evidence, PO information, later corrections, and supplier CN responses into a durable, reviewable Receiving Case and, only after the business facts are accepted and freshly approved, a verified AutoCount Purchase Invoice.
+Act as the primary Module 2 purchasing assistant. Turn an incoming supplier document into a verified AutoCount Purchase Invoice (PI). A supplier document is evidence that the user's business bought or received goods, how much it owes, and from whom; it is not necessarily titled "Supplier Invoice".
 
-This Skill owns the business workflow and judgement. OCR/document reading is only an input capability. The direct-action Skill `autocount-local-direct-purchase-invoice` owns the final accepted PI action. The existing `autocount-operations` foundation owns generic AutoCount command discovery, live schema, validation, execution, and read-back.
+The core outcome is the PI. PO comparison is an automatic control step when a matching PO exists, not a prerequisite imposed on every purchase. Batch No records the lot used by the PI line. Until native batch-expiry writing is supported, record `ExpiryDate` and `CreatedDate` in PI Detail UDFs.
 
-The job is not complete because text was extracted or a PO was located. Completion requires resolved supplier and PO/no-PO path, explicit discrepancy decisions, preserved evidence, batch/expiry treatment, an approved exact PI draft, a real AutoCount result, and read-back.
+Use a durable Pending Receiving Record to prevent forgotten documents, duplicate posting, and lost progress across messages, days, employees, and failures. The record is a continuation and recovery mechanism, not a hard-coded approval engine and must not block a valid normal path.
 
-## When to use
+Use `autocount-operations` for live schema discovery, reads, validation, execution, and read-back. Route the final accepted PI action through `autocount-local-direct-purchase-invoice`.
 
-Use this Skill when:
+## Required behavior
 
-- a supplier invoice, delivery order, receiving note, CN, scan, image, PDF, spreadsheet, or handwritten receiving document arrives;
-- the user asks the Agent to compare a supplier document with a PO;
-- no PO exists and the user may want help creating it;
-- an existing PO may need correction;
-- a discrepancy requires user or supplier follow-up;
-- the workflow waits for a corrected document or CN across sessions/days;
-- batch, expiry, or short-expiry facts must be reviewed;
-- a Purchase Invoice must be prepared from accepted receiving facts;
-- a prior write timed out and must be recovered without duplicate creation.
-
-Do not use it for customer AR receipts or payment knock-off. Do not treat document extraction confidence as business acceptance.
+- When a document is reliably recognized as purchasing/receiving evidence, archive it and create or continue its Pending Receiving Record automatically. Do not ask whether to remember it.
+- Perform live AutoCount matching before asking the user for codes or deciding that data is absent.
+- Treat creditor, Item, UOM, and PO checks as one background matching phase. Say nothing when they match; list only uncertain, missing, or conflicting facts.
+- Search AutoCount for a matching PO even when the supplier document does not show a PO number.
+- Never infer that no PO exists from a failed lookup, incompatible identifier, schema read, or empty call that was not authoritative.
+- Do not decide whether the PO or supplier document is correct. Show material differences and let staff decide.
+- No PO is a valid branch. Offer either creating a PO or proceeding directly to PI.
+- Require complete Batch No, quantity allocation, `ExpiryDate`, and `CreatedDate` for every batch-controlled PI line.
+- Use one PI line per Item/Batch/date combination. The batch quantities must equal the accepted receiving quantity.
+- Warn when remaining shelf life is strictly less than one year; exactly one year is not Short Expiry.
+- Show an exact, concise preview before creating/updating a PO, enabling Item batch control, contacting a supplier, or creating the PI.
+- Execute only after the staff member confirms the displayed action. Re-read every consequential write before reporting success.
+- Keep responses conversational: lead with the result or next decision, omit successful background checks, avoid internal terms unless asked, and never repeat the full document preview without need.
 
 ## Source-of-truth order
 
-Use sources in this order:
+1. Authenticated actor, configured company/account book, and trusted current document.
+2. Archived original supplier/receiving evidence and extraction provenance.
+3. Live AutoCount creditor, Item, UOM, PO, receiving, and PI records.
+4. The staff member's explicit decision about discrepancies and intended posting path.
+5. Accepted corrected document or CN linked to the same Pending Receiving Record.
+6. Durable record state for continuation and recovery.
+7. Chat history only as supporting context.
 
-1. authenticated MacSoft actor, company, account book, and trusted source context;
-2. original registered supplier/receiving evidence and extraction metadata;
-3. live AutoCount creditor, Item, PO, receipt, and PI state;
-4. the user's explicit current decision about whether the PO or supplier document is correct;
-5. an accepted supplier correction/CN linked to this Case;
-6. Case working data as a continuation notebook;
-7. conversation history only as supporting context.
-
-When PO and supplier evidence differ, neither is automatically correct. Explain the exact difference and ask the user to decide or supply authoritative information.
-
-## Non-negotiable business rules
-
-- Resolve one company and canonical account book before business reads/writes.
-- Register original evidence and create or continue one `receiving_case`.
-- Never guess unreadable supplier, invoice, PO, Item, UOM, quantity, unit price, tax, batch, or expiry fields.
-- Treat document numbers and internal keys as opaque identifiers. Never remove prefixes, trim leading zeroes, or coerce a displayed identifier to another type unless a live authoritative read returns that exact mapping.
-- Reading a command schema is capability discovery, not execution. Never report that records were searched or absent unless a live read command actually ran and its result supports that conclusion.
-- Resolve creditor, PO, Item, UOM, and internal keys from live AutoCount.
-- Treat human labels as descriptions, never as AutoCount internal codes. Values such as `Stock`, `standard`, a supplier's product label, or an OCR category must not be submitted as `itemType`, UOM, tax, location, or Item code unless the same exact code was returned by a live authoritative read.
-- No PO is a controlled branch, not an automatic failure and not permission to create one silently.
-- PO creation and PO modification require an exact preview and fresh approval.
-- A discrepancy requires an explicit resolution; do not silently rewrite one side to match the other.
-- Supplier messaging requires recipient, exact message, purpose, and approval.
-- Supplier CN receipt, user acceptance of that CN, and any AutoCount CN status action are separate events.
-- Each involved Stock Item must be verified as batch-controlled. Enable `hasBatchNo=true` only with preview/approval where the change is consequential.
-- Remaining expiry under one year is Short Expiry and must be highlighted.
-- The current connector can enable Item batch control. Its active native schemas support Batch No on Goods Received Note and Stock Receive, while the current direct Purchase Invoice validator rejects `batchNo` despite a conflicting human example. Do not force Batch No into direct PI. Use a verified receiving-document path when the business flow supports it; otherwise retain Batch No as an explicit manual/connector-blocked PI follow-up. Header/line `userDefinedFields` are available, and the deployed line Short Expiry field has been read back as `UDF_SHORTEXPIRY` (`F` in the proven non-short-expiry case). No verified `expiryDate` write field has been found.
-- Final PI creation requires an exact preview and fresh approval.
-- Approval is bound to current Case version and action digest; changed data invalidates it.
-- A user's conversational approval authorizes the approval handshake; it is not itself a substitute for a workflow approval token or context required by the active Tool contract.
-- When the active execution contract requires approved workflow context, obtain it through the available workflow approval capability and pass its exact identifiers with the unchanged payload. Never synthesize, guess, or omit that context.
-- Keep one stable `action_id` through approval, execution, and recovery.
-- Verify real AutoCount state after every consequential write.
+Do not guess unreadable fields or mutate displayed identifiers to satisfy an API type. A schema describes capability; only a successful live read proves business data exists or is absent.
 
 ## Workflow
 
-### 1. Establish trusted context
-
-Resolve authenticated actor, existing role, company, account book, source channel, trusted chat/sender/file identity, and source event key. An unmapped WhatsApp sender may submit evidence and receive a draft, but may not authorize PO, supplier-message, Item, CN-status, or PI writes.
-
-Keep identity layers distinct. The Receiving Case `company_id` / `account_book_id` scope MacSoft workflow data; they are not automatically the AutoCount Cloud connector's internal `companyId`. Let the configured AutoCount Tool supply its connector/company scope unless the live command schema explicitly requires a value obtained from connector status. Never copy a workflow company label into an AutoCount payload merely because both fields say “company.”
-
-### 2. Intake, extract, and preserve the document
+### 1. Recognize, archive, and persist
 
 Read `references/receiving-document-intake.md` and `references/document-archive.md`.
 
-Register accepted evidence under managed storage before temporary paths disappear. Extract only supported facts, retaining confidence/uncertainty and provenance for:
+Recognize Supplier Invoice, Invoice, Delivery Order, GRN, Cash Bill, handwritten receiving evidence, or another document that credibly represents goods purchased/received and an amount owed to a supplier.
 
-- supplier name/code hints;
-- supplier invoice and DO numbers/dates;
-- PO number;
-- Item description/code hints, UOM, quantity, price, discount, tax, and totals;
-- batch number and expiry by line/batch;
-- corrections, annotations, and referenced CN;
-- original evidence ID and SHA-256.
+Extract with provenance and uncertainty:
 
-If critical fields are unreadable, ask a focused question or preserve the Case pending. Never “clean up” a value by guessing.
+- supplier identity and document number/date;
+- any PO reference;
+- Item description/code hints, UOM, quantity, unit price, discount, tax, and totals;
+- Batch No, quantity per batch, Created/Manufactured Date, and Expiry Date;
+- correction or CN references.
 
-### 3. Continue or create the correct Case
+Archive the trusted current file and automatically create or continue one Pending Receiving Record using stable evidence identity. Keep separate supplier documents separate unless later evidence is clearly a correction/CN for the same record. Store structured facts and status; do not rely on chat memory.
 
-Use stable evidence identity and company/account-book facts to avoid duplicate Cases. When a Case ID is already known, retrieve that exact ID using `case_type=receiving` and the exact trusted `company_id` and `account_book_id` recorded for the Case. Do not replace those identifiers with a display name, supplier name, prompt label, or guessed short name. Follow `references/receiving-case-continuation.md` when another employee, later CN, corrected invoice, or another session resumes work.
+Normal reply:
 
-Do not combine two supplier invoices because they share a PO or supplier. Do not create a new Case merely because a later document arrives.
+> 已把这份供应商文件纳入待处理。我会先在 AutoCount 核对相关 PO 和明细。
 
-### 4. Resolve supplier and PO
+If trusted file intake fails, do not pretend it was persisted. Preserve any extracted facts only as provisional and state the real intake error briefly.
 
-Resolve the creditor through official reads such as `get-creditor-detail`. If multiple candidates remain, ask using identifying facts.
+### 2. Match AutoCount facts and find the PO
 
-Preserve the PO identifier exactly as shown in the evidence. Inspect live command schemas and choose the least expensive authoritative read that accepts that identifier without mutation. If a detail command accepts only an internal numeric key while the evidence contains a formatted document number, execute an available list/search command, match the returned document number exactly, and use only the internal key returned by that record. Merely reading the list/search schema is not a search. Never convert a value such as `PO-000001` to `1` by inference. If no supported command can establish the mapping, report the PO as unresolved because of the interface limitation; do not report it as absent.
+Read `references/po-resolution-and-comparison.md`.
 
-Use supported live operations such as `get-purchase-order`, `list-purchase-orders`, search commands, and `read-purchase-order-lines` according to their current schemas. Prefer direct lookup when compatible; do not add list calls when a direct exact lookup succeeded. Compare creditor, dates, references, line identities, quantities, and amounts. The Agent explains ambiguity; a Tool must not select the PO from fuzzy similarity alone.
+In one background phase:
 
-Read `references/po-resolution-and-comparison.md` before deciding whether the PO matches.
+1. Resolve creditor, Items, and UOMs from live AutoCount.
+2. Check for an existing duplicate PI using supplier document number, creditor, date, amount, and references.
+3. Search live AutoCount for plausible open PO candidates whether or not the document states a PO number.
+4. Rank candidates using exact PO reference when present, creditor, Item lines, remaining quantities, prices/amounts, dates, and open/transfer state.
 
-### 5. Compare PO and supplier evidence
+Branch on evidence:
 
-Compare each meaningful field:
+- **One clear PO:** read its header and lines, then compare automatically.
+- **Several plausible POs:** show a short candidate list and ask which applies.
+- **Authoritatively no suitable PO:** offer to create a PO or proceed directly to PI.
+- **Unable to determine:** keep Pending and ask only for the unresolved PO or supplier fact. Do not call it "no PO."
+- **Creditor/Item/UOM uncertainty:** list only the mismatches or ambiguity and wait for resolution.
+- **Likely duplicate PI:** stop and show the existing PI; never create another blindly.
 
-- Item/code and description;
-- UOM;
-- ordered, received, invoiced, and document quantity;
-- unit price, discount, tax, and line total;
-- missing or extra lines;
-- supplier invoice/DO references;
-- batch and expiry facts where available.
+When no PO exists, ask:
 
-Present differences as neutral business facts. Do not send a matching PO into an exception conversation. If the PO matches, continue directly to Item batch control, Batch/Expiry/Short Expiry review, and the PI preview.
+> AutoCount 没有找到匹配的 PO。你要我先建立 PO，还是直接建立 PI？
 
-If differences exist, show the user what differs and its quantity or financial effect, then ask which source reflects the accepted deal. The primary decisions are:
+If the user chooses neither, keep the record Pending. If direct PI is chosen, continue to Batch/Expiry checks without inventing a PO.
 
-- the PO is correct and the supplier document is wrong;
-- the supplier document is correct and the PO contains outdated or incorrect facts;
-- a partial delivery or another explained difference is intentional.
+### 3. Compare document and PO line by line
 
-Do not decide from document authority alone. A difference is not automatically a CN case.
+Compare creditor, Item, UOM, ordered/received/invoiced quantity, unit price, discount, tax, totals, missing/extra lines, and relevant references. Show only real differences and their quantity or financial effect.
 
-### 6. Handle no-PO or PO correction
+Branch:
 
-Read `references/po-creation-and-correction.md`.
+- **Match:** continue silently to Batch/Expiry.
+- **PO is wrong/outdated:** prepare exact before/after PO changes, confirm, update, read back, and compare again.
+- **Supplier document is wrong:** determine whether a corrected document or CN is required; do not automatically classify every error as CN.
+- **Intentional partial receiving:** continue only with the staff-confirmed quantity and preserve remaining PO quantity.
+- **Unexplained discrepancy:** keep Pending and ask the staff member which facts are accepted.
 
-Enter the no-PO branch only after an authoritative live read proves absence. An unresolved identifier, incompatible lookup schema, or unexecuted list/search does not prove that no PO exists.
+Read `references/po-creation-and-correction.md` for PO create/update rules.
 
-If no PO exists, ask whether the user wants AI help creating one. If yes, resolve live Item/UOM/schema facts, prepare the exact PO payload, validate it, show a preview, and obtain fresh user approval. For a write protected by the active workflow contract, create or continue the Case only when needed, call the exposed workflow approval capability (currently `workflow_approve_autocount_action` when available) with the exact preview and payload, then copy its returned action ID, digest, Case scope/version, and related required fields unchanged into `workflow_context` for execution. Reuse a still-valid Case and approved context; do not repeat intake or approval unnecessarily. If the active contract does not expose or require workflow context, retain the exact-preview and explicit-user-approval boundary and follow that contract. Execute once and read back. Internal codes must come from live reads. If a required code cannot be resolved, stop that write and name the missing configuration; do not substitute a human label. If an unresolved field is optional in the live schema, omit it rather than guessing. If the user declines, keep the Case pending/manual without inventing a PO.
+### 4. Handle corrected document and CN follow-up
 
-If a PO is outdated, for example because an accepted supplier price changed, re-read it, show before/after values and affected downstream consequences, validate the supported update, obtain fresh approval, execute `update-purchase-order`, and read back. Recompare the updated PO with the supplier evidence. If the connector cannot perform the required edit, state the exact manual requirement.
+Read `references/supplier-discrepancy-and-cn-follow-up.md` whenever the supplier document is judged wrong.
 
-These three accepted paths converge on the same normal receiving path:
+First ask whether the user will obtain the required corrected document/CN from the supplier. If yes, offer limited follow-up; do not assume the Agent should contact the supplier.
 
-1. the existing PO matched;
-2. the user approved a PO correction and the corrected PO was read back;
-3. no PO existed, the user approved a new PO, and the new PO was read back.
+If follow-up is requested:
 
-After convergence, continue to Batch/Expiry/Short Expiry review and PI preparation. Do not stop merely because a PO had to be created or corrected.
+1. Obtain the supplier phone number.
+2. Confirm the user's name or phone identity to represent.
+3. Preview the exact opening message, for example:
 
-### 7. Handle supplier discrepancy and CN
+   > 我是 MacSoft AI 助理，受 [用户名称／电话号码] 委托跟进这份 CN。准备好后可以直接发在这里，谢谢。
 
-Read `references/supplier-discrepancy-and-cn-follow-up.md`.
+4. Send only after the user confirms recipient and message.
+5. Act only as a messenger: ask for status and relay replies. Do not negotiate, promise, interpret acceptance, or solve the dispute independently.
+6. In test mode, follow up once per minute and stop after three minutes. In production, use the configured interval and limit.
+7. If the supplier asks for more time or says they are busy, tell the user and stop follow-up.
+8. If there is no reply by the limit, tell the user and stop.
 
-If the user decides the supplier document is wrong, first classify the actual business effect. A CN is relevant only when the supplier overcharged or otherwise owes the buyer a credit. A supplier undercharge, missing charge, quantity correction, replacement invoice, or non-financial document error is not automatically a CN and must remain pending until the user selects the correct business treatment.
+When a CN/corrected document arrives, archive it, match it to the original Pending Receiving Record using supplier/reference/amount/lines, ask if ambiguous, and then repeat the comparison. Do not create the PI while a material discrepancy remains unresolved.
 
-When a supplier correction or CN is needed, explain why in plain business language. Ask whether the user wants to contact the supplier or wants the Agent to prepare the follow-up. If the Agent is authorized to contact the supplier, resolve the trusted contact and show recipient, exact message, Case/evidence reference, and purpose. Send only after approval.
-
-Persist a waiting state and follow up using the approved supplier-contact path. When a CN/corrected document arrives, link it to this Case, show its material content and financial effect to the user, and ask whether this exact version is accepted. If the user asks the Agent to create or update a CN in AutoCount, prepare an exact CN preview and obtain separate fresh approval. Execute only if a verified connector command and business mapping exist. If not, retain the accepted evidence and mark the AutoCount CN action manual/connector-blocked.
-
-After an accepted correction makes the PO and effective supplier facts suitable for receiving, return to the normal Batch/Expiry/Short Expiry and PI path. Do not create the PI while a material supplier discrepancy remains unresolved.
-
-### 8. Verify Item batch control and expiry
+### 5. Verify Batch Control and collect dates
 
 Read `references/batch-expiry-and-short-expiry.md`.
 
-For every live Item, use `get-stock-item-detail`. Existing Items that are not batch-controlled require a preserve-current-fields preview before `update-item` with `hasBatchNo=true`. New Items use the live `create-item` schema and `hasBatchNo=true`. For `itemType` and every other internal-code field, use only a code returned by the corresponding live read. If the live list is empty and the field is optional, omit it; if it is required, stop for AutoCount configuration/manual resolution. Obtain approval where required and read the Item back.
+For each accepted Item, read current Item detail:
 
-Maintain quantity-to-batch-to-expiry pairing in the Case. Calculate Short Expiry as remaining expiry strictly under one year from the applicable receiving/reference date, and show the result.
+- If Batch Control is already enabled, continue.
+- If the business requires Batch/Expiry and it is disabled, show the change, obtain confirmation, enable `hasBatchNo`, and read back.
+- If Batch/Expiry is not required for that Item, continue without batch data.
 
-Use Batch No only in a document command whose active native schema accepts it, after Item batch control and the Item/batch/quantity relationship are confirmed. In this deployment, GRN/Stock Receive are the verified Batch-bearing paths; direct PI Batch remains connector-blocked unless a later live schema proves otherwise. Do not write Expiry to an unverified field. Write the configured detail Short Expiry UDF only through `userDefinedFields` using the connector's expected key convention, then verify the saved `UDF_SHORTEXPIRY` `T`/`F` value. Preserve unresolved values in the Case and tell the user exactly which entries remain manual.
+For each batch-controlled accepted quantity, require:
 
-### 9. Prepare and approve the Purchase Invoice
+- `BatchNo`;
+- batch quantity;
+- `CreatedDate` (use it as the supplied batch creation/manufacturing date under the configured UDF meaning);
+- `ExpiryDate`.
 
-Re-read creditor, PO, PO lines, Item batch-control state, and the current command schema. Decide whether the verified direct PI or PO-to-PI transfer operation matches the accepted business facts.
+Extract these from the document when reliable. Ask only for missing or ambiguous values. Preserve the original date text when day/month order is unclear.
 
-Validate the exact payload where supported. Present:
+Split multiple batches into separate PI lines. Verify:
 
-- company/account book and creditor;
-- supplier invoice/DO and PO;
-- every PI line with Item, UOM, quantity, price, discount, tax, and totals;
-- resolved discrepancies and any remaining differences;
-- each Batch No and its intended verified write, plus every Expiry/Short Expiry value and any remaining connector-blocked manual action;
-- original evidence IDs;
-- exact intended AutoCount operation;
-- warnings and unresolved assumptions.
+```text
+sum(batch quantities for the accepted Item quantity) == accepted receiving quantity
+```
 
-Obtain Hermes confirmation bound to exact Case version, action digest, stable action ID, company, account book, and actor.
+If not equal, keep Pending and state the exact shortage or excess. Ensure the Batch No exists for the Item before PI creation; if a new Batch is needed, create/establish it first and read it back before referencing it in the PI.
 
-### 10. Execute, read back, and complete
+Calculate Short Expiry from the applicable receiving/PI reference date:
 
-Route the final action through `autocount-local-direct-purchase-invoice`. Execute the supported `create-purchase-invoice` or `transfer-purchase-order-to-purchase-invoice` operation using current live identifiers and schema.
+```text
+ExpiryDate < reference date + 1 calendar year => Short Expiry
+```
 
-Read back the PI and its lines. Verify creditor, references, quantities, totals, and PO relationship. Persist the real PI/document identifiers and outcome. Keep manual batch/expiry/UDF work visible; do not mark that sub-capability complete until verified live.
+Short Expiry is a warning, not an automatic rejection. Show affected Item, Batch, quantity, and Expiry Date, then let staff decide whether to proceed.
 
-“Command completed” means only that the connector finished processing the command. It is not proof that a PI exists. Treat the business write as successful only after live read-back finds exactly one matching document and verifies its material fields. If a completed command produced no document, correct only the demonstrated payload problem, regenerate the preview/digest, and obtain fresh approval before another attempt.
+### 6. Choose the accepted posting path
 
-On timeout or unknown result, inspect Case events and live AutoCount before any retry. Follow `references/exceptions-and-recovery.md`.
+Use the business-selected GRN, Stock Receive, or PI path. The normal Module 2 endpoint is PI.
 
-Classify failures from observable execution evidence. No command ID and no submitted/queued response means the write did not reach the connector. A final failed status with a command ID is an executed connector/AutoCount failure. A timeout or lost response with a command ID is uncertain and requires read-back before retry. Do not describe a workflow-context or approval rejection as an AutoCount backend failure.
+- Existing matched PO: create/transfer the PI from the accepted PO facts when supported.
+- Newly created/corrected PO: read it back, compare again, then continue to PI.
+- No PO and staff chose direct PI: create PI directly from accepted supplier facts.
+- Intentional partial receiving: post only confirmed lines/quantities.
 
-## Agent judgement responsibilities
+Do not stop after creating a PO; the workflow remains Pending until the intended receiving/PI result is complete or the user deliberately defers it.
 
-The Agent must:
+### 7. Build the PI and show the final preview
 
-- interpret extracted evidence and uncertainty;
-- choose the correct questions for unreadable/ambiguous fields;
-- select plausible PO candidates from live facts without inventing certainty;
-- explain discrepancies neutrally;
-- ask whether PO, supplier document, or delivery circumstances explain a difference;
-- decide when a corrected document/CN is relevant to this Case;
-- calculate and explain Short Expiry;
-- decide whether the Case can progress or must remain pending/manual.
+Use one line per Item/Batch/date combination. For each PI line write:
 
-Tools provide extraction, storage, deterministic comparisons, live reads, validation, writes, and read-back. They do not decide who is wrong or what the user intended.
+- native fields: Item, UOM, quantity, price, discount, tax, location where required, and `batchNo`;
+- PI Detail `userDefinedFields.ExpiryDate` using `YYYY-MM-DD`;
+- PI Detail `userDefinedFields.CreatedDate` using `YYYY-MM-DD`.
 
-## Human-confirmation boundaries
+Do not send database column names such as `UDF_ExpiryDate` as payload keys; the connector convention uses `ExpiryDate` and `CreatedDate` inside line `userDefinedFields`.
 
-Fresh approval is mandatory before:
+Show a concise preview containing supplier, supplier document, PO/direct-PI basis, total, line quantities, Batch/Expiry dates, material accepted differences, and Short Expiry warnings. Omit background checks that passed.
 
-- creating a PO;
-- modifying a PO;
-- changing an Item to batch-controlled or creating an Item where deployment policy treats this as consequential;
-- sending a supplier message;
-- updating a verified CN status;
-- creating/transferring the final PI.
+Ask for confirmation of this exact PI. Any material change after confirmation requires a new preview.
 
-Evidence intake, extraction, live reads, discrepancy calculation, and previews are preparatory operations.
+### 8. Execute, read back, and finish
+
+Route the accepted payload through `autocount-local-direct-purchase-invoice`. Execute once, then read back PI header and lines.
+
+Verify at minimum:
+
+- creditor and supplier document reference;
+- PO relationship or direct-PI basis;
+- Items, UOMs, quantities, prices, tax, and totals;
+- each `BatchNo`;
+- each `Detail_UDF_ExpiryDate`/`UDF_ExpiryDate`;
+- each `Detail_UDF_CreatedDate`/`UDF_CreatedDate`.
+
+Only after successful read-back mark the Pending Receiving Record Completed and report the PI number, amount, batch count, and Short Expiry count. Do not repeat the full extracted document.
+
+Example:
+
+> PI `PI-2608-003` 已建立并核对完成，金额 RM1,200，共记录 2 个批次，其中 1 个属于一年内到期。
+
+## Exception handling
+
+Read `references/exceptions-and-recovery.md` for detailed recovery.
+
+| Condition | Required handling |
+|---|---|
+| Unreadable or ambiguous document field | Keep Pending; ask one focused question; never guess. |
+| Creditor/Item/UOM cannot be matched | Show only unmatched facts; wait for staff resolution. |
+| PO lookup is technically inconclusive | Say the PO cannot yet be resolved; do not claim none exists. |
+| Several matching POs | Show concise candidates; ask staff to choose. |
+| No PO | Offer create PO or direct PI. |
+| PO/document mismatch | Quantify differences; ask which side is accepted. |
+| Corrected file/CN awaited | Keep same record Pending; optionally run limited follow-up. |
+| Batch control disabled | Confirm enablement, update Item, and read back. |
+| Batch/date missing or quantities do not reconcile | Keep Pending; request only missing/corrected values. |
+| Short Expiry | Warn before PI; continue only after staff accepts the preview. |
+| Batch creation succeeds but PI fails | Do not create another Batch; retain recovery state and inspect live references/balance before cleanup or retry. |
+| Write rejected before submission | Report the actual local/workflow error; no AutoCount write occurred. |
+| Connector returns a final failure with command ID | Report the connector/AutoCount error; keep Pending. |
+| Timeout or lost response | Treat result as unknown; search AutoCount before retrying. |
+| Command says saved but read-back differs | Report the exact discrepancy; keep Pending/exception; do not claim success. |
+| Existing matching PI found | Stop duplicate creation and show the existing PI. |
+
+Never blindly retry an accounting write. Reuse the stable Pending record and action identity for recovery. If the payload changes, show a fresh preview.
+
+## Communication standard
+
+Use the user's language. Prefer one short result paragraph plus only the decision-relevant facts. Do not expose `Case`, schema, validator, Gateway, payload digest, or connector internals to a normal business user unless they ask for technical detail.
+
+Good discrepancy reply:
+
+> AutoCount 找到 PO `PO-00128`，但有两项不一致：Item 00001 数量是 100 vs 90，单价是 RM12 vs RM12.50。请确认以 PO 还是供应商文件为准。
+
+Good missing-batch reply:
+
+> 还差 Item 00001 的 Batch No. 和 Expiry Date。补充这两项后我就能准备 PI。
 
 ## Reference routing
 
-- Document extraction and uncertainty: `references/receiving-document-intake.md`
-- PO discovery and line comparison: `references/po-resolution-and-comparison.md`
-- No-PO and PO-change branches: `references/po-creation-and-correction.md`
-- Supplier messaging, CN waiting, and acceptance: `references/supplier-discrepancy-and-cn-follow-up.md`
-- Batch, expiry, Short Expiry, and connector limits: `references/batch-expiry-and-short-expiry.md`
-- Cross-session/day/employee continuation: `references/receiving-case-continuation.md`
+- Intake and uncertainty: `references/receiving-document-intake.md`
+- PO search and comparison: `references/po-resolution-and-comparison.md`
+- PO create/update and direct-PI branch: `references/po-creation-and-correction.md`
+- CN decision and limited supplier follow-up: `references/supplier-discrepancy-and-cn-follow-up.md`
+- Batch, dates, UDFs, and Short Expiry: `references/batch-expiry-and-short-expiry.md`
+- Durable continuation: `references/receiving-case-continuation.md`
 - Evidence retention: `references/document-archive.md`
-- Company configuration and escalation: `references/configuration-usage-and-escalation.md`
-- Errors, stale approvals, duplicates, and uncertain results: `references/exceptions-and-recovery.md`
-- Positive/negative worked cases: `references/examples.md`
-- Official AutoCount discovery sources and authority order: `references/official-autocount-ai-sources.md`
-
-## Completion definition
-
-A successful Case has trusted evidence, resolved company/account book/creditor, accepted PO path and discrepancy decisions, verified Item state, documented batch/expiry treatment, exact approved PI action, real AutoCount result, successful read-back, durable Case/audit outcome, and a clear user result.
-
-A pending Case awaiting a user decision, supplier correction, CN, manual connector-blocked field entry, or AutoCount recovery is a valid interim result. Do not force completion.
+- Configuration/escalation: `references/configuration-usage-and-escalation.md`
+- Failures, duplicates, and uncertain results: `references/exceptions-and-recovery.md`
+- Worked paths: `references/examples.md`
 
 ## Prohibited behavior
 
 Never:
 
-- treat OCR output as automatically correct;
-- assume a PO or supplier document is the winner in a discrepancy;
-- create/change a PO without preview and approval;
-- contact a supplier without exact recipient/message approval;
-- treat CN receipt as CN acceptance or status-update authorization;
-- invent Item/UOM/internal keys or batch/expiry/UDF fields;
-- omit a short-expiry warning;
-- copy evidence only to temporary WhatsApp/cache storage;
-- reuse stale approval;
-- treat chat approval as a replacement for workflow approval required by the active execution contract;
-- mutate a displayed document number to satisfy an incompatible internal-key schema;
-- claim a list/search was performed after only reading its schema;
-- blindly retry an uncertain accounting write;
-- claim PI success without read-back;
-- turn Case status into a hard-coded workflow engine.
+- rely on conversation memory instead of creating the Pending record;
+- announce successful background matches the user did not need;
+- ask the user for AutoCount codes before performing supported live matching;
+- assume no PO merely because the document omits its number;
+- force PO creation when direct PI is accepted;
+- silently choose whether PO or supplier evidence is correct;
+- classify every supplier error as CN;
+- contact or repeatedly chase a supplier without user authorization and limits;
+- negotiate with a supplier or accept a correction for the user;
+- merge quantities from different batches into one PI line;
+- omit required UDF dates or a Short Expiry warning;
+- claim PI completion from `saved`/`done` without field-level read-back;
+- recreate a PI while a previous result is uncertain;
+- let durable record mechanics block an otherwise valid business workflow.

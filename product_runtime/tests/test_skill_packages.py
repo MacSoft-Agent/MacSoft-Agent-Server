@@ -129,14 +129,15 @@ class SkillPackageTests(unittest.TestCase):
             "list-gl-bank-reconciliation-uncleared",
             "validate-gl-bank-reconciliation",
             "create-gl-bank-reconciliation",
+            "update-gl-bank-reconciliation",
             "get-gl-bank-reconciliation",
         ):
             self.assertIn(command_type, text)
-        self.assertIn('"actualBalance": 2900', text)
-        self.assertIn('"selectedBankTransKeys": [1, 2]', text)
-        self.assertIn("send `payload` as a quoted JSON string", text)
-        self.assertIn("explicit confirmation before saving", text)
-        self.assertIn("Report success only when", text)
+        self.assertIn('"actualBalance": 39006.29', text)
+        self.assertIn('"selectedBankTransKeys": [20682, 20683]', text)
+        self.assertIn("never send it as a quoted JSON string", text)
+        self.assertIn("Do not save yet", text)
+        self.assertIn("Only then report success", text)
 
 if __name__ == "__main__":
     unittest.main()

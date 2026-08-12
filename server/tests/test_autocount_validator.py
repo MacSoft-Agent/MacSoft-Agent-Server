@@ -128,6 +128,13 @@ class FakeResponse:
 
 
 class AutoCountValidatorTests(unittest.TestCase):
+    def test_command_timeout_parameter_cannot_shorten_server_floor(self) -> None:
+        config = {"commandTimeoutSeconds": 120}
+        self.assertEqual(tools._command_wait_timeout({}, config), 120)
+        self.assertEqual(tools._command_wait_timeout({"timeout_seconds": 60}, config), 120)
+        self.assertEqual(tools._command_wait_timeout({"timeout_seconds": 240}, config), 240)
+        self.assertEqual(tools._command_wait_timeout({"timeout_seconds": 999}, config), 600)
+
     def setUp(self) -> None:
         tools._invalid_fingerprints.clear()
         tools._invalid_fingerprint_set.clear()
@@ -197,6 +204,61 @@ class AutoCountValidatorTests(unittest.TestCase):
                 "debtorCode": "D-001",
                 "items": [{"itemCode": "ITEM-001", "qty": 1}],
             },
+        )
+        self.assertTrue(result["valid"], result)
+
+    def test_business_account_number_is_validated_as_string_identifier(self) -> None:
+        schema = {
+            "payloadSchema": {
+                "accNo": "required bank/cash account number",
+                "startDate": "optional YYYY-MM-DD",
+            },
+            "examplePayload": {
+                "accNo": "110-0010",
+                "startDate": "2026-01-01",
+            },
+        }
+
+        valid = validator.validate_command_payload(
+            schema,
+            {"accNo": "310-1000", "startDate": "2026-07-01"},
+        )
+        self.assertTrue(valid["valid"], valid)
+
+        invalid = validator.validate_command_payload(
+            schema,
+            {"accNo": 3101000, "startDate": "2026-07-01"},
+        )
+        self.assertFalse(invalid["valid"])
+        self.assertEqual(invalid["type_errors"][0]["path"], "$.accNo")
+        self.assertEqual(invalid["type_errors"][0]["expected"], "string")
+
+    def test_native_master_type_overrides_ambiguous_example_type(self) -> None:
+        schema = {
+            "payloadSchema": {
+                "actualBalance": "required bank statement actual balance",
+                "confirmDelete": "required true only for delete-gl-bank-reconciliation",
+            },
+            "examplePayload": {"actualBalance": 2900},
+            "nativePayload": {
+                "sections": [
+                    {
+                        "name": "Master",
+                        "fields": [
+                            {
+                                "name": "ActualBalance",
+                                "type": "number",
+                                "aliases": ["actualBalance"],
+                            }
+                        ],
+                    }
+                ]
+            },
+        }
+
+        result = validator.validate_command_payload(
+            schema,
+            {"actualBalance": 39006.29},
         )
         self.assertTrue(result["valid"], result)
 

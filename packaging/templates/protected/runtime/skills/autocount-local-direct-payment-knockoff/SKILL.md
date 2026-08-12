@@ -15,7 +15,7 @@ Do not repeat fuzzy bank investigation here. If bank evidence, debtor, account b
 
 ## Required inputs
 
-Require one company/account book, authenticated authorized actor, current Payment Case and version, registered evidence, verified bank conclusion, resolved debtor, live selected invoices, payment date/method/reference, exact allocation, stable action ID, action digest, and fresh approval.
+Require one company/account book, authenticated authorized actor, current Payment Case and version, registered evidence, verified bank conclusion, resolved debtor, live selected invoices, payment date/method/reference, exact allocation, stable action ID, action digest, and fresh approval. Resolve authorization according to the current transport: authenticated Client session permissions for Client, and WhatsApp sender mapping for WhatsApp. Never require a Client actor to have a WhatsApp identifier.
 
 ## Execution sequence
 
@@ -41,7 +41,8 @@ Keep the customer reply natural and short. Say what is ready, what still needs c
 
 ## Never
 
-- execute for an unmapped/unapproved actor;
+- execute for an actor denied by the authorization system of the current transport;
+- treat an authenticated Client actor as an unmapped WhatsApp sender or show the WhatsApp external-sender Admin reply in Client;
 - use approval from another Case version/digest;
 - replace an invalid explicit invoice with FIFO silently;
 - modify allocation under the old approval;

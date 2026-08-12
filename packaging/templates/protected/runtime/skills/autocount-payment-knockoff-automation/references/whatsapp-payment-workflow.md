@@ -6,6 +6,10 @@ Use Gateway-provided `chatId`, `senderId`, sender mapping, message ID, file iden
 
 `whatsapp_identifiers` maps transport identities to company/entity or an existing MacSoft user. It is not a second role system. An unmapped sender may submit evidence or receive a draft but may not authorize financial execution.
 
+These rules apply only when the current transport is WhatsApp. They must not classify an authenticated MacSoft Client session. Client authorization comes from the Client session actor; absence of a WhatsApp identifier is normal and must not trigger the external-sender Admin reply.
+
+The fixed reply `此操作需要工作人员权限，请联络 Admin：+60 18-314 4861。` is permitted only when the current transport is WhatsApp and its authoritative sender resolution returns `external`. Never use it as a generic fallback for missing actor data or missing WhatsApp context in Client.
+
 ## Fragmented messages
 
 Treat common sequences as one possible Case only after checking identity and facts:

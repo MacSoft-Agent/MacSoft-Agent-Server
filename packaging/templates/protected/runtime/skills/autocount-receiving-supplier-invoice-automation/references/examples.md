@@ -2,11 +2,11 @@
 
 ## 1. Perfect PO match
 
-Supplier invoice matches live creditor, PO, Item/UOM, quantity, price, tax, and total. Do not ask the user to choose a discrepancy path. Verify Item batch control and extracted batch/expiry, classify Short Expiry, preview PI, highlight connector-blocked manual batch/expiry entry, approve, create/transfer, and read back.
+Supplier invoice matches live creditor, PO, Item/UOM, quantity, price, tax, and total. Do not ask the user to choose a discrepancy path. Verify Item batch control and extracted Batch No/CreatedDate/ExpiryDate, classify Short Expiry, preview PI, write the PI Batch and detail UDF dates, then read back all material fields.
 
 ## 2. No PO
 
-No live candidate exists. Ask whether AI should create one. If yes, resolve all Item/UOM/schema facts, show exact PO preview, approve, create and read back, recompare, then continue Batch/Expiry/Short Expiry and PI. If no, keep Case pending/manual.
+No suitable live PO exists. Ask whether AI should create a PO or proceed directly to PI. If PO is chosen, preview, create/read back, recompare, then continue. If direct PI is chosen, continue to Batch/Expiry without inventing a PO. If neither is chosen, keep Pending.
 
 ## 3. Partial delivery
 
@@ -30,7 +30,7 @@ User accepts CN. The live connector has no verified CN-status operation. Record 
 
 ## 8. Multiple batches
 
-Item A: batch B1 qty 4 expiry 2027-10-01; B2 qty 2 expiry 2026-10-01. Keep pairs. Compute Short Expiry for each against receiving date and show separate warnings/manual entries.
+Item A: batch B1 qty 4 expiry 2027-10-01; B2 qty 2 expiry 2026-10-01. Keep pairs, split them into separate PI lines, write each line's Batch No and date UDFs, compute Short Expiry against the receiving date, and show only affected warnings.
 
 ## 9. Ambiguous handwritten expiry
 

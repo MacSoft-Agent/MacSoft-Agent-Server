@@ -1,51 +1,42 @@
-# PO Creation and Correction
+# PO Creation, Correction, and Direct PI
 
-## Resolve before declaring absence
+## Prove the PO state
 
-Keep the supplier's displayed PO number unchanged. A formatted document number and an AutoCount internal numeric key are different identifiers unless a live result maps them. If direct lookup cannot accept the displayed value, execute a supported list/search operation and exact-match its returned document-number field; only then use the returned internal key. Reading a schema does not query business data. An incompatible interface means unresolved, not missing.
+Search AutoCount for a matching PO even if the supplier document has no PO number. Use exact PO reference when present plus creditor, Item lines, remaining quantity, prices/amount, dates, and open/transfer state.
 
-## No PO
+Preserve displayed identifiers. If a command needs an internal key, obtain it from a live result; never derive it from a formatted PO number. An incompatible lookup means unresolved, not absent.
 
-Tell the user no suitable live PO was found and ask whether AI should prepare one. If the user declines, preserve the Case for manual PO creation or later information.
+## Authoritatively no PO
 
-If accepted:
+Offer both valid paths:
 
-1. resolve creditor, Item, UOM, quantities, price, tax, dates, location, and required live schema fields;
-2. do not invent a new Item merely because document text is close to no existing Item;
-3. resolve internal codes from live AutoCount reads; never use a human category such as `Stock` as `itemType` unless live AutoCount returned `Stock` as the exact code;
-4. omit an unresolved optional field, but stop and report a missing required code rather than guessing it;
-5. validate the exact PO payload;
-6. preview header, every line, totals, source evidence, and assumptions;
-7. obtain fresh user approval tied to the exact preview;
-8. when required by the active Tool contract, use its exposed approval capability (currently `workflow_approve_autocount_action` when available) and pass the returned Case version, action ID, action digest, scope, and other required values unchanged as execution `workflow_context`;
-9. create the PO once; do not execute if required workflow context is absent or the payload differs from the approved payload;
-10. read back PO number, status, lines, and totals.
-11. compare the created PO with the supplier evidence and, when aligned, continue the normal Batch/Expiry/Short Expiry and PI path.
+1. create a PO first;
+2. proceed directly to PI.
+
+If the user chooses direct PI, record that decision and continue to Batch/Expiry checks. Do not force PO creation or leave the workflow stuck merely because no PO exists.
+
+If PO creation is chosen:
+
+1. resolve live creditor, Item, UOM, quantities, prices, tax, dates, and required codes;
+2. prepare and validate the exact PO payload;
+3. show a concise header/line/total preview;
+4. obtain confirmation;
+5. create once and read back;
+6. compare the created PO against accepted supplier facts;
+7. continue to Batch/Expiry and PI rather than treating PO creation as completion.
 
 ## Existing PO correction
 
-First ask whether the PO is truly outdated/wrong or the supplier document/delivery differs legitimately. If correction is chosen:
+If staff decides the PO is wrong/outdated:
 
 1. re-read current PO and lines;
-2. show exact before/after values and downstream impact;
-3. preserve fields not being changed;
-4. validate supported update schema;
-5. obtain fresh approval;
-6. execute once and read back;
-7. re-run supplier-document comparison.
+2. show exact before/after values and impact;
+3. preserve unchanged fields;
+4. validate, confirm, update once, and read back;
+5. compare again and continue to PI when aligned.
 
-When the corrected PO aligns with the accepted supplier facts, continue the normal Batch/Expiry/Short Expiry and PI path. Do not treat PO correction as the end of the receiving workflow.
+If PO edit is unsupported or its state prevents editing, state the exact manual action. Do not create a duplicate PO to imitate an edit without explicit instruction.
 
-If PO update is unsupported or PO state prevents safe editing, state the exact manual operation. Do not recreate a second PO to simulate an edit without explicit approval.
+## Partial receiving
 
-User-provided corrected PO information is input, not automatic write authority. Validate it against live Item/UOM/schema facts and preview it.
-
-## Normal-path convergence
-
-The workflow converges after any one of these is verified:
-
-- an existing PO matches;
-- a corrected PO matches after approval and read-back;
-- a newly created PO matches after approval and read-back.
-
-From that point, verify Item batch control, classify Batch/Expiry/Short Expiry, prepare the exact PI preview, obtain fresh approval, create/transfer the PI, and read it back.
+When staff confirms partial receiving is intentional, use only accepted lines/quantities for the current PI and preserve the remaining PO quantity. Do not mark the whole PO received unless live business facts support it.

@@ -129,7 +129,10 @@ AUTOCOUNT_EXECUTE_COMMAND = {
                 "type": "integer",
                 "minimum": 5,
                 "maximum": 600,
-                "description": "Optional total wait time for the final result.",
+                "description": (
+                    "Optional total wait time for the final result. It may extend, "
+                    "but cannot shorten, the Server-configured command timeout."
+                ),
             },
             "workflow_context": {
                 "type": "object",

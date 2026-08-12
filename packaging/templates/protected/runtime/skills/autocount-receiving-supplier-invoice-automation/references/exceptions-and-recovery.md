@@ -3,10 +3,10 @@
 - Unreadable document: preserve it, identify critical unknowns, request clearer evidence/typed facts.
 - Unknown supplier/Item/UOM: show live candidates or ask; never invent codes.
 - Multiple POs: present distinguishing lines/dates/status; do not choose arbitrarily.
-- No PO and user declines creation: keep Case pending/manual.
+- No PO: offer PO creation or direct PI. If the user chooses neither, keep Pending.
 - PO update unsupported: report exact manual change; do not create a duplicate PO as workaround.
 - Supplier never responds or CN is rejected: retain waiting evidence/decision and escalate as configured.
-- Batch/expiry/UDF field unsupported: retain values and manual warning; do not claim line write.
+- Required Batch/UDF configuration unavailable: retain values and report the exact missing configuration; do not silently omit dates or claim the line write.
 - Archive failure: retain managed evidence if available and report incomplete archive.
 - AutoCount unavailable: preserve Case and next required live read.
 - Duplicate supplier invoice: compare stable evidence and live PI before any write.

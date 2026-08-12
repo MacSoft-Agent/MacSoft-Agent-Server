@@ -15,6 +15,7 @@ provides_tools:
   - workflow_intake_payment
   - workflow_archive_evidence
   - workflow_approve_autocount_action
+  - workflow_execute_approved_autocount_action
   - workflow_send_approved_supplier_message
 provides_hooks:
   - pre_llm_call

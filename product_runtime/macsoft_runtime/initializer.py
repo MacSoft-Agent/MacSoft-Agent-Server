@@ -399,6 +399,38 @@ def _reconcile_removed_protected_resources(
             result.conflicts.append(relative_destination)
 
 
+def _remove_exact_nested_skill_duplicates(
+    paths: ProductPaths, result: InitializationResult
+) -> None:
+    """Remove only byte-identical ``skill/skill`` copies left by old installers."""
+    skills_root = paths.runtime_root / "skills"
+    if not skills_root.is_dir():
+        return
+    for skill_root in (path for path in skills_root.iterdir() if path.is_dir()):
+        nested = skill_root / skill_root.name
+        if not nested.is_dir():
+            continue
+        nested_files = [path for path in nested.rglob("*") if path.is_file()]
+        relative_nested = nested.relative_to(paths.data_root).as_posix()
+        if not nested_files or any(
+            not (skill_root / path.relative_to(nested)).is_file()
+            or _sha256(skill_root / path.relative_to(nested)) != _sha256(path)
+            for path in nested_files
+        ):
+            result.conflicts.append(relative_nested)
+            continue
+        for path in nested_files:
+            result.removed_protected.append(path.relative_to(paths.data_root).as_posix())
+            path.unlink()
+        for directory in sorted(
+            (path for path in nested.rglob("*") if path.is_dir()),
+            key=lambda path: len(path.parts),
+            reverse=True,
+        ):
+            directory.rmdir()
+        nested.rmdir()
+
+
 def initialize_product_data(paths: ProductPaths, metadata: ProductMetadata) -> InitializationResult:
     """Create packaged writable state without importing developer or customer data.
 
@@ -554,6 +586,7 @@ def initialize_product_data(paths: ProductPaths, metadata: ProductMetadata) -> I
         protected_state=protected_state,
         result=result,
     )
+    _remove_exact_nested_skill_duplicates(paths, result)
 
     next_state = {
         "schema_version": metadata.data_schema_version,

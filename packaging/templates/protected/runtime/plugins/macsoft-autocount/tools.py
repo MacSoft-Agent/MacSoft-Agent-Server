@@ -34,6 +34,11 @@ _INVALID_FINGERPRINT_LIMIT = 256
 _invalid_fingerprints: deque[str] = deque()
 _invalid_fingerprint_set: set[str] = set()
 _invalid_fingerprint_lock = threading.Lock()
+_metadata_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_metadata_cache_lock = threading.Lock()
+_CATALOG_CACHE_SECONDS = 300.0
+_SCHEMA_CACHE_SECONDS = 300.0
+_CONNECTOR_STATUS_CACHE_SECONDS = 15.0
 
 
 class AutoCountToolError(RuntimeError):
@@ -338,8 +343,38 @@ def _catalog_entries(catalog: dict[str, Any]) -> list[dict[str, Any]]:
     return list(unique.values())
 
 
+def _cached_request_json(path: str, *, ttl_seconds: float) -> dict[str, Any]:
+    """Reuse slow, read-only Connector metadata for a short bounded period."""
+    try:
+        config = _load_config()
+    except AutoCountToolError:
+        # Unit adapters and discovery callers may provide the transport without
+        # a complete local config. The real request still performs its own
+        # configuration validation before network I/O.
+        config = {}
+    key = "|".join(
+        (
+            str(config.get("baseUrl") or "").rstrip("/"),
+            str(config.get("connectorId") or ""),
+            str(config.get("companyId") or ""),
+            path,
+        )
+    )
+    now = time.monotonic()
+    with _metadata_cache_lock:
+        cached = _metadata_cache.get(key)
+        if cached is not None and cached[0] > now:
+            return cached[1]
+    response = _request_json("GET", path)
+    with _metadata_cache_lock:
+        _metadata_cache[key] = (now + max(0.0, ttl_seconds), response)
+    return response
+
+
 def _resolve_exact_command(command_type: str) -> dict[str, Any]:
-    catalog = _request_json("GET", "/v1/schema/modules")
+    catalog = _cached_request_json(
+        "/v1/schema/modules", ttl_seconds=_CATALOG_CACHE_SECONDS
+    )
     entries = _catalog_entries(catalog)
     by_type = {
         str(entry.get("type") or entry.get("commandType") or ""): entry
@@ -360,7 +395,9 @@ def _resolve_exact_command(command_type: str) -> dict[str, Any]:
 def _load_exact_command_schema(command_type: str) -> tuple[dict[str, Any], dict[str, Any]]:
     command = _resolve_exact_command(command_type)
     encoded = quote(command_type, safe="")
-    schema = _request_json("GET", f"/v1/schema/commands/{encoded}")
+    schema = _cached_request_json(
+        f"/v1/schema/commands/{encoded}", ttl_seconds=_SCHEMA_CACHE_SECONDS
+    )
     return command, schema
 
 
@@ -399,9 +436,9 @@ def autocount_get_connector_status(
     try:
         config = _load_config()
         connector_id = quote(str(config["connectorId"]), safe="")
-        response = _request_json(
-            "GET",
+        response = _cached_request_json(
             f"/v1/connectors/{connector_id}/status",
+            ttl_seconds=_CONNECTOR_STATUS_CACHE_SECONDS,
         )
         return _success(response)
     except Exception as exc:
@@ -424,7 +461,9 @@ def autocount_search_commands(
             raise AutoCountToolError("query is required.")
 
         query_words = _normalize_words(query)
-        catalog = _request_json("GET", "/v1/schema/modules")
+        catalog = _cached_request_json(
+            "/v1/schema/modules", ttl_seconds=_CATALOG_CACHE_SECONDS
+        )
         modules = catalog.get("modules", [])
 
         if not isinstance(modules, list):
@@ -619,9 +658,9 @@ def autocount_execute_command(
 
         # Follow the official flow by checking connector availability first.
         connector_id = quote(str(config["connectorId"]), safe="")
-        connector_status = _request_json(
-            "GET",
+        connector_status = _cached_request_json(
             f"/v1/connectors/{connector_id}/status",
+            ttl_seconds=_CONNECTOR_STATUS_CACHE_SECONDS,
         )
         if connector_status.get("online") is False:
             raise AutoCountToolError(

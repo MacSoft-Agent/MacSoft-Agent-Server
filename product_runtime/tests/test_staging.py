@@ -151,6 +151,24 @@ class StagingAuditTests(unittest.TestCase):
             self.assertFalse(any("Excluded company workflow" in issue for issue in issues))
             self.assertFalse(any("Excluded AutoCount workflow module" in issue for issue in issues))
 
+    def test_skill_nested_inside_itself_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            staging = Path(temp)
+            duplicate = (
+                staging
+                / "templates"
+                / "runtime"
+                / "skills"
+                / "payment-workflow"
+                / "payment-workflow"
+            )
+            duplicate.mkdir(parents=True)
+            (duplicate / "SKILL.md").write_text("duplicate", encoding="utf-8")
+
+            issues = audit_staging(staging, Path("C:/MacSoft-Agent"))
+
+            self.assertTrue(any("Skill nested inside itself" in issue for issue in issues))
+
     def test_editable_python_install_metadata_is_excluded_and_rejected(self) -> None:
         names = [
             "__editable__.hermes_agent-0.18.2.pth",

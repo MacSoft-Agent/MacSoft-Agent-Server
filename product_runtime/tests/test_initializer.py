@@ -293,6 +293,24 @@ class FirstRunInitializationTests(unittest.TestCase):
         self.assertFalse(target_file.exists())
         self.assertTrue(external_file.exists())
 
+    def test_exact_nested_skill_duplicate_is_removed_but_modified_copy_is_preserved(self) -> None:
+        initialize_product_data(self.paths, self.metadata)
+        skill = self.paths.runtime_root / "skills" / "autocount-local-direct-payment-knockoff"
+        nested = skill / skill.name
+        self._copy_tree(skill, nested)
+
+        cleaned = initialize_product_data(self.paths, self.metadata)
+
+        self.assertFalse(nested.exists())
+        self.assertTrue(any(skill.name in path for path in cleaned.removed_protected))
+
+        self._copy_tree(skill, nested)
+        (nested / "SKILL.md").write_text("administrator variant\n", encoding="utf-8")
+        preserved = initialize_product_data(self.paths, self.metadata)
+
+        self.assertTrue(nested.exists())
+        self.assertIn(nested.relative_to(self.paths.data_root).as_posix(), preserved.conflicts)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -499,7 +499,7 @@ class AutoCountValidatorTests(unittest.TestCase):
         context = Context()
         plugin.register(context)
         self.assertEqual(context.tools.count("autocount_validate_command"), 1)
-        self.assertEqual(len(context.tools), 14)
+        self.assertEqual(len(context.tools), 15)
         self.assertEqual(context.skills, ["autocount-operations"])
         manifest = yaml.safe_load((PLUGIN_DIR / "plugin.yaml").read_text(encoding="utf-8"))
         self.assertEqual(set(manifest["provides_tools"]), set(context.tools))

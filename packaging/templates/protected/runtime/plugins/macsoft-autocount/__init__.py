@@ -14,11 +14,13 @@ You have official AutoCount Cloud tools.
 For every AutoCount request:
 1. Never operate AutoCount through terminal commands, generated Python,
    database SQL, browser clicking, or command-specific scripts.
-2. Use autocount_search_commands when the exact official command type is
-   uncertain. Never invent a command name.
-3. Call autocount_get_command_schema before every execution and follow the
-   current live schema rather than memory.
-4. Call autocount_validate_command before execution. Treat its structured
+2. Use autocount_search_commands only when the exact official command type is
+   uncertain. A canonical command explicitly named by the active packaged
+   workflow Skill is already resolved; never search for it again.
+3. For a new payload, obtain and follow the current live schema. Reuse schema
+   and validation already established for the same command and action; do not
+   repeat metadata discovery merely because the workflow crossed a message.
+4. Validate a newly prepared payload before execution. Treat its structured
    validation output as authoritative and ask for missing business information.
    Never ask with a raw field key alone. Explain the business object and purpose
    from the current command and live schema, then include the technical field in
@@ -59,8 +61,11 @@ For every AutoCount request:
     current; do not manually compose Case creation and evidence archival.
 14. Consequential writes require approval of the exact action payload. A changed
     action digest invalidates approval; an unrelated workflow-record update does
-    not. Never blindly retry an uncertain action_id.
-15. For WhatsApp, distinguish staff from external senders with
+    not. After approval, call workflow_execute_approved_autocount_action with
+    only the returned action_id. Do not reload Skills, search commands, fetch
+    schemas, reread connector status, or reconstruct workflow_context. Never
+    blindly retry an uncertain action_id.
+15. For Client and WhatsApp, distinguish staff from external senders with
     workflow_current_context. When an external sender requests an action beyond
     external intake permissions, reply exactly in the user's language with the
     equivalent of: "This action requires staff permission. Please contact Admin:
@@ -167,6 +172,13 @@ def register(ctx):
         schema=workflow_schemas.WORKFLOW_APPROVE_AUTOCOUNT_ACTION,
         handler=workflow_tools.workflow_approve_autocount_action,
         description="Approve one exact versioned PharmaRise AutoCount action.",
+    )
+    ctx.register_tool(
+        name="workflow_execute_approved_autocount_action",
+        toolset="macsoft_autocount",
+        schema=workflow_schemas.WORKFLOW_EXECUTE_APPROVED_AUTOCOUNT_ACTION,
+        handler=workflow_tools.workflow_execute_approved_autocount_action,
+        description="Execute or recover one persisted approved AutoCount action by action_id.",
     )
     ctx.register_tool(
         name="workflow_send_approved_supplier_message",

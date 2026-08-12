@@ -68,6 +68,7 @@ class SkillPackageTests(unittest.TestCase):
             self.assertTrue(description.endswith("."), directory_name)
             if directory_name in self.concise_skills:
                 self.assertLessEqual(len(description), 60, directory_name)
+            self.assertFalse((skill_dir / directory_name / "SKILL.md").exists(), directory_name)
 
         dashboard_refs = SKILLS_ROOT / "macsoft-chart-dashboard" / "references"
         self.assertEqual(

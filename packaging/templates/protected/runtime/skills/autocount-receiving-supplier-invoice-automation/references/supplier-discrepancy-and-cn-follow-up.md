@@ -1,42 +1,43 @@
 # Supplier Discrepancy and CN Follow-Up
 
-When PO and supplier document differ, first show the exact difference and its quantity or financial effect. Ask whether the agreed terms/PO changed, the delivery is partial, or the supplier document is wrong. Do not assign blame from one source alone and do not classify every discrepancy as a CN.
+## Decide the business correction
 
-## Decide whether CN is relevant
+When PO and supplier evidence differ, show the exact difference and its quantity or financial effect. Ask staff whether the PO is wrong, the supplier file is wrong, or partial receiving is intentional. Do not assign blame from document type alone.
 
-- If the PO contains old or incorrect accepted facts, use the PO correction preview/approval path.
-- If the supplier document is wrong and the supplier overcharged or owes a credit, a CN may be required.
-- If the supplier undercharged, omitted a charge, supplied a corrected invoice, or made a non-financial error, do not call it a CN automatically. Explain the difference and hold the Case until the user selects the accepted accounting treatment.
-- If a partial delivery is intentional, preserve the remaining PO state and continue only for the accepted received quantity.
+A CN may be appropriate when the supplier overcharged or owes the buyer a credit. Undercharge, omitted charge, replacement invoice, quantity correction, or non-financial error is not automatically CN. Let staff confirm whether a corrected document or CN is required.
 
-## Supplier follow-up
+## Ask in the correct order
 
-If the user decides supplier correction is needed, ask whether they will contact the supplier or want the Agent to prepare the follow-up. When the Agent is authorized to contact the supplier, prepare but do not send:
+If staff confirms that a corrected file/CN is required:
 
-- resolved trusted recipient/contact;
-- company/Case/PO/invoice reference;
-- concise discrepancy facts;
-- requested correction or CN;
-- exact message text and purpose.
+1. Ask whether the user will obtain it from the supplier.
+2. If yes, offer to help follow up.
+3. If follow-up is accepted, obtain supplier phone number and confirm the user name/phone represented.
+4. Preview recipient and exact opening message.
+5. Send only after confirmation.
 
-Show all of these and obtain approval. Supplier-contact mapping is not approval authority. Send using the same approved text; material edits require new approval. Persist sent result and waiting state.
+Example:
 
-Follow up only through the approved contact path and keep the Case waiting until an authoritative correction or CN arrives.
+> 我是 MacSoft AI 助理，受 [用户名称／电话号码] 委托跟进这份 CN。准备好后可以直接发在这里，谢谢。
 
-## CN/corrected document arrives
+## Limited messenger role
 
-Resolve it to the Case using trusted source, supplier, invoice/PO, references, amount/lines, and evidence identity. When ambiguous, ask instead of attaching it to the first waiting Case.
+The Agent may only ask for status, receive the supplier's reply/document, and relay it to the user. It must not negotiate, promise a deadline, agree to money/quantity changes, accept a CN for the user, or handle an open-ended supplier conversation independently.
 
-Register and extract the document, show its material correction to the user, and ask whether this exact version is accepted. A forwarded CN is not automatically accepted.
+In test mode, follow up once per minute and stop after three minutes. In production, use configured timing. Stop early when:
 
-## Separate decisions
+- the supplier sends the requested document;
+- the supplier says it is busy, needs time, or cannot provide it now;
+- the user cancels follow-up.
 
-1. User accepts/rejects the supplier document version.
-2. If accepted and the user wants an AutoCount CN created or updated, show an exact CN action preview.
-3. Retrieve the live command/schema and execute only after a second fresh approval.
+Relay a delay plainly, for example:
 
-If no verified CN status command/mapping exists, record the accepted CN and clearly mark AutoCount CN status as manual/connector-blocked. Never reinterpret it as a Purchase Return without approved business mapping.
+> Supplier 说近期较忙，需要多几天。我已停止自动跟进；之后需要继续可以告诉我。
 
-Once the accepted correction resolves the material discrepancy, recompare the effective supplier facts with the PO and return to the normal Batch/Expiry/Short Expiry and PI path.
+If there is no response by the limit, notify the user and stop. Do not continue silently.
 
-If the supplier never responds or sends another incorrect version, keep the Case pending and notify/escalate according to configuration.
+## Corrected document/CN arrives
+
+Archive it and match it to the original Pending Receiving Record using trusted sender, supplier, document/PO references, amount, line facts, and evidence identity. Ask when more than one record is plausible.
+
+Show material corrections and ask staff whether this exact version is accepted. Receipt is not acceptance. Once accepted, repeat the PO/document comparison and resume Batch/Expiry/PI processing. Do not create the PI while a material discrepancy remains unresolved.

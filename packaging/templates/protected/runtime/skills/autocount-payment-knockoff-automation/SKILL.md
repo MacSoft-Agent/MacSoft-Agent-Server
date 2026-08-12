@@ -44,6 +44,7 @@ A Payment Slip proves that somebody claims to have paid. It does not prove that 
 
 - Resolve one `company_id` and one canonical `account_book_id` before accounting reads or writes. They are not interchangeable.
 - Reuse exactly one durable payment record for the same logical evidence. It exists only for cross-message continuation, duplicate-write prevention, and failure recovery.
+- Once evidence has been archived into that durable record, its usability is not tied to the original chat, session, device, employee, or channel. A later Client upload may continue a Payment Slip first received through WhatsApp, and vice versa, when company/account-book scope and business matching support the continuation.
 - Pending payment records are company-shared work, not private chat memory.
 - Preserve uncertainty. Never manufacture a payer, debtor, date, reference, bank row, invoice, or payment method.
 - Fuzzy Payment Slip-to-bank matching is Agent judgement guided by `references/bank-verification.md`; no Tool makes the final fuzzy decision.
@@ -91,9 +92,15 @@ Do not collapse these stages merely because the Payment Slip contains an invoice
 
 Identify the authenticated actor, role, company, account book, source channel, trusted message/file identity, and source event key. For WhatsApp, the transport-provided chat and sender identity is authoritative; model text is not.
 
+Apply attachment trust per evidence item, not per conversation chain. The original Payment Slip must have been trusted and archived when it arrived. A later Bank Transaction/Statement must be trusted as the attachment of its own current Client or WhatsApp message. The later file does not need to originate from, quote, or be resent into the original Payment Slip conversation. Source channel/chat IDs are provenance and authorization inputs, not a permanent channel lock on the durable payment record.
+
 For WhatsApp, call `workflow_current_context` instead of resolving a displayed username or guessing a chat ID. Treat its two results independently: `workflow_scope` selects the Case company/account book, while `sender.kind` is only `staff` or `external`. A missing user mapping means `external`; it never means the workflow scope is missing. External customers and suppliers may create or continue pending Cases and provide evidence. Only staff may approve or execute consequential actions.
 
-If `sender.kind=external` requests any action beyond submitting evidence or continuing their own intake, reply only: "此操作需要工作人员权限，请联络 Admin：+60 18-314 4861。" Use the equivalent fixed sentence in the sender's language. Do not explain roles, mappings, policies, or ways around the restriction.
+This `staff`/`external` sender classification is a WhatsApp transport rule only. For an authenticated MacSoft Client request, use the Client session actor and its configured permissions. Never call a Client user `external` because there is no WhatsApp identifier, never require the Client user to register a phone number, and never use WhatsApp sender mapping as a prerequisite for Client reads, previews, approvals, or writes.
+
+Use the fixed escalation reply only when both conditions are observed: `platform=whatsapp` and `sender.kind=external`. If that WhatsApp external sender requests anything beyond submitting evidence or continuing their own intake, reply only: "此操作需要工作人员权限，请联络 Admin：+60 18-314 4861。" Use the equivalent fixed sentence in the sender's language. Do not explain roles, mappings, policies, or ways around the restriction.
+
+Never show the fixed Admin reply in Client merely because `sender.kind` is absent, `workflow_current_context` is unavailable, or no WhatsApp mapping exists. Those facts are expected outside WhatsApp and do not establish that the Client actor is unauthorized. If an authenticated Client actor is genuinely denied by Client authorization, report that actual Client permission result; do not substitute the WhatsApp external-user prompt.
 
 If the actor is not mapped to an existing trusted MacSoft user, intake and draft preparation may continue, but no consequential AutoCount action may execute.
 
@@ -137,6 +144,10 @@ Search existing company/account-book payment records using stable evidence ident
 
 Do not merge two Cases merely because their amount is equal. Do not open a second Case merely because a different employee or session continues the work.
 
+Cross-channel continuation is the normal path. When current Bank Transaction/Statement evidence arrives through Client, search the same company/account-book `waiting_bank` records and match by reference, amount/currency, payer/debtor, dates, beneficiary, and invoice hints. If exactly one record is supported, attach the current bank evidence to it and continue. Do not require the original WhatsApp chat, original employee, original session, or resubmission of either document.
+
+Never answer that the user must "return to the original WhatsApp payment conversation" merely because the current channel is Client or the chat transcript is unavailable. Stop only for an observed condition: the current bank attachment could not be read/registered, no suitable pending record exists in the resolved scope, several candidates remain, scope conflicts, or the actor lacks authority for the requested write. State that exact condition rather than inventing a trust restriction.
+
 ### 4. Judge Payment Slip against bank evidence
 
 Read `references/bank-verification.md`. Use Tools only to extract/normalize evidence and calculate deterministic comparison facts. The Agent decides whether the evidence is:
@@ -150,6 +161,8 @@ Read `references/bank-verification.md`. Use Tools only to extract/normalize evid
 Persist the compared facts and the Agent's concise reasoning. If non-exact but reasonable, tell the user why. If genuinely ambiguous, stop before invoice allocation/write and ask a discriminating question.
 
 When a Bank Transaction or Bank Statement arrives, search `waiting_bank` payment records first and compare reference, amount, payer, currency, date/value date, and beneficiary context. For one bank row, report the matched pending payment and the decisive facts. For a statement or batch, report compact counts for matched, review-needed, and unmatched rows; expand only exceptions or details the user requests. Ask whether to use the proposed match set. Continue to invoice allocation only after the user accepts an adequate bank match.
+
+Before replying, register the current bank evidence using its own current trusted attachment context and link it to the selected durable payment record. Do not attempt to reuse the old Payment Slip temporary path and do not demand that the new bank file share the old message's trusted-media list. If the current document was successfully read and its facts were extracted, do not claim that it "cannot be downloaded" or that the previous record cannot be continued unless an actual intake/search call returned that result.
 
 After an accepted bank match, read the live debtor and outstanding invoices. Honor a valid invoice explicitly named in the evidence; otherwise ask whether to specify invoices, use Invoice-Date FIFO, or use valid document references. Verify every document reference before using it. Show the allocation once, then ask for final Knock-Off approval. Do not repeat the full Payment Slip preview on status changes or acknowledgements.
 
@@ -274,6 +287,7 @@ Never:
 - accept a bank match solely because amounts are equal;
 - use another company/account book's evidence or invoices;
 - let an unmapped WhatsApp sender approve a financial write;
+- apply WhatsApp `sender.kind=external` or the fixed Admin reply to an authenticated Client session;
 - construct invoice keys from memory;
 - silently switch to FIFO when an explicit instruction is invalid;
 - silently discard an unapplied balance;

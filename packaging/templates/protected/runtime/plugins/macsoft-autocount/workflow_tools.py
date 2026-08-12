@@ -26,6 +26,11 @@ _CONSEQUENTIAL_COMMANDS = {
     "update-purchase-invoice",
     "transfer-purchase-order-to-purchase-invoice",
 }
+_BANK_RECON_WRITE_COMMANDS = {
+    "create-gl-bank-reconciliation",
+    "update-gl-bank-reconciliation",
+    "delete-gl-bank-reconciliation",
+}
 _WHATSAPP_WRITE_PREFIXES = {
     "create",
     "delete",
@@ -220,12 +225,19 @@ def _enforce_trusted_scope(
 
 
 def _trusted_scope(actor: dict[str, str]) -> tuple[str, str]:
-    """Resolve workflow scope independently from the sender's staff identity."""
+    """Resolve the current transport's workflow scope independently from sender identity."""
+    config = _config()
+    if actor["platform"] == "api_server":
+        scopes = _configured_account_book_scopes(config=config)
+        if len(scopes) != 1:
+            raise workflow_store.WorkflowStoreError(
+                "MacSoft Server does not have one trusted AutoCount account book selected."
+            )
+        return scopes[0]
     if actor["platform"] != "whatsapp":
         raise workflow_store.WorkflowStoreError(
-            "Automatic workflow scope is available only for the current WhatsApp session."
+            "Automatic workflow scope is unavailable for the current transport."
         )
-    config = _config()
     mapping = workflow_store.resolve_whatsapp_identifier(
         config, identifier_type="chat", identifier_value=actor["chat_id"]
     )
@@ -468,9 +480,9 @@ def workflow_intake_payment(params: dict[str, Any], **kwargs: Any) -> str:
     archived_path: Path | None = None
     try:
         actor = _require_actor()
-        if actor["platform"] != "whatsapp":
+        if actor["platform"] not in {"whatsapp", "api_server"}:
             raise workflow_store.WorkflowStoreError(
-                "Payment intake requires the trusted current WhatsApp attachment."
+                "Payment intake requires a trusted current Client or WhatsApp attachment."
             )
         company_id, account_book_id = _trusted_scope(actor)
         source_path = str(params.get("source_path") or "").strip()
@@ -488,7 +500,7 @@ def workflow_intake_payment(params: dict[str, Any], **kwargs: Any) -> str:
             case_type="payment",
             company_id=company_id,
             account_book_id=account_book_id,
-            source_channel="whatsapp",
+            source_channel=actor["platform"],
             source_event_key=source_event_key,
         )
         if existing is not None:
@@ -519,7 +531,7 @@ def workflow_intake_payment(params: dict[str, Any], **kwargs: Any) -> str:
             case_type="payment",
             company_id=company_id,
             account_book_id=account_book_id,
-            source_channel="whatsapp",
+            source_channel=actor["platform"],
             source_event_key=source_event_key,
             actor_user_id=actor["user_id"],
             values=values,
@@ -878,6 +890,8 @@ def workflow_send_approved_supplier_message(params: dict[str, Any], **kwargs: An
 
 
 def command_requires_workflow_approval(command_type: str, payload: dict[str, Any]) -> bool:
+    if command_type in _BANK_RECON_WRITE_COMMANDS:
+        return False
     if command_type in _CONSEQUENTIAL_COMMANDS:
         return True
     if command_type in {"create-item", "update-item"} and "hasBatchNo" in payload:
@@ -894,6 +908,16 @@ def verify_execution_context(
     payload: dict[str, Any],
     context: dict[str, Any] | None,
 ) -> dict[str, Any]:
+    if (
+        command_type in _BANK_RECON_WRITE_COMMANDS
+        and current_actor()["platform"] == "whatsapp"
+    ):
+        actor = _resolve_whatsapp_actor(current_actor())
+        if not actor.get("role", "").strip():
+            raise workflow_store.WorkflowStoreError(
+                "This action requires staff permission. Please contact Admin: +60 18-314 4861."
+            )
+        return {}
     if not command_requires_workflow_approval(command_type, payload):
         return {}
     if not isinstance(context, dict):

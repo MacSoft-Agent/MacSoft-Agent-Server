@@ -54,9 +54,9 @@ For every AutoCount request:
     draft first. Do not execute an AutoCount write from extracted values until
     the user explicitly confirms the reviewed draft.
 13. Persistent workflow records exist only for cross-message continuation,
-    duplicate-write prevention, and failure recovery. For a new Payment Slip use
-    workflow_intake_payment while the attachment is current; do not manually
-    compose Case creation and evidence archival.
+    duplicate-write prevention, and failure recovery. For a new Client or
+    WhatsApp Payment Slip use workflow_intake_payment while the attachment is
+    current; do not manually compose Case creation and evidence archival.
 14. Consequential writes require approval of the exact action payload. A changed
     action digest invalidates approval; an unrelated workflow-record update does
     not. Never blindly retry an uncertain action_id.

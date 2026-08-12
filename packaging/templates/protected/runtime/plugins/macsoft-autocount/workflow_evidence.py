@@ -1,4 +1,4 @@
-"""Trusted workflow-evidence archival for native Gateway attachments."""
+"""Trusted workflow-evidence archival for current Client or Gateway attachments."""
 
 from __future__ import annotations
 

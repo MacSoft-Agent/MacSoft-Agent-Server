@@ -1,38 +1,61 @@
-# Batch, Expiry, and Short Expiry
+# Batch, UDF Dates, and Short Expiry
 
-## Preserve relationships
+## Preserve the line relationship
 
-For each Item, retain batch number, expiry date, and quantity as a paired structure. Multiple batches require separate quantities. Never attach one expiry to every batch merely because the document layout is ambiguous.
+Treat each tuple as one indivisible PI detail:
 
-Treat handwritten characters and ambiguous date order carefully. Preserve original text and normalized candidate. Ask when DD/MM/YYYY versus MM/DD/YYYY or similar ambiguity affects the one-year rule.
+```text
+Item + BatchNo + batch quantity + CreatedDate + ExpiryDate
+```
+
+Split different batches or dates into separate PI lines. Never copy one date across several batches because the source layout is unclear. For every accepted Item quantity, require the sum of batch quantities to equal that quantity.
+
+Preserve original date text and normalized `YYYY-MM-DD`. Ask when DD/MM/YYYY versus MM/DD/YYYY changes the meaning.
 
 ## Batch-controlled Item
 
-Read live Item detail. If an existing Item is not controlled by batch number, preserve required current fields and preview changing `hasBatchNo` to `true`; execute only with appropriate approval and read it back. New Items must be created through the live schema with `hasBatchNo=true` after Item identity/details are confirmed.
+Read live Item detail. If batch tracking is required and an existing Item has `hasBatchNo=false`, preview the change, obtain confirmation, update while preserving current fields, and read back. Do not create a duplicate Item.
 
-Do not create duplicate Items to avoid updating an existing Item.
+Before PI creation, confirm every referenced Batch No exists for that Item. A PI may reference an existing Batch, but a missing Batch must be established first and read back. If Batch creation succeeds and PI later fails, do not create the Batch again. Inspect whether the first Batch has references or balance before any cleanup/retry.
+
+## PI Detail UDF contract
+
+For each PI line, send:
+
+```json
+{
+  "batchNo": "BATCH-001",
+  "userDefinedFields": {
+    "ExpiryDate": "2027-07-31",
+    "CreatedDate": "2026-08-01"
+  }
+}
+```
+
+Use UDF keys without the database `UDF_` prefix. `CreatedDate` means the batch creation/manufacturing date supplied by the document or staff under the current deployment convention; do not substitute the PI creation timestamp.
+
+After saving, verify Batch No and both dates from PI detail read-back. Accept either connector read-back naming form:
+
+- `UDF_ExpiryDate` or `Detail_UDF_ExpiryDate`;
+- `UDF_CreatedDate` or `Detail_UDF_CreatedDate`.
+
+Normalize returned date/time values to dates for comparison. A command-level `saved=true` without matching field read-back is not success.
 
 ## Short Expiry
 
-Use the applicable receiving/reference date and calendar arithmetic. Remaining expiry strictly less than one year is Short Expiry. Exactly one year is not “less than one year.” Show Item, batch, expiry, remaining period, and warning.
+Use the accepted receiving/PI reference date and calendar arithmetic:
 
-## Current connector boundary
+```text
+ExpiryDate < reference date + 1 calendar year
+```
 
-Official AutoCount recipes/manifest/OpenAPI plus live schema discovery confirm:
+This is Short Expiry. Exactly one year is not less than one year. Show affected Item, Batch, quantity, and Expiry Date before PI confirmation. Treat it as a warning unless business policy explicitly requires rejection.
 
-- the current official AutoCount files expose `batchNo` on Purchase Invoice lines, but the active native PI schema in the tested deployment rejects it; this is a connector/catalog capability mismatch and means direct PI Batch is not currently verified on that deployment;
-- `create/update-goods-received-note` line examples expose `batchNo` and provide a verified Batch-bearing path;
-- `create/update-stock-receive` native fields expose `BatchNo`;
-- these document families expose header and line `userDefinedFields` objects;
-- UDF keys use the real AutoCount UDF field name without the database `UDF_` prefix;
-- no verified `expiryDate` field or separate Expiry command has been found;
-- the deployed PI detail Short Expiry field has been read back as `UDF_SHORTEXPIRY` with `F` in the proven non-short-expiry case.
+## Exceptions
 
-Therefore:
-
-- write Batch No through GRN/Stock Receive only when that document path matches the accepted business flow; do not force it into the current direct PI schema;
-- retain the Item/batch/quantity relationship and read the saved document lines back;
-- preserve Expiry in the Receiving Case and preview until its exact destination field is verified;
-- use the configured Short Expiry UDF through detail `userDefinedFields`, then require live read-back of `UDF_SHORTEXPIRY`; never infer success from command completion alone;
-- identify exact remaining manual AutoCount entry/check work;
-- do not label Expiry or Short Expiry writes complete without read-back.
+- Missing Batch/date: keep Pending and ask only for missing values.
+- Batch quantity mismatch: state exact shortage/excess; do not create PI.
+- Item not batch-controlled: confirm and enable it before Batch use.
+- Batch absent: establish/read back Batch before PI.
+- UDF missing from live deployment: stop before PI and report the missing configuration; do not silently omit Expiry.
+- Saved PI has wrong/missing UDF value: keep exception state and report the exact read-back difference.

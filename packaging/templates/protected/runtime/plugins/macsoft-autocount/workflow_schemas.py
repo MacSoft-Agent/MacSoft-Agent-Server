@@ -90,7 +90,7 @@ WORKFLOW_FIFO_ALLOCATE = {
 
 WORKFLOW_INTAKE_PAYMENT = {
     "name": "workflow_intake_payment",
-    "description": "Atomically preserve the current trusted Payment Slip and create or reuse its durable payment job for cross-message continuation, duplicate prevention, and recovery.",
+    "description": "Atomically preserve the current trusted Client or WhatsApp Payment Slip and create or reuse its durable payment job for cross-message continuation, duplicate prevention, and recovery.",
     "parameters": {
         "type": "object",
         "properties": {

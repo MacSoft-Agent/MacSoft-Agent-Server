@@ -85,6 +85,42 @@ class WorkflowLogicTests(unittest.TestCase):
 
 
 class WorkflowPersistenceContractTests(unittest.TestCase):
+    def test_whatsapp_bank_recon_bypasses_payment_case_for_staff(self) -> None:
+        actor = {"platform": "whatsapp", "user_id": "60183144861", "role": ""}
+        with patch.object(tools, "current_actor", return_value=actor), patch.object(
+            tools,
+            "_resolve_whatsapp_actor",
+            return_value={**actor, "user_id": "staff-user", "role": "staff"},
+        ):
+            for command_type in (
+                "create-gl-bank-reconciliation",
+                "update-gl-bank-reconciliation",
+                "delete-gl-bank-reconciliation",
+            ):
+                self.assertFalse(
+                    tools.command_requires_workflow_approval(command_type, {})
+                )
+                self.assertEqual(
+                    tools.verify_execution_context(
+                        command_type=command_type,
+                        payload={"accNo": "310-1000"},
+                        context=None,
+                    ),
+                    {},
+                )
+
+    def test_whatsapp_bank_recon_still_rejects_external_sender(self) -> None:
+        actor = {"platform": "whatsapp", "user_id": "external", "role": ""}
+        with patch.object(tools, "current_actor", return_value=actor), patch.object(
+            tools, "_resolve_whatsapp_actor", return_value=actor
+        ):
+            with self.assertRaisesRegex(store.WorkflowStoreError, "contact Admin"):
+                tools.verify_execution_context(
+                    command_type="update-gl-bank-reconciliation",
+                    payload={"accNo": "310-1000"},
+                    context=None,
+                )
+
     def test_whatsapp_mutating_commands_require_workflow_approval(self) -> None:
         with patch.object(
             tools,
@@ -193,6 +229,60 @@ class WorkflowPersistenceContractTests(unittest.TestCase):
         self.assertIn("Do not describe, extract, match, or post", skill)
         self.assertIn("live validator rejects", skill)
 
+    def test_payment_skill_allows_client_to_continue_whatsapp_pending_record(self) -> None:
+        skill_root = (
+            ROOT
+            / "packaging"
+            / "templates"
+            / "protected"
+            / "runtime"
+            / "skills"
+            / "autocount-payment-knockoff-automation"
+        )
+        skill = (skill_root / "SKILL.md").read_text("utf-8")
+        continuation = (
+            skill_root / "references" / "payment-case-continuation.md"
+        ).read_text("utf-8")
+        intake = (
+            skill_root / "references" / "payment-intake-and-pending.md"
+        ).read_text("utf-8")
+
+        self.assertIn("Cross-channel continuation is the normal path", skill)
+        self.assertIn("Source channel/chat IDs are provenance", skill)
+        self.assertIn("return to the original WhatsApp payment conversation", skill)
+        self.assertIn("The source channel is provenance, not ownership", continuation)
+        self.assertIn("another channel/session/employee", intake)
+        self.assertIn("Do not instruct a Client user to resend", intake)
+
+    def test_payment_skill_scopes_external_admin_reply_to_whatsapp_only(self) -> None:
+        skill_root = (
+            ROOT
+            / "packaging"
+            / "templates"
+            / "protected"
+            / "runtime"
+            / "skills"
+        )
+        payment = (
+            skill_root / "autocount-payment-knockoff-automation" / "SKILL.md"
+        ).read_text("utf-8")
+        whatsapp = (
+            skill_root
+            / "autocount-payment-knockoff-automation"
+            / "references"
+            / "whatsapp-payment-workflow.md"
+        ).read_text("utf-8")
+        direct = (
+            skill_root / "autocount-local-direct-payment-knockoff" / "SKILL.md"
+        ).read_text("utf-8")
+
+        self.assertIn("platform=whatsapp", payment)
+        self.assertIn("WhatsApp transport rule only", payment)
+        self.assertIn("use the Client session actor", payment)
+        self.assertIn("Never show the fixed Admin reply in Client", payment)
+        self.assertIn("apply only when the current transport is WhatsApp", whatsapp)
+        self.assertIn("Never require a Client actor to have a WhatsApp identifier", direct)
+
     def test_receiving_skill_converges_po_paths_and_limits_cn_to_supplier_credit(self) -> None:
         skill_root = (
             ROOT
@@ -208,16 +298,48 @@ class WorkflowPersistenceContractTests(unittest.TestCase):
         cn = (skill_root / "references" / "supplier-discrepancy-and-cn-follow-up.md").read_text("utf-8")
         examples = (skill_root / "references" / "examples.md").read_text("utf-8")
 
-        self.assertIn("These three accepted paths converge", skill)
-        self.assertIn("the existing PO matched", skill)
-        self.assertIn("the user approved a PO correction", skill)
-        self.assertIn("the user approved a new PO", skill)
-        self.assertIn("continue to Batch/Expiry/Short Expiry review and PI preparation", skill)
-        self.assertIn("A CN is relevant only when the supplier overcharged", skill)
-        self.assertIn("A difference is not automatically a CN case", skill)
-        self.assertIn("Normal-path convergence", po)
-        self.assertIn("do not classify every discrepancy as a CN", cn)
+        self.assertIn("Existing matched PO", skill)
+        self.assertIn("Newly created/corrected PO", skill)
+        self.assertIn("No PO and staff chose direct PI", skill)
+        self.assertIn("continue to Batch/Expiry checks", skill)
+        self.assertIn("A CN may be appropriate when the supplier overcharged", cn)
+        self.assertIn("do not automatically classify every error as CN", skill)
+        self.assertIn("Authoritatively no PO", po)
+        self.assertIn("not automatically CN", cn)
         self.assertIn("Supplier undercharge is not automatically CN", examples)
+
+    def test_receiving_skill_implements_module_two_pending_po_udf_and_follow_up(self) -> None:
+        skill_root = (
+            ROOT
+            / "packaging"
+            / "templates"
+            / "protected"
+            / "runtime"
+            / "skills"
+            / "autocount-receiving-supplier-invoice-automation"
+        )
+        skill = (skill_root / "SKILL.md").read_text("utf-8")
+        batch = (skill_root / "references" / "batch-expiry-and-short-expiry.md").read_text("utf-8")
+        cn = (skill_root / "references" / "supplier-discrepancy-and-cn-follow-up.md").read_text("utf-8")
+        po = (skill_root / "references" / "po-creation-and-correction.md").read_text("utf-8")
+        direct = (
+            skill_root.parent
+            / "autocount-local-direct-purchase-invoice"
+            / "SKILL.md"
+        ).read_text("utf-8")
+
+        self.assertIn("create or continue its Pending Receiving Record automatically", skill)
+        self.assertIn("Search AutoCount for a matching PO even when", skill)
+        self.assertIn("Offer either creating a PO or proceeding directly to PI", skill)
+        self.assertIn("userDefinedFields.ExpiryDate", skill)
+        self.assertIn("userDefinedFields.CreatedDate", skill)
+        self.assertIn("once per minute and stop after three minutes", skill)
+        self.assertIn("not a hard-coded approval engine", skill)
+        self.assertIn("saved=true", batch)
+        self.assertIn("Limited messenger role", cn)
+        self.assertIn("proceed directly to PI", po)
+        self.assertIn('"ExpiryDate": "YYYY-MM-DD"', direct)
+        self.assertIn('"CreatedDate": "YYYY-MM-DD"', direct)
 
     def test_postgres_setup_and_onboarding_are_recorded_without_embedded_password(self) -> None:
         setup = (ROOT / "scripts" / "setup-pharmarise-postgres.ps1").read_text("utf-8")
@@ -314,6 +436,70 @@ class WorkflowPersistenceContractTests(unittest.TestCase):
             "bank_transaction_or_statement",
         )
         self.assertEqual(values["working_data"]["evidence"][0]["evidence_id"], "evidence-1")
+
+    def test_client_payment_intake_uses_current_media_and_server_scope(self) -> None:
+        actor = {
+            "platform": "api_server",
+            "chat_id": "",
+            "user_id": "client-user-1",
+            "role": "accountant",
+            "message_id": "client-message-1",
+        }
+        payment = {"id": "payment-client-1", "version": 1, "status": "waiting_bank"}
+        archived = {
+            "evidence_id": "evidence-client-1",
+            "sha256": "client-sha",
+            "size_bytes": 12,
+            "media_type": "image/jpeg",
+            "original_filename": "payment.jpg",
+            "stored_path": "C:/archive/evidence-client-1.jpg",
+        }
+        config = {"companyId": "macsoftsolutions"}
+        with patch.object(tools, "_require_actor", return_value=actor), patch.object(
+            tools, "_config", return_value=config
+        ), patch.object(
+            tools, "trusted_media_source_key", return_value="client-message-1:client-sha"
+        ), patch.object(store, "get_case_by_source", return_value=None) as existing, patch.object(
+            tools, "archive_current_media", return_value=archived
+        ), patch.object(store, "create_case", return_value=(payment, True)) as create, patch.object(
+            store, "append_event", return_value=({"event_type": "payment_waiting_bank"}, True)
+        ):
+            result = json.loads(
+                tools.workflow_intake_payment(
+                    {
+                        "source_path": "C:/client-uploads/payment.jpg",
+                        "payment_facts": {"amount": "1200.00", "payment_reference": "PAY-260810-001"},
+                    }
+                )
+            )
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(existing.call_args.args, (config,))
+        self.assertEqual(
+            existing.call_args.kwargs,
+            {
+                "case_type": "payment",
+                "company_id": "macsoftsolutions",
+                "account_book_id": "macsoftsolutions",
+                "source_channel": "api_server",
+                "source_event_key": "client-message-1:client-sha",
+            },
+        )
+        self.assertEqual(create.call_args.kwargs["source_channel"], "api_server")
+        self.assertEqual(create.call_args.kwargs["company_id"], "macsoftsolutions")
+        self.assertEqual(create.call_args.kwargs["account_book_id"], "macsoftsolutions")
+
+    def test_client_scope_requires_one_server_selected_account_book(self) -> None:
+        actor = {"platform": "api_server"}
+        with patch.object(tools, "_config", return_value={"companyId": "macsoftsolutions"}):
+            self.assertEqual(
+                tools._trusted_scope(actor),
+                ("macsoftsolutions", "macsoftsolutions"),
+            )
+        with patch.object(tools, "_config", return_value={}):
+            with patch.object(tools, "_account_book_reference_path", return_value=Path("missing")):
+                with self.assertRaises(store.WorkflowStoreError):
+                    tools._trusted_scope(actor)
 
     def test_payment_search_passes_bank_matching_filters_to_store(self) -> None:
         actor = {

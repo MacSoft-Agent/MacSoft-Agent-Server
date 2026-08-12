@@ -75,13 +75,16 @@ For staff, perform exact read-only checks using the debtor code, customer name, 
 ## When bank evidence arrives
 
 1. Recognize whether the new document is bank-side transaction/statement evidence.
-2. Find `waiting_bank` payment candidates in the same company/account book.
-3. Compare the relevant bank facts against those candidates.
-4. Compare reference, amount, payer, currency, date/value date, and beneficiary context.
-5. For one row, explain the match result briefly. For many rows, summarize matched, review-needed, and unmatched counts and show exceptions only on request.
-6. Ask whether to use the proposed match result. Only after acceptance, read live debtor and invoice information.
-7. Honor a valid specified invoice; otherwise apply Invoice-Date FIFO.
-8. Show the exact proposed allocation and ask for fresh Knock-Off approval.
+2. Register the new bank document from its own current trusted Client or WhatsApp attachment. Do not reuse the old Payment Slip path or require the original channel/message.
+3. Find `waiting_bank` payment candidates in the same company/account book, including records created through another channel/session/employee.
+4. Compare the relevant bank facts against those candidates.
+5. Compare reference, amount, payer, currency, date/value date, and beneficiary context.
+6. For one row, explain the match result briefly. For many rows, summarize matched, review-needed, and unmatched counts and show exceptions only on request.
+7. Ask whether to use the proposed match result. Only after acceptance, read live debtor and invoice information.
+8. Honor a valid specified invoice; otherwise apply Invoice-Date FIFO.
+9. Show the exact proposed allocation and ask for fresh Knock-Off approval.
+
+Successful cross-channel matching must continue normally. Do not instruct a Client user to resend the bank document in the original WhatsApp conversation. Current attachment trust proves the new bank evidence; the archived evidence ID proves the earlier Payment Slip.
 
 ## Minimum facts before bank matching
 

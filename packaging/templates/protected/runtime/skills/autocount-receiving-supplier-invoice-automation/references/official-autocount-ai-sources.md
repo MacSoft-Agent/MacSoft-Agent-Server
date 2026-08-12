@@ -31,6 +31,6 @@ The current official files document:
 - header and line `userDefinedFields` objects;
 - UDF keys without the database `UDF_` prefix.
 
-They do not document `expiryDate` or `expireDate`. `SHORTEXPIRY` is customer-specific and therefore is not expected in the public catalog; use it only after live customer-schema knowledge and read-back.
+They do not document a native `expiryDate` or `expireDate` PI line field. In the currently tested deployment, PI detail UDFs named `ExpiryDate` and `CreatedDate` are configured and have been successfully written and read back through line `userDefinedFields`.
 
-In the currently tested deployment, direct PI validation rejected `batchNo` even though the current official manifest documents it. Treat this as a deployed connector/catalog capability mismatch, not as proof that AutoCount Cloud lacks Batch support. GRN and Stock Receive remain the currently verified Batch-bearing alternatives until the deployed PI schema is aligned and re-tested.
+Direct execution testing also proved that a PI can reference and read back an existing `batchNo`, and that its batch stock balance changes. A new Batch No must be established before the PI references it; the tested PI operation does not create a missing ItemBatch automatically.

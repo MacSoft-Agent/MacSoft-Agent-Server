@@ -16,7 +16,8 @@ from typing import Any
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _REQUIRED = re.compile(r"\brequired\b", re.IGNORECASE)
 _CONDITIONAL_REQUIRED = re.compile(
-    r"\brequired\s+or\s+optional\b|\boptional\b.{0,24}\brequired\b",
+    r"\brequired\s+or\s+optional\b|\boptional\b.{0,24}\brequired\b|"
+    r"\brequired\b.{0,48}\bonly\s+for\b",
     re.IGNORECASE,
 )
 _ALIAS_FOR = re.compile(
@@ -250,6 +251,14 @@ def _expected_from_description(description: str, example: Any) -> str | None:
         return "boolean"
     if re.search(r"\b(integer|whole number)\b", lowered):
         return "integer"
+    # Business identifiers are text even when their description uses phrases
+    # such as "account number" or "document number". Check identifier meaning
+    # before treating the bare word "number" as a JSON numeric type.
+    if re.search(
+        r"\b(account|document|invoice|reference|registration|serial|cheque|check)\s+number\b",
+        lowered,
+    ):
+        return "string"
     if re.search(r"\b(number|numeric|decimal)\b", lowered):
         return "number"
     if "object" in lowered:
@@ -325,7 +334,14 @@ def _validate_descriptive_schema(
             continue
 
         description = str(payload_schema[key])
-        expected = _expected_from_description(description, examples.get(key))
+        native_metadata = master.get(key.lower())
+        expected = (
+            str(native_metadata.get("type") or "").lower()
+            if isinstance(native_metadata, dict)
+            else ""
+        )
+        if not expected:
+            expected = _expected_from_description(description, examples.get(key))
         if expected and not _matches_type(value, expected):
             result.add(
                 "type_errors",

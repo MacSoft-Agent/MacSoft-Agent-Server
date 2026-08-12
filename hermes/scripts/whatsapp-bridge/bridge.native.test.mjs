@@ -18,11 +18,106 @@ import {
   buildTextSendPayload,
   createBoundedMessageStore,
   appendMediaFailureNote,
+  buildMediaFailureDiagnostic,
   extractBridgeEvent,
   mediaPayloadForFile,
   pollCreationMessageFromPayload,
   pollUpdateForAggregation,
+  probeEncryptedMedia,
 } from './bridge_helpers.js';
+
+// -- privacy-safe inbound media failure diagnostics -----------------------
+{
+  const diagnostic = buildMediaFailureDiagnostic({
+    msg: {
+      key: { id: 'doc-fail-7', remoteJid: '15551234567@s.whatsapp.net', fromMe: false },
+      message: {
+        ephemeralMessage: {
+          message: {
+            documentMessage: {
+              fileName: 'private-bank-statement.pdf',
+              mimetype: 'application/pdf',
+            },
+          },
+        },
+      },
+    },
+    mediaMessage: {
+      fileName: 'private-bank-statement.pdf',
+      mimetype: 'application/pdf',
+      fileLength: 18850,
+      mediaKey: Buffer.from('secret-media-key'),
+      directPath: '/mms/document/private-path',
+      url: 'https://mmg.whatsapp.net/private-path?token=secret',
+      fileSha256: Buffer.from('plain-hash'),
+      fileEncSha256: Buffer.from('encrypted-hash'),
+      contextInfo: { isForwarded: true, forwardingScore: 1 },
+    },
+    type: 'document',
+    error: new Error('error:1C800064:Provider routines::bad decrypt'),
+  });
+  assert.equal(diagnostic.code, 'media_decryption_failed');
+  assert.equal(diagnostic.messageId, 'doc-fail-7');
+  assert.equal(diagnostic.chatType, 'dm');
+  assert.deepEqual(diagnostic.wrapperPath, ['ephemeralMessage', 'documentMessage']);
+  assert.equal(diagnostic.fileExtension, '.pdf');
+  assert.equal(diagnostic.forwarded, true);
+  assert.equal(diagnostic.mediaKey.present, true);
+  assert.equal(diagnostic.url.host, 'mmg.whatsapp.net');
+  const serialized = JSON.stringify(diagnostic);
+  assert.doesNotMatch(serialized, /secret-media-key/);
+  assert.doesNotMatch(serialized, /private-bank-statement/);
+  assert.doesNotMatch(serialized, /private-path/);
+  assert.doesNotMatch(serialized, /token=secret/);
+  console.log('  âœ“ inbound media failure diagnostics preserve evidence without secrets');
+}
+
+{
+  const diagnostic = buildMediaFailureDiagnostic({
+    msg: { key: { id: 'fetch-fail-1', remoteJid: 'group@g.us' }, message: {} },
+    mediaMessage: {},
+    type: 'document',
+    error: new Error('fetch failed at https://mmg.whatsapp.net/private?token=secret C:\\private\\file.pdf'),
+  });
+  assert.equal(diagnostic.code, 'media_fetch_failed');
+  assert.equal(diagnostic.chatType, 'group');
+  assert.equal(diagnostic.errorMessage, 'fetch failed at [url] [path]');
+  console.log('  âœ“ inbound media diagnostics redact URLs and local paths');
+}
+
+{
+  const encrypted = Buffer.from('encrypted-whatsapp-media');
+  const expected = createHash('sha256').update(encrypted).digest();
+  const probe = await probeEncryptedMedia({
+    url: 'https://mmg.whatsapp.net/media?token=private',
+    fileEncSha256: expected,
+  }, {
+    fetchFn: async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: () => String(encrypted.length) },
+      body: (async function* () { yield encrypted; })(),
+    }),
+  });
+  assert.equal(probe.attempted, true);
+  assert.equal(probe.bytes, encrypted.length);
+  assert.equal(probe.matchesExpected, true);
+  assert.doesNotMatch(JSON.stringify(probe), /token=private/);
+  console.log('  âœ“ encrypted media probe compares CDN bytes without exposing its URL');
+}
+
+{
+  let called = false;
+  const probe = await probeEncryptedMedia({
+    url: 'https://example.com/untrusted',
+  }, {
+    fetchFn: async () => { called = true; },
+  });
+  assert.equal(probe.attempted, false);
+  assert.equal(probe.reason, 'untrusted_media_host');
+  assert.equal(called, false);
+  console.log('  âœ“ encrypted media probe rejects non-WhatsApp hosts');
+}
 
 // -- customer-visible identity ---------------------------------------------
 {

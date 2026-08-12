@@ -1,6 +1,6 @@
 import path from 'path';
 import { mkdirSync, writeFileSync } from 'fs';
-import { randomBytes } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 
 export const MIME_MAP = {
   jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
@@ -296,6 +296,135 @@ export function appendMediaFailureNote(content, failures) {
   return content ? `${content}\n${note}` : note;
 }
 
+function safeDigest(value) {
+  if (value === undefined || value === null || value === '') {
+    return { present: false };
+  }
+  const bytes = Buffer.isBuffer(value) || value instanceof Uint8Array
+    ? Buffer.from(value)
+    : Buffer.from(String(value));
+  return {
+    present: true,
+    length: bytes.length,
+    sha256: createHash('sha256').update(bytes).digest('hex').slice(0, 16),
+  };
+}
+
+function mediaWrapperPath(msg) {
+  const wrappers = [];
+  let content = msg?.message || {};
+  for (const key of [
+    'ephemeralMessage',
+    'viewOnceMessage',
+    'viewOnceMessageV2',
+    'documentWithCaptionMessage',
+  ]) {
+    if (content?.[key]?.message) {
+      wrappers.push(key);
+      content = content[key].message;
+    }
+  }
+  const leaf = Object.keys(content || {}).find(key => key.endsWith('Message'));
+  if (leaf) wrappers.push(leaf);
+  return wrappers;
+}
+
+export function buildMediaFailureDiagnostic({ msg, mediaMessage, type, error }) {
+  const message = String(error?.message || error || 'unknown media download error');
+  const safeErrorMessage = message
+    .replace(/https?:\/\/\S+/gi, '[url]')
+    .replace(/[A-Za-z]:\\[^\s]+/g, '[path]');
+  const lowered = message.toLowerCase();
+  const code = lowered.includes('bad decrypt')
+    ? 'media_decryption_failed'
+    : lowered.includes('fetch')
+      ? 'media_fetch_failed'
+      : 'media_download_failed';
+  const contextInfo = mediaMessage?.contextInfo || {};
+  let urlHost = null;
+  try {
+    urlHost = mediaMessage?.url ? new URL(mediaMessage.url).host : null;
+  } catch {}
+  return {
+    event: 'inbound_media_download_failed',
+    code,
+    mediaType: type || 'media',
+    messageId: String(msg?.key?.id || ''),
+    chatType: String(msg?.key?.remoteJid || '').endsWith('@g.us') ? 'group' : 'dm',
+    fromMe: !!msg?.key?.fromMe,
+    wrapperPath: mediaWrapperPath(msg),
+    mime: String(mediaMessage?.mimetype || ''),
+    fileExtension: path.extname(String(mediaMessage?.fileName || '')).toLowerCase(),
+    fileLength: mediaMessage?.fileLength === undefined || mediaMessage?.fileLength === null
+      ? null
+      : String(mediaMessage.fileLength),
+    forwarded: !!contextInfo.isForwarded || Number(contextInfo.forwardingScore || 0) > 0,
+    mediaKey: safeDigest(mediaMessage?.mediaKey),
+    directPath: safeDigest(mediaMessage?.directPath),
+    url: { ...safeDigest(mediaMessage?.url), host: urlHost },
+    fileSha256: safeDigest(mediaMessage?.fileSha256),
+    fileEncSha256: safeDigest(mediaMessage?.fileEncSha256),
+    errorName: String(error?.name || 'Error'),
+    errorMessage: safeErrorMessage.slice(0, 240),
+  };
+}
+
+export async function probeEncryptedMedia(mediaMessage, {
+  fetchFn = globalThis.fetch,
+  maxBytes = 25 * 1024 * 1024,
+} = {}) {
+  const result = { attempted: false };
+  if (typeof fetchFn !== 'function') return { ...result, reason: 'fetch_unavailable' };
+  let mediaUrl;
+  try {
+    mediaUrl = mediaMessage?.url
+      ? new URL(mediaMessage.url)
+      : mediaMessage?.directPath
+        ? new URL(`https://mmg.whatsapp.net${mediaMessage.directPath}`)
+        : null;
+  } catch {
+    return { ...result, reason: 'invalid_media_url' };
+  }
+  if (!mediaUrl || !(mediaUrl.hostname === 'whatsapp.net' || mediaUrl.hostname.endsWith('.whatsapp.net'))) {
+    return { ...result, reason: 'untrusted_media_host' };
+  }
+  result.attempted = true;
+  try {
+    const response = await fetchFn(mediaUrl, { signal: AbortSignal.timeout(20_000) });
+    result.httpStatus = Number(response.status || 0);
+    if (!response.ok) return { ...result, reason: 'http_error' };
+    const declaredLength = Number(response.headers?.get?.('content-length') || 0);
+    if (declaredLength > maxBytes) return { ...result, reason: 'media_too_large' };
+    const hash = createHash('sha256');
+    let bytes = 0;
+    for await (const chunk of response.body || []) {
+      const buffer = Buffer.from(chunk);
+      bytes += buffer.length;
+      if (bytes > maxBytes) return { ...result, bytes, reason: 'media_too_large' };
+      hash.update(buffer);
+    }
+    const digest = hash.digest();
+    const expected = mediaMessage?.fileEncSha256
+      ? Buffer.from(mediaMessage.fileEncSha256)
+      : null;
+    return {
+      ...result,
+      bytes,
+      sha256: digest.toString('hex').slice(0, 16),
+      expectedPresent: !!expected,
+      matchesExpected: expected?.length === digest.length
+        ? expected.equals(digest)
+        : null,
+    };
+  } catch (error) {
+    return {
+      ...result,
+      reason: 'probe_failed',
+      errorName: String(error?.name || 'Error'),
+    };
+  }
+}
+
 export async function extractBridgeEvent({
   msg,
   chatId,
@@ -344,7 +473,9 @@ export async function extractBridgeEvent({
       // reuploadRequest recovery half is already wired in bridge.js.)
       mediaFailures.push(type || 'media');
       try {
-        console.warn(`[bridge] failed to download inbound ${type || 'media'}:`, err?.message || err);
+        const diagnostic = buildMediaFailureDiagnostic({ msg, mediaMessage, type, error: err });
+        diagnostic.encryptedProbe = await probeEncryptedMedia(mediaMessage);
+        console.warn('[bridge] inbound media diagnostic:', JSON.stringify(diagnostic));
       } catch {}
     }
   };
